@@ -1,0 +1,96 @@
+---
+# Ollama PersistentVolumeClaim — model storage (phi3:mini ~2.3Gi, mistral:7b ~4.1Gi)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-pvc
+  namespace: fluidgo
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 15Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: fluidgo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # single ReadWriteOnce volume — never run 2 pods at once
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - containerPort: 11434
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+          resources:
+            requests:
+              memory: "5Gi"
+              cpu: "1000m"
+            limits:
+              memory: "7Gi"   # leave ~1GB headroom for OS + other pods on t3.large
+              cpu: "2000m"
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: fluidgo
+spec:
+  selector:
+    app: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+---
+# One-shot job — pulls the model into the PVC. Safe to re-run (Ollama no-ops if already present).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-pull-model
+  namespace: fluidgo
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: pull
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://ollama:11434/api/tags; do echo "waiting for ollama..."; sleep 5; done
+              curl -sf -X POST http://ollama:11434/api/pull -d '{"name":"phi3:mini","stream":false}'
+              echo MODEL_READY

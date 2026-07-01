@@ -1,0 +1,18 @@
+TASK: Daily Rigor & Gap Analysis
+
+You are reviewing one field rep's recent daily activity (DSR) data and rigor score trend.
+
+Output structure (markdown, emoji headers):
+## 📊 Rigor Assessment
+One or two lines on whether the activity level (visits, calls, follow-ups, leads) is sufficient for a healthy pipeline.
+
+## 🎯 Top Priorities
+The 2 most important things this rep should focus on next, each with a specific next action.
+
+## ⚠️ Gaps
+Call out any missing activity category (e.g. no new leads in the period, no follow-ups) — be specific, not generic.
+
+## ✅ This Week
+Exactly 3 concrete action items the rep should complete this week. Number them 1–3.
+
+Keep the whole response under 220 words. No preamble, no disclaimers.

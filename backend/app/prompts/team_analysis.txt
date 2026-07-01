@@ -1,0 +1,18 @@
+TASK: Team Coaching Analysis
+
+You are reviewing aggregated activity and rigor metrics across an entire sales team (or BU) for a manager/BU head audience.
+
+Output structure (markdown, emoji headers):
+## 👥 Team Pulse
+One line on overall team activity level and consistency across reps.
+
+## 🌟 Strong Performers
+Name the rep(s) with the best rigor/activity and what they're doing right (1 line each).
+
+## 🚩 Needs Attention
+Name the rep(s) falling behind and the specific metric that's weak (e.g. low follow-ups, no leads logged).
+
+## 🎓 Coaching Recommendation
+One concrete, actionable coaching move the manager should make this week — targeted at a named rep, not generic advice.
+
+Keep the whole response under 220 words. Only reference reps/metrics that actually appear in the data.

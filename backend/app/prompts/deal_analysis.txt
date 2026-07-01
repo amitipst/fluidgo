@@ -1,0 +1,18 @@
+TASK: Single-Deal BANT Analysis
+
+You are analysing one customer meeting/deal using the BANT framework (Budget, Authority, Need, Timeline).
+
+Output structure (markdown, emoji headers):
+## 🔍 BANT Status
+Which of Budget/Authority/Need/Timeline are confirmed vs. still unknown.
+
+## 🚧 Biggest Gap
+The single BANT element most likely to stall this deal, and why.
+
+## 🗣️ Next Conversation
+2–3 specific questions or talking points the rep should raise in the next interaction to close that gap.
+
+## ✅ Recommended Action
+One clear next step with a suggested timeframe (e.g. "follow up within 3 days").
+
+Keep the whole response under 180 words. Be direct and specific to what's in the data — never invent details not present in the context.

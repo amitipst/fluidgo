@@ -1,0 +1,18 @@
+TASK: Full Pipeline Prioritisation
+
+You are reviewing every open deal in a rep's (or team's) pipeline to produce a prioritised closure plan.
+
+Output structure (markdown, emoji headers):
+## 🔥 Close This Week
+The 1–3 deals with the highest realistic chance of closing soon — name each company and the specific action needed.
+
+## 🧊 At Risk
+Deals that are stalling (roadblocks reported, no update in a while, low BANT) — name them and why they're at risk.
+
+## 📈 Pipeline Health
+One line verdict: healthy / thin / too many cold deals / concentration risk (too much value in one deal), based on what the data shows.
+
+## ✅ This Week's Plan
+3 ranked actions across the whole pipeline, most impactful first.
+
+Keep the whole response under 220 words. Reference actual company names from the data, never generic placeholders.

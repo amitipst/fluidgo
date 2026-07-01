@@ -1,0 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body { @apply bg-wep-surface text-wep-navy font-sans antialiased; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-thumb { @apply bg-wep-border rounded-full; }
+}
+
+@layer components {
+  .card { @apply bg-white border border-wep-border rounded-xl p-5 shadow-sm; }
+  .btn-primary { @apply bg-wep-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm; }
+  .btn-outline { @apply border border-wep-border text-wep-navy font-medium px-4 py-2 rounded-lg hover:border-wep-accent hover:text-wep-accent transition-colors text-sm bg-white; }
+  .btn-ghost { @apply text-wep-muted px-3 py-2 rounded-lg hover:bg-wep-surface transition-colors text-sm; }
+  .form-input { @apply w-full border border-wep-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-wep-accent bg-white; }
+  .form-label { @apply text-xs font-semibold uppercase tracking-wide text-wep-muted; }
+  .badge-hot { @apply bg-red-50 text-red-600 text-xs font-bold px-2.5 py-1 rounded-full; }
+  .badge-warm { @apply bg-amber-50 text-amber-600 text-xs font-bold px-2.5 py-1 rounded-full; }
+  .badge-cold { @apply bg-blue-50 text-blue-400 text-xs font-bold px-2.5 py-1 rounded-full; }
+  .badge-engaged { @apply bg-teal-50 text-teal-600 text-xs font-bold px-2.5 py-1 rounded-full; }
+  .ai-panel { @apply bg-wep-navy text-white rounded-xl p-5 relative overflow-hidden; }
+}

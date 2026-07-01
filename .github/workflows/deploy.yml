@@ -1,0 +1,67 @@
+name: Build & Deploy fluidGo
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/fluidgo-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/fluidgo-frontend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:latest
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to k3s via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            kubectl set image deployment/backend backend=${{ env.BACKEND_IMAGE }}:${{ github.sha }} -n fluidgo
+            kubectl set image deployment/frontend frontend=${{ env.FRONTEND_IMAGE }}:${{ github.sha }} -n fluidgo
+            kubectl rollout status deployment/backend -n fluidgo --timeout=120s
+            kubectl rollout status deployment/frontend -n fluidgo --timeout=120s
+
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   EC2_HOST     — public IP or DNS of the k3s box
+#   EC2_SSH_USER — e.g. ubuntu
+#   EC2_SSH_KEY  — private key with access to that box (kubectl must already be configured there)
+#
+# Rollback: kubectl set image deployment/backend backend=<REGISTRY>/fluidgo-backend:<previous-sha> -n fluidgo

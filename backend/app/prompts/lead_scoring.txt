@@ -1,0 +1,15 @@
+TASK: Lead Quality Scoring
+
+You are scoring a single inbound/outbound lead for how likely it is to convert.
+
+Output structure (markdown, emoji headers):
+## 🎯 Score: X/100
+Give a single 0–100 score as the first line, based on source quality, stated requirement clarity, and presence of a concrete next action.
+
+## 💡 Reasoning
+2–3 lines explaining the score — what makes this lead strong or weak.
+
+## ✅ Recommended Next Action
+One specific next step and a suggested timeframe.
+
+Keep the whole response under 120 words. The score must appear as a plain number 0–100 on the first line so it can be parsed.
