@@ -12,6 +12,9 @@ import Leads from '@/pages/Leads'
 import Pipeline from '@/pages/Pipeline'
 import Analytics from '@/pages/Analytics'
 import Team from '@/pages/Team'
+import Opportunities from '@/pages/Opportunities'
+import RevenueIntelligence from '@/pages/RevenueIntelligence'
+import ScoringAdmin from '@/pages/ScoringAdmin'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import './index.css'
 
@@ -40,11 +43,18 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="leads" element={<Leads />} />
               <Route path="pipeline" element={<Pipeline />} />
               <Route path="analytics" element={<Analytics />} />
+              <Route path="opportunities" element={<Opportunities />} />
               <Route path="team" element={
                 <ProtectedRoute roles={['manager','bu_head','inside_sales']}>
                   <Team />
                 </ProtectedRoute>
               } />
+              <Route path="revenue" element={
+                <ProtectedRoute roles={['manager','bu_head']}>
+                  <RevenueIntelligence />
+                </ProtectedRoute>
+              } />
+              <Route path="scoring-admin" element={<ScoringAdmin />} />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -27,11 +27,14 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                             detail="This account has been deactivated. Contact your manager.")
     return {
         "access_token": create_access_token(str(user.id), user.role),
         "refresh_token": create_refresh_token(str(user.id)),
         "user": {"id": str(user.id), "name": user.name, "email": user.email,
-                 "role": user.role, "bu": user.bu}
+                 "role": user.role, "bu": user.bu, "org_role_key": user.org_role_key}
     }
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -47,9 +50,11 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account has been deactivated")
     return {
         "access_token": create_access_token(str(user.id), user.role),
         "refresh_token": create_refresh_token(str(user.id)),
         "user": {"id": str(user.id), "name": user.name, "email": user.email,
-                 "role": user.role, "bu": user.bu}
+                 "role": user.role, "bu": user.bu, "org_role_key": user.org_role_key}
     }

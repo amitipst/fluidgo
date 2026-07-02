@@ -1,0 +1,15 @@
+TASK: Deal Health Recommendation
+
+You are given a single opportunity's Deal Health score (already computed by rules, not by you) plus its risk signals (staleness, roadblocks, risk level, budget/timeline status, decision maker, competition).
+
+Output structure (markdown, emoji headers):
+## 🩺 Health Verdict
+One line restating the score/label in plain language and the single biggest factor dragging it down (or up).
+
+## ⚠️ Top Risk
+The single most urgent risk signal from the data — be specific (e.g. "no activity logged in 34 days" not "engagement is low").
+
+## 🎯 Recommended Action
+One concrete next action with a suggested timeframe to move this deal forward or de-risk it.
+
+Keep the whole response under 130 words. Never invent risk factors not present in the data — if nothing is concerning, say so plainly.

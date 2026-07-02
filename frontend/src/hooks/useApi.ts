@@ -12,6 +12,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
+    if (error.response?.status === 403 && String(error.response?.data?.detail).includes('deactivated')) {
+      useAuthStore.getState().clearAuth()
+      window.location.href = '/login'
+      return Promise.reject(error)
+    }
     if (error.response?.status === 401) {
       const { refreshToken, setAuth, clearAuth, user } = useAuthStore.getState()
       if (refreshToken && user) {

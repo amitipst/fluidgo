@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import auth, dsr, meetings, leads, pipeline, analytics, ai
+from app.routers import auth, dsr, meetings, leads, pipeline, analytics, ai, users, opportunities, scoring, roles
 
 app = FastAPI(title="fluidGo API", version="1.0.0", docs_url="/api/docs")
 
@@ -20,6 +20,10 @@ app.include_router(leads.router,     prefix="/api/leads",     tags=["leads"])
 app.include_router(pipeline.router,  prefix="/api/pipeline",  tags=["pipeline"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(ai.router,        prefix="/api/ai",        tags=["ai"])
+app.include_router(users.router,     prefix="/api/users",     tags=["users"])
+app.include_router(opportunities.router, prefix="/api/opportunities", tags=["opportunities"])
+app.include_router(scoring.router,   prefix="/api/scoring",   tags=["scoring"])
+app.include_router(roles.router,     prefix="/api/roles",     tags=["roles"])
 
 @app.get("/api/health")
 async def health():

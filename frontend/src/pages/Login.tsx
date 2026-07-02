@@ -18,8 +18,9 @@ export default function Login() {
       const res = await api.post('/auth/login', { email, password })
       setAuth(res.data.user, res.data.access_token, res.data.refresh_token)
       navigate('/')
-    } catch {
-      setError('Invalid email or password')
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      setError(err?.response?.status === 403 && detail ? detail : 'Invalid email or password')
     } finally {
       setLoading(false)
     }

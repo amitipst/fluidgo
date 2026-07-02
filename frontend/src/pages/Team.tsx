@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import api from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
@@ -10,20 +10,53 @@ const rigorColor = (s: number) =>
 const rigorBg = (s: number) =>
   s >= 80 ? 'bg-teal-50 border-teal-200' : s >= 60 ? 'bg-amber-50 border-amber-200' : s > 0 ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
 
+const emptyForm = { name: '', email: '', password: '', role: 'rep', bu: 'West' }
+
 export default function Team() {
   const { user } = useAuthStore()
+  const qc = useQueryClient()
   const today = format(new Date(), 'yyyy-MM-dd')
   const [aiContent, setAiContent] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
+  const canManageUsers = user?.role === 'manager' || user?.role === 'bu_head'
+  const [showManage, setShowManage] = useState(false)
+  const [showExited, setShowExited] = useState(false)
+  const [form, setForm] = useState(emptyForm)
+  const [formError, setFormError] = useState('')
 
   const { data: teamData = [], isLoading } = useQuery({
-    queryKey: ['team-analytics'],
-    queryFn: () => api.get('/analytics/team').then(r => r.data)
+    queryKey: ['team-analytics', showExited],
+    queryFn: () => api.get(`/analytics/team${showExited ? '?include_inactive=true' : ''}`).then(r => r.data)
   })
 
   const { data: todayDSRs = [] } = useQuery({
     queryKey: ['team-dsr-today', today],
     queryFn: () => api.get(`/dsr/team?date=${today}`).then(r => r.data)
+  })
+
+  const { data: allUsers = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => api.get('/users').then(r => r.data),
+    enabled: canManageUsers && showManage
+  })
+
+  const createUser = useMutation({
+    mutationFn: () => api.post('/users', form),
+    onSuccess: () => {
+      setForm(emptyForm); setFormError('')
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['team-analytics'] })
+    },
+    onError: (err: any) => setFormError(err?.response?.data?.detail ?? 'Could not create user')
+  })
+
+  const setStatus = useMutation({
+    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
+      api.patch(`/users/${id}/status`, { is_active }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['team-analytics'] })
+    }
   })
 
   const submittedToday = new Set(todayDSRs.map((d: any) => d.user_id))
@@ -52,10 +85,72 @@ export default function Team() {
           <h1 className="font-display font-bold text-xl text-wep-navy">{viewTitle}</h1>
           <p className="text-wep-muted text-sm">West BU · {today} · {todayDSRs.length}/{teamData.length} DSRs submitted today</p>
         </div>
-        <button onClick={runTeamAI} disabled={aiLoading} className="btn-primary">
-          {aiLoading ? '⏳ Analysing...' : '✨ AI Team Analysis'}
-        </button>
+        <div className="flex gap-2">
+          {canManageUsers && (
+            <button onClick={() => setShowManage(v => !v)} className="btn-outline">
+              {showManage ? 'Close' : '👤 Manage Team'}
+            </button>
+          )}
+          <button onClick={runTeamAI} disabled={aiLoading} className="btn-primary">
+            {aiLoading ? '⏳ Analysing...' : '✨ AI Team Analysis'}
+          </button>
+        </div>
       </div>
+
+      {canManageUsers && showManage && (
+        <div className="card mb-6">
+          <div className="font-semibold text-sm text-wep-navy mb-4">Onboard a new member</div>
+          <form
+            onSubmit={e => { e.preventDefault(); createUser.mutate() }}
+            className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-2"
+          >
+            <input className="form-input" placeholder="Full name" required
+              value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            <input className="form-input" type="email" placeholder="Email" required
+              value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            <input className="form-input" type="text" placeholder="Temp password (min 8 chars)" required
+              value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+            <select className="form-input" value={form.role}
+              onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+              <option value="rep">Rep</option>
+              <option value="inside_sales">Inside Sales</option>
+              <option value="manager">Manager</option>
+              <option value="bu_head">BU Head</option>
+            </select>
+            <button type="submit" disabled={createUser.isPending} className="btn-primary">
+              {createUser.isPending ? 'Adding...' : '+ Add Member'}
+            </button>
+          </form>
+          {formError && <p className="text-red-500 text-sm mb-3">{formError}</p>}
+
+          <label className="flex items-center gap-2 text-xs text-wep-muted mb-3">
+            <input type="checkbox" checked={showExited} onChange={e => setShowExited(e.target.checked)} />
+            Show exited members in the performance table below
+          </label>
+
+          <div className="space-y-2">
+            {allUsers.map((u: any) => (
+              <div key={u.id} className="flex items-center justify-between border-b border-wep-border/50 py-2 text-sm">
+                <div>
+                  <span className={`font-medium ${u.is_active ? 'text-wep-navy' : 'text-wep-muted line-through'}`}>{u.name}</span>
+                  <span className="text-wep-muted ml-2 text-xs">{u.email} · {u.role.replace('_',' ')}</span>
+                  {!u.is_active && <span className="ml-2 text-[10px] font-bold uppercase text-red-500">Exited</span>}
+                </div>
+                <button
+                  disabled={setStatus.isPending || u.id === user?.id}
+                  onClick={() => setStatus.mutate({ id: u.id, is_active: !u.is_active })}
+                  className={`text-xs font-semibold px-3 py-1 rounded-lg ${
+                    u.is_active ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-teal-50 text-teal-600 hover:bg-teal-100'
+                  } disabled:opacity-40`}
+                  title={u.id === user?.id ? "You can't deactivate your own account" : undefined}
+                >
+                  {u.is_active ? 'Deactivate' : 'Reactivate'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Today's submission status */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -122,7 +217,7 @@ export default function Team() {
             ) : teamData.map((m: any) => {
               const didSubmit = submittedToday.has(m.user_id)
               return (
-                <tr key={m.user_id} className="border-b border-wep-border/50 hover:bg-wep-surface transition-colors">
+                <tr key={m.user_id} className={`border-b border-wep-border/50 hover:bg-wep-surface transition-colors ${m.is_active === false ? 'opacity-50' : ''}`}>
                   <td className="py-3 pr-4">
                     <div className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-full bg-gradient-to-br from-wep-accent to-wep-electric flex items-center justify-center text-white text-[10px] font-bold shrink-0">
@@ -135,9 +230,13 @@ export default function Team() {
                     </div>
                   </td>
                   <td className="py-3 pr-4">
-                    <span className={`text-xs font-bold px-2 py-1 rounded-lg ${didSubmit ? 'bg-teal-50 text-teal-600' : 'bg-red-50 text-red-500'}`}>
-                      {didSubmit ? '✅ Done' : '🔴 Pending'}
-                    </span>
+                    {m.is_active === false ? (
+                      <span className="text-xs font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-500">🚪 Exited</span>
+                    ) : (
+                      <span className={`text-xs font-bold px-2 py-1 rounded-lg ${didSubmit ? 'bg-teal-50 text-teal-600' : 'bg-red-50 text-red-500'}`}>
+                        {didSubmit ? '✅ Done' : '🔴 Pending'}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3 pr-4 font-medium">{m.total_calls}</td>
                   <td className="py-3 pr-4 font-medium">{m.total_visits}</td>

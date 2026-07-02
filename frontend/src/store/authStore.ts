@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export type Role = 'rep' | 'inside_sales' | 'manager' | 'bu_head'
+export type OrgRoleKey = 'sales' | 'presales' | 'manager' | 'bu_head' | 'practice_head' | 'hr' | 'admin' | 'super_admin' | null
 
 interface AuthUser {
   id: string
@@ -9,6 +10,7 @@ interface AuthUser {
   email: string
   role: Role
   bu: string
+  org_role_key?: OrgRoleKey
 }
 
 interface AuthState {

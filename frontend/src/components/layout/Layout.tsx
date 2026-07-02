@@ -2,20 +2,30 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 
 const NAV = [
-  { to: '/',          label: '⚡ Dashboard',   exact: true  },
-  { to: '/dsr',       label: '✏️ Submit DSR'               },
-  { to: '/meetings',  label: '🤝 Meetings'                 },
-  { to: '/leads',     label: '🎯 Leads'                    },
-  { to: '/pipeline',  label: '📊 Pipeline'                 },
-  { to: '/analytics', label: '📈 Analytics'               },
+  { to: '/',             label: '⚡ Dashboard',      exact: true  },
+  { to: '/dsr',          label: '✏️ Submit DSR'                  },
+  { to: '/meetings',     label: '🤝 Meetings'                    },
+  { to: '/leads',        label: '🎯 Leads'                       },
+  { to: '/pipeline',     label: '📊 Pipeline'                    },
+  { to: '/opportunities',label: '🧭 Opportunities'                },
+  { to: '/analytics',    label: '📈 Analytics'                  },
 ]
 const MANAGER_NAV = { to: '/team', label: '👥 Team' }
+const REVENUE_NAV = { to: '/revenue', label: '📊 Revenue' }
+const SCORING_ADMIN_NAV = { to: '/scoring-admin', label: '⚙️ Scoring' }
 
 export default function Layout() {
   const { user, clearAuth } = useAuthStore()
   const navigate = useNavigate()
   const canSeeTeam = ['manager','bu_head','inside_sales'].includes(user?.role ?? '')
-  const navItems = canSeeTeam ? [...NAV, MANAGER_NAV] : NAV
+  const canSeeRevenue = ['manager','bu_head'].includes(user?.role ?? '')
+  const canManageScoring = ['admin','super_admin','practice_head'].includes(user?.org_role_key ?? '')
+  const navItems = [
+    ...NAV,
+    ...(canSeeTeam ? [MANAGER_NAV] : []),
+    ...(canSeeRevenue ? [REVENUE_NAV] : []),
+    ...(canManageScoring ? [SCORING_ADMIN_NAV] : []),
+  ]
 
   return (
     <div className="flex flex-col h-screen md:flex-row">

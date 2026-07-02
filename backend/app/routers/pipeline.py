@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import date
+from datetime import date, datetime
 from typing import Optional, Literal
 from app.database import get_db
 from app.models import PipelineDeal, User
@@ -18,6 +18,24 @@ class DealIn(BaseModel):
     next_step: Optional[str] = None
     closure_eta: Optional[date] = None
     deal_value: Optional[float] = None
+    # ── v2 Opportunity fields — all optional, existing callers unaffected ──
+    bu: Optional[str] = None
+    presales_owner_id: Optional[str] = None
+    primary_contact: Optional[str] = None
+    oem: Optional[str] = None
+    solution_area: Optional[Literal["Managed Services", "Cloud", "Licensing", "Security", "Professional Services"]] = None
+    practice: Optional[str] = None
+    recurring_revenue: Optional[float] = None
+    one_time_revenue: Optional[float] = None
+    gross_margin_pct: Optional[float] = None
+    competition: Optional[str] = None
+    risk_level: Optional[Literal["low", "medium", "high", "critical"]] = None
+    decision_maker: Optional[str] = None
+    budget_status: Optional[Literal["confirmed", "unconfirmed", "unknown"]] = None
+    timeline_status: Optional[Literal["on_track", "delayed", "unknown"]] = None
+    proposal_version: Optional[str] = None
+    last_activity_at: Optional[datetime] = None
+    next_followup_at: Optional[datetime] = None
 
 @router.post("")
 async def create_deal(body: DealIn, db: AsyncSession = Depends(get_db),
