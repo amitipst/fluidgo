@@ -1,38 +1,57 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type Role = 'rep' | 'inside_sales' | 'manager' | 'bu_head'
-export type OrgRoleKey = 'sales' | 'presales' | 'manager' | 'bu_head' | 'practice_head' | 'hr' | 'admin' | 'super_admin' | null
+// v3 role system — all 10 roles
+export type Role =
+  | 'rep'
+  | 'inside_sales'
+  | 'pre_sales'
+  | 'manager'
+  | 'bu_head'
+  | 'business_head'
+  | 'hr'
+  | 'finance'
+  | 'ceo'
+  | 'super_admin'
 
-interface AuthUser {
-  id: string
-  name: string
-  email: string
-  role: Role
-  bu: string
+export type OrgRoleKey =
+  | 'sales' | 'presales' | 'manager' | 'bu_head'
+  | 'practice_head' | 'hr' | 'finance' | 'admin' | 'super_admin'
+  | null
+
+export interface AuthUser {
+  id:           string
+  name:         string
+  email:        string
+  role:         Role
+  bu:           string
+  business?:    string        // which product business (fluidpro | fluidprint | floxtax | hooks)
+  manager_id?:  string | null
   org_role_key?: OrgRoleKey
 }
 
 interface AuthState {
-  user: AuthUser | null
-  accessToken: string | null
+  user:         AuthUser | null
+  accessToken:  string | null
   refreshToken: string | null
-  setAuth: (user: AuthUser, access: string, refresh: string) => void
+  setAuth:  (user: AuthUser, access: string, refresh: string) => void
   clearAuth: () => void
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      user: null,
-      accessToken: null,
+      user:         null,
+      accessToken:  null,
       refreshToken: null,
       setAuth: (user, accessToken, refreshToken) =>
         set({ user, accessToken, refreshToken }),
-      clearAuth: () => set({ user: null, accessToken: null, refreshToken: null }),
+      clearAuth: () =>
+        set({ user: null, accessToken: null, refreshToken: null }),
     }),
     {
       name: 'fluidgo-auth',
+      // Persist user profile + refresh token (access token is short-lived)
       partialize: (s) => ({ user: s.user, refreshToken: s.refreshToken }),
     }
   )

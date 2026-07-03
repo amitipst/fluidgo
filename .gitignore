@@ -1,11 +1,48 @@
+# Secrets — NEVER commit these
 .env
+.env.prod
+.env.local
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Node / Frontend
 node_modules/
 dist/
 .vite/
+frontend/dist/
+
+# Logs
 *.log
+logs/
+
+# OS
 .DS_Store
 Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker volumes (never track data directories)
+pgdata/
+ollama_models/
+
+# Claude project files
 .claude/
+
+# Test artifacts
+backend/check_502.py
+backend/debug_*.py
+backend/reset_*.py
+backend/fix_*.py
+backend/verify_*.py
+backend/audit_db.py
+backend/seed_self_scores.py

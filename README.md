@@ -1,274 +1,499 @@
-# fluidGo — AI Revenue Operating System
+# fluidGo — FluidPro Sales Intelligence Platform
 
-## Vision
-
-fluidGo replaces the manual Excel DSR chain at FluidPro (WEPSol's IT infrastructure managed
-services business) with a config-driven, AI-powered revenue platform — no hardcoded formulas,
-roles, KPIs, or targets anywhere in the code. Everything a manager can tune (scoring weights, org
-roles, revenue targets) lives in the database and is editable through the product, not a deploy.
-
-## Product Overview
-
-fluidGo started as a 7-day MVP (Daily Sales Report + rule-based rigor/BANT scoring + local AI
-insights) and is evolving module by module into a full Revenue Operating System: Opportunity
-Management, AI Deal Health, a config-driven Sales Performance Engine (Sales/PreSales FGA), Revenue
-Intelligence dashboards, and — on the roadmap — AI Coaching, a Variable Pay Engine, Kylas CRM sync,
-and Teams/Email notifications. DSR is now one module among several, not the whole product.
-
-## Business Goals
-
-Increase revenue, win ratio, and forecast accuracy · increase field productivity and visibility ·
-automate variable pay · give every rep AI coaching instead of a manager's spare time.
-
-## Core Modules
-
-| Module | Status | Notes |
-|---|---|---|
-| **Authentication** | ✅ Shipped | JWT access/refresh, role guards, account deactivation (soft-disable, keeps all historical data) |
-| **DSR** | ✅ Shipped | Daily activity + self-scoring, offline-capable PWA entry |
-| **Revenue Intelligence** | ✅ Shipped (v2 Phase 1) | Forecast, target achievement, gap, pipeline coverage, win %, avg deal size — `/revenue`, manager/bu_head only |
-| **Opportunity Management** | ✅ Shipped (v2 Phase 1) | Extends the existing pipeline/deal model with account, OEM, practice, revenue split, risk, competition, decision maker, etc. — `/opportunities` |
-| **Pipeline Intelligence (Deal Health)** | ✅ Shipped (v2 Phase 1) | Rule-based 0-100 health score + AI recommendation per opportunity |
-| **AI Coaching** | 🗺️ Roadmap (Phase 2) | Daily/weekly/monthly briefs, reusing the existing Ollama layer |
-| **Variable Pay Engine** | 🗺️ Roadmap (Phase 3) | Needs HR/Finance sign-off before it ships — see Risk Register in the v2 plan |
-| **Analytics** | ✅ Shipped, extended | Per-rep and team analytics; Revenue Intelligence is the new BU-level layer |
-| **Notifications** | 🗺️ Roadmap (Phase 4, deferred) | Email/Teams — needs Redis/worker infra not yet in the stack |
-| **Administration** | ✅ Shipped | User onboarding/deactivation (`/team`), Scoring Admin (`/scoring-admin`), org-role assignment (API only — no dedicated UI yet, see Known Limitations) |
-
-## User Roles
-
-Two role systems coexist by design (see the v2 architecture plan for why):
-
-- **Legacy roles** (`users.role`, unchanged since v1): `rep`, `inside_sales`, `manager`, `bu_head` — still gate every v1 route exactly as before.
-- **Org-role hierarchy** (`org_roles` table, additive): `sales`, `presales`, `manager`, `bu_head`, `practice_head`, `hr`, `admin`, `super_admin` — each with a `data_scope` (`own` / `team` / `bu` / `practice` / `all`) that new v2 endpoints (Opportunities, Revenue Intelligence) use to filter what a user sees. A user's `org_role_key` is optional; if unset, they default to seeing only their own data.
-
-## AI Architecture
-
-All inference runs locally through Ollama — no OpenAI/Anthropic/cloud AI calls, so no per-request
-cost and no customer data leaves the box.
-
-1. **Rule-based (instant, no LLM):** rigor score, BANT completeness/closure %/intent, lead quality
-   score, and Deal Health score — all pure Python, same philosophy: the LLM never decides a number,
-   only writes the narrative.
-2. **LLM (Ollama, `phi3:mini` by default — swap to `mistral:7b` via `OLLAMA_MODEL` for better
-   quality on a bigger box):** narrative generation from prompt templates in `backend/app/prompts/`:
-   `daily_insight`, `deal_analysis`, `pipeline_review`, `team_analysis`, `lead_scoring`, and
-   `deal_health` (v2). Responses are cached in `ai_insights` for 6 hours per entity, and a streaming
-   endpoint (`POST /api/ai/analyse/stream`) is available for progressive rendering.
-
-Measured on this dev box: ~50-90s for a cold `phi3:mini` inference on CPU. That's the reason Deal
-Health's *score* is rule-based and only the recommendation text touches the LLM (see Risk Register).
-
-## Revenue Health Index
-
-A single 0-100 score per person, computed by `backend/app/services/scoring_engine.py` from whichever
-`ScoringTemplate` matches their org role — weights and which metrics compose it are DB rows
-(`scoring_templates`/`scoring_parameters`), never a Python constant. Edit them live at `/scoring-admin`
-(admin/super_admin/practice_head only) or via `PATCH /api/scoring/templates/{id}/parameters`.
-
-## Sales FGA
-
-Default weights (seeded by `seed_v2.py`, fully editable afterward):
-
-| Parameter | Weight | Metric |
-|---|---|---|
-| Business Generation | 40% | Revenue closed vs. target for the period |
-| Sales Execution | 25% | Average rigor score |
-| Pipeline Quality | 20% | Average BANT closure % across meetings |
-| Professional Excellence | 15% | Average self-score (proxy until manager ratings exist) |
-
-## PreSales FGA
-
-| Parameter | Weight | Metric |
-|---|---|---|
-| Solution Support | 35% | % of assigned opportunities with recent activity |
-| Technical Conversion | 35% | Win rate on assigned opportunities |
-| Knowledge Excellence | 15% | Self-score proxy (training/certification capture is a Phase 2 gap — see Known Limitations) |
-| Operational Excellence | 15% | DSR compliance % |
-
-## Technology Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | React 18 + Vite + TypeScript + Tailwind, TanStack Query, Zustand, vite-plugin-pwa |
-| Backend | FastAPI (Python 3.11), SQLAlchemy 2.0 (async), Alembic |
-| Database | PostgreSQL 15 |
-| AI | Ollama (local), `phi3:mini` / `mistral:7b` |
-| Auth | JWT (python-jose), bcrypt via passlib |
-| Testing | pytest + pytest-asyncio (`backend/tests/`) |
-| Deployment | Docker Compose (dev) → k3s on EC2 (prod), GitHub Actions CI/CD |
-
-## Database
-
-v1 tables (unchanged): `users`, `dsr_daily`, `self_scores`, `meetings`, `leads`, `pipeline`, `ai_insights`.
-
-v2 additions (migration `0003_v2_foundation.py`, fully additive — nothing dropped/renamed):
-- `pipeline` gains ~20 nullable Opportunity columns (account/OEM/practice/revenue split/risk/etc.) — it doubles as the Opportunity entity rather than a parallel table
-- `users` gains a nullable `org_role_key`
-- `org_roles`, `scoring_templates`, `scoring_parameters`, `scoring_results`, `revenue_targets` — the config-driven scoring/targets engine
-
-## APIs
-
-v1 (unchanged): `/api/auth`, `/api/dsr`, `/api/meetings`, `/api/leads`, `/api/pipeline`, `/api/analytics`, `/api/ai`, `/api/users`.
-
-v2 additions:
-- `GET /api/opportunities` — scoped opportunity list (filters: practice, oem, risk_level)
-- `GET /api/opportunities/{id}/health` — Deal Health score + AI recommendation
-- `GET/POST/PATCH /api/scoring/templates`, `GET /api/scoring/metrics`, `GET /api/scoring/my-score`
-- `GET/POST /api/roles`, `PATCH /api/roles/assign/{user_id}`
-- `GET /api/analytics/revenue`, `POST /api/analytics/revenue/targets`
-
-Full interactive docs at `/api/docs` once running.
-
-## Docker
-
-`docker compose up --build` — see Quick Start below. `docker-compose.yml` is unchanged by v2 (no
-new services yet; that's Phase 4).
-
-## Kubernetes
-
-See `k8s/` — namespace, secrets, Postgres, Ollama, backend, frontend, ingress + cert-manager.
-Unchanged by v2 Phase 1 (no new services to deploy yet).
-
-## Deployment
-
-Provisioning EC2, DNS, and running `kubectl apply` against a live cluster needs your AWS
-credentials/SSH access — see the comments at the top of each `k8s/` manifest for the exact
-commands, and `.github/workflows/deploy.yml` for the CI/CD pipeline (needs `EC2_HOST`,
-`EC2_SSH_USER`, `EC2_SSH_KEY` repo secrets).
-
-## Security
-
-JWT access (15 min) + refresh (7 day) tokens; legacy `require_role()` guards unchanged; new
-`require_org_role()`/`resolve_visible_user_ids()` in `permission_service.py` add data-scope
-filtering for v2 endpoints without touching any existing route. Deactivated accounts are rejected
-at login, token refresh, *and* on every authenticated request (`get_current_user`), so revocation is
-immediate even for an already-issued access token.
-
-## Roadmap
-
-| Phase | Scope |
-|---|---|
-| **Phase 1 — shipped this pass** | Opportunity model extension, org-role hierarchy, config-driven Sales/PreSales FGA scoring engine, Deal Health, Revenue Intelligence, Scoring Admin UI |
-| **Phase 2** | AI Coach (daily/weekly/monthly), Leaderboards, Practice/Executive dashboards, self-scoring UI retired in favour of the Revenue Health Index |
-| **Phase 3** | Variable Pay Engine — ships in shadow/dry-run mode first; needs HR/Finance sign-off on formulas before any payroll export |
-| **Phase 4 (deferred)** | Redis + background workers, Kylas CRM sync, Teams/Email notifications, audit logs, delegated admin, multi-BU support |
-
-## Sprint Backlog
-
-Tracked in Linear under the fluidGo project. v1.0 (WEP-27–35) is done. v2 work is organized into 8
-epics — see Linear Tasks below for the mapping.
-
-## Linear Tasks
-
-fluidGo project in Linear (team `wepsol1`):
-- **Epic 1 – Revenue Intelligence Dashboard** (Phase 1)
-- **Epic 2 – Opportunity Intelligence** (Phase 1)
-- **Epic 3 – Sales Performance Engine** (Phase 1 engine → Phase 2 full rollout)
-- **Epic 4 – Variable Pay Automation** (Phase 3, needs HR sign-off)
-- **Epic 5 – AI Coaching** (Phase 2)
-- **Epic 6 – Role-Based Governance** (Phase 1 core → Phase 4 audit/delegated admin)
-- **Epic 7 – Kylas Integration** (Phase 4, deferred)
-- **Epic 8 – Platform & Infrastructure** (Phase 4, deferred)
+> **Status:** Live on localhost · v3 architecture · July 2026
+> **Business:** fluidPro (IT Infra Managed Services) · **BU:** West
+> **Stack:** React 18 PWA · FastAPI · PostgreSQL 15 · Ollama (local LLM) · Docker Compose
 
 ---
 
-## Quick start (local dev)
-
-Requirements: Docker + Docker Compose. ~6GB free RAM recommended (Ollama needs 4-8GB depending on model).
+## ⚡ Quick Start (3 commands)
 
 ```bash
+# 1. Copy env and fill in secrets
 cp .env.example .env
-# edit .env — set a real JWT_SECRET (see the comment in the file for how to generate one)
+# Edit .env — set DB_PASSWORD and JWT_SECRET
 
-docker compose up --build
+# 2. Start all 5 services
+docker compose up -d
+
+# 3. Seed database (Danish Sayyed May 2026 DSR data)
+docker compose exec backend python seed.py
 ```
 
-This starts 5 containers: `db` (Postgres), `ollama` (local LLM, auto-pulls `phi3:mini` on first run),
-`backend` (FastAPI, runs Alembic migrations automatically on boot), `frontend` (Vite dev server), `nginx`
-(reverse proxy tying it all together on port 80).
+Open **http://localhost** — you're running.
 
-Once healthy:
+> **First run only:** Ollama will auto-pull `phi3:mini` (~2GB). This takes 5–10 minutes.
+> Check progress: `docker compose logs -f ollama`
 
-- App: **http://localhost**
-- API health check: **http://localhost/api/health** → `{"status":"ok"}`
-- API docs (Swagger): **http://localhost/api/docs**
-- Ollama: **http://localhost:11434/api/tags**
+---
 
-If another local project already uses ports 80/3000/5432/etc., see the comments in
-`docker-compose.yml` — the `db` and `frontend` ports are already remapped (5433, 3002) to coexist
-with other projects on this machine; only `db:5432`/`frontend:3000` internal container networking
-matters, host ports are just for direct access.
+## 🔐 Default Credentials
 
-First Ollama model pull can take a few minutes — AI panels show a "model warming up" style error
-until `phi3:mini` finishes downloading.
+| Role | Email | Password |
+|------|-------|----------|
+| BU Head | `amit@wepsol.com` | `Admin@2026!` |
+| Manager | `manager@fluidpro.in` | `Mgr@2026!` |
+| Sales Rep | `danish@fluidpro.in` | `Fluid@2026!` |
+| Inside Sales | `inside@fluidpro.in` | `Inside@2026!` |
 
-## Seed data
+> **Session expiry:** JWT access tokens expire in 15 minutes. If you see 403 errors after a long session, press **Ctrl+Shift+R** to hard-refresh — the refresh token will restore your session automatically.
+
+---
+
+## 📱 Mobile PWA Install
+
+1. Open `http://localhost` on Android Chrome
+2. Tap ⋮ → **Add to Home Screen**
+3. iOS Safari: Share → **Add to Home Screen**
+
+Installs as a native-feeling app with offline DSR entry.
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Docker Compose (local)                 │
+│                                                          │
+│  nginx :80  ──→  frontend :3000  (React 18 PWA/Vite)   │
+│              └─→  backend  :8000  (FastAPI + SQLAlchemy) │
+│                     ↓                                    │
+│               PostgreSQL :5432   (pgdata volume)         │
+│               Ollama     :11434  (ollama_models volume)  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Services
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| `nginx` | nginx:1.25-alpine | 80 | Reverse proxy |
+| `frontend` | node:20 (Vite dev) | 3000 | React PWA |
+| `backend` | python:3.11 | 8000 | FastAPI API |
+| `db` | postgres:15-alpine | 5432 | Primary database |
+| `ollama` | ollama/ollama | 11434 | Local LLM runtime |
+
+---
+
+## 🧠 AI Model Selection
+
+| Model | RAM | Quality | Switch command |
+|-------|-----|---------|----------------|
+| `phi3:mini` | 4 GB | Good · ~10s/response | Default |
+| `mistral:7b` | 8 GB | Very Good · ~25s | `OLLAMA_MODEL=mistral` in `.env` |
+| `llama3:8b` | 8 GB | Best · ~35s | `OLLAMA_MODEL=llama3:8b` in `.env` |
+
+Change model: update `.env` then `docker compose restart backend`.
+
+---
+
+## 👥 Role Hierarchy (v3)
+
+```
+CEO / super_admin  (level 99/50) — all businesses, all BUs, all data
+  └── Business Head  (level 40)  — all BUs within one business (e.g. fluidPro)
+        └── BU Head      (level 30)  — full BU (West) — can set targets, run FGA
+              └── Manager    (level 20)  — own team (direct reports via manager_id)
+                    ├── Sales Rep      (level 10) — own DSR/deals/leads only
+                    ├── Inside Sales   (level 10) — own data only
+                    └── Pre-Sales      (level 10) — own data only
+
+HR       (level 25, scope=hr)      — all users' FGA scores, no sales data
+Finance  (level 25, scope=finance) — approved FGA export only
+```
+
+### Role enforcement rules
+- **Role creation:** You can only create users at a **lower level** than yourself
+- **BU isolation:** Manager/BU Head can only onboard users to their own BU
+- **Data scope:** Manager sees only direct reports (`manager_id` FK); BU Head sees full BU
+- **Multi-BU:** A BU Head from West cannot see North BU data. CEO sees all.
+
+### Supported roles in Team → Onboard form
+`rep` · `inside_sales` · `pre_sales` · `manager` · `bu_head` · `business_head` · `hr` · `finance` · `ceo` · `super_admin`
+
+---
+
+## 📊 API Reference
+
+Full interactive docs: **http://localhost/api/docs**
+
+### Auth
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/login` | None | → JWT access + refresh tokens |
+| POST | `/api/auth/refresh` | Refresh token | → New access token |
+
+### DSR
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/dsr` | Rep+ | Submit/update today's DSR |
+| GET | `/api/dsr?date=YYYY-MM-DD` | Rep+ | Get own DSR for a date |
+| GET | `/api/dsr/team?date=YYYY-MM-DD` | Manager+ | All team DSRs for date |
+
+### Analytics
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/analytics/dashboard?month=YYYY-MM` | Rep+ | Role-scoped KPI summary |
+| GET | `/api/analytics/rep/{user_id}` | Rep (own) / Manager+ | Per-day DSR history |
+| GET | `/api/analytics/team` | Manager+ | Team performance matrix |
+| GET | `/api/analytics/revenue?period=YYYY-MM` | Manager+ | Revenue vs target |
+| POST | `/api/analytics/revenue/targets` | Manager+ | Set revenue target |
+
+### AI
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/ai/analyse` | Rep+ | Ollama analysis (6h cache) |
+| POST | `/api/ai/analyse/stream` | Rep+ | Streaming Ollama response |
+| GET | `/api/ai/dashboard/{user_id}` | Rep+ | Dashboard insight |
+
+### Users
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/users` | Manager+ | List visible users (scoped) |
+| POST | `/api/users` | Manager+ | Onboard new team member |
+| PATCH | `/api/users/{id}` | Manager+ | Update user details/role |
+| PATCH | `/api/users/{id}/status` | Manager+ | Activate/deactivate |
+| GET | `/api/users/roles` | Manager+ | Assignable roles for this actor |
+| GET | `/api/users/me` | Rep+ | Current user profile |
+
+### FGA Approval Workflow
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/fga/freeze` | BU Head | Lock scores for period |
+| GET | `/api/fga/pending?period=` | Manager+ | Scores awaiting review |
+| POST | `/api/fga/{id}/manager-review` | Manager+ | Approve / dispute |
+| POST | `/api/fga/{id}/hr-review` | BU Head (HR) | Override / approve |
+| POST | `/api/fga/{id}/vp-approve` | BU Head (VP) | Final approval |
+| GET | `/api/fga/export?period=` | Manager+ | CSV download for Finance |
+
+### Incentives & Gamification
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/incentives/schemes?period=` | Rep+ | Active schemes for BU |
+| POST | `/api/incentives/schemes` | Manager+ | Create incentive scheme |
+| PATCH | `/api/incentives/schemes/{id}` | Manager+ | Update scheme |
+| GET | `/api/incentives/leaderboard?period=` | Rep+ | Points leaderboard |
+| GET | `/api/incentives/my-progress?period=` | Rep+ | Own scheme progress |
+| GET | `/api/incentives/badges` | Rep+ | Badge catalogue |
+| POST | `/api/incentives/award-badge` | Manager+ | Manually award badge |
+
+### Scoring
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/scoring/templates` | BU Head+ | FGA weight templates |
+| POST | `/api/scoring/templates` | BU Head+ | Create/version template |
+| PATCH | `/api/scoring/templates/{id}/parameters` | BU Head+ | Update weights |
+| GET | `/api/scoring/metrics` | BU Head+ | Available metric keys |
+| GET | `/api/scoring/my-score?period=` | Rep+ | Own FGA score |
+
+---
+
+## 🗄️ Database Schema
+
+### Migrations (Alembic)
+
+| File | Rev | Content |
+|------|-----|---------|
+| `0001_initial_schema.py` | 0001 | users, dsr_daily, self_scores, meetings, leads, pipeline, ai_insights |
+| `0002_add_user_is_active.py` | 0002 | `users.is_active` |
+| `0003_v2_foundation.py` | 0003 | org_roles, scoring_templates/parameters/results, revenue_targets, pipeline v2 opportunity fields |
+| `0003_fga_approval_workflow.py` | 0004 | FGA approval columns on scoring_results |
+| `0005_v3_roles_incentives_gamification.py` | 0005 | business/manager_id on users, incentive_schemes, points_ledger, user_badges |
+
+Run all migrations: `docker compose exec backend alembic upgrade head`
+
+### Key tables
+
+```
+users               — all team members (all BUs, all businesses)
+dsr_daily           — one row per user per date
+self_scores         — 5-dimension self-scoring linked to dsr_daily
+meetings            — F2F/virtual/call log with BANT fields
+leads               — new lead pipeline
+pipeline            — deals (extended to Opportunity in v2)
+scoring_templates   — FGA weight templates (config-driven)
+scoring_parameters  — individual weight line items
+scoring_results     — computed FGA scores with approval workflow
+revenue_targets     — per-user per-period targets
+ai_insights         — cached Ollama responses (6h TTL)
+incentive_schemes   — Manager/BU Head created incentive programs
+points_ledger       — gamification points earned
+user_badges         — badges awarded
+```
+
+---
+
+## 🏆 FGA Approval Workflow
+
+**Flow:** BU Head freezes → Manager reviews → HR reviews/overrides → VP approves → Finance exports CSV
+
+```
+Score Freeze (BU Head)
+        ↓
+pending_manager  ─[Manager: approve]──→ pending_hr
+                 └[Manager: dispute]──→ disputed ──→ pending_hr (HR can reopen)
+                                                ↓
+                                         pending_vp
+                                                ↓
+                                         approved ──→ Finance CSV export
+```
+
+**FGA Score composition (Sales FGA — editable in Scoring Admin):**
+
+| Component | Weight | Metric |
+|-----------|--------|--------|
+| Business Generation | 40% | Revenue vs target |
+| Sales Execution | 25% | Avg rigor score |
+| Pipeline Quality | 20% | Avg BANT closure % |
+| Professional Excellence | 15% | Self-score avg |
+
+**PreSales FGA:**
+
+| Component | Weight | Metric |
+|-----------|--------|--------|
+| Solution Support | 35% | Active presales engagements |
+| Technical Conversion | 35% | Win rate % |
+| Knowledge Excellence | 15% | Self-score avg |
+| Operational Excellence | 15% | DSR compliance % |
+
+---
+
+## 🎮 Gamification & Incentive Schemes
+
+Manager/BU Head creates schemes targeting any metric:
+
+**Supported metrics:** `calls` · `visits` · `new_leads` · `proposals` · `followups` · `rigor_avg` · `bant_meetings` · `closed_won_value`
+
+**Reward types:** `cash` (₹ amount) · `points` · `badge` · `recognition`
+
+**Badge catalogue (10 badges):**
+
+| Badge | Trigger |
+|-------|---------|
+| 🎩 Hat Trick | 3 deals closed in a month |
+| ⭐ First Deal | First ever closed-won |
+| 🔥 5-Day Streak | DSR submitted 5 days straight |
+| 🔥🔥 10-Day Streak | DSR submitted 10 days straight |
+| 🎯 Lead Machine | 10+ new leads in a month |
+| 🧠 BANT Master | 5+ fully-qualified BANT meetings |
+| 🏅 Consistent | Rigor > 70 for 3 months straight |
+| 👑 Deal King | Highest revenue in BU for the month |
+| ⚡ Rigor Champion | Rigor score > 90 for the month |
+| 📞 Top Caller | Most calls in BU for the month |
+
+---
+
+## 🔢 Rigor Score Formula
+
+Calculated per working day, excludes leave/holiday days from averages.
+
+| Activity | Points | Max |
+|----------|--------|-----|
+| Customer visit (physical) | 15 per visit | 15 |
+| Phone calls | 5 per call | 25 |
+| Follow-ups completed | 3 per follow-up | 30 |
+| New leads added | 10 per lead | 20 |
+| Proposals sent | 10 per proposal | 10 |
+| **Total** | | **100** |
+
+WFH days: virtual meetings replace physical visits (max 15 pts for meetings).
+
+**Labels:** `needs_improvement` (<50) · `average` (50–69) · `good` (70–84) · `excellent` (85+)
+
+---
+
+## 🗂️ Project Structure
+
+```
+fluidgo/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                   # FastAPI app, all routers
+│   │   ├── config.py                 # Env settings
+│   │   ├── database.py               # SQLAlchemy async engine
+│   │   ├── models/__init__.py        # All ORM models + role hierarchy constants
+│   │   ├── routers/
+│   │   │   ├── auth.py               # Login, refresh
+│   │   │   ├── dsr.py                # DSR submit/get
+│   │   │   ├── meetings.py           # Meeting log
+│   │   │   ├── leads.py              # Lead pipeline
+│   │   │   ├── pipeline.py           # Deal pipeline
+│   │   │   ├── opportunities.py      # Opportunity intelligence (v2)
+│   │   │   ├── analytics.py          # Dashboard, team, revenue analytics
+│   │   │   ├── ai.py                 # Ollama integration
+│   │   │   ├── users.py              # User management (v3 roles)
+│   │   │   ├── scoring.py            # FGA scoring templates
+│   │   │   ├── fga_approval.py       # FGA approval workflow
+│   │   │   ├── incentives.py         # Incentive schemes & gamification
+│   │   │   └── roles.py              # Org role CRUD
+│   │   ├── services/
+│   │   │   ├── auth_service.py       # JWT + bcrypt
+│   │   │   ├── deps.py               # Route guards (require_role/level/scope)
+│   │   │   ├── ai_service.py         # Ollama prompt builder + streaming
+│   │   │   ├── rigor_service.py      # Rigor score + BANT calculator
+│   │   │   ├── scoring_engine.py     # FGA computation engine
+│   │   │   ├── deal_health_service.py # Deal health scoring
+│   │   │   └── permission_service.py # Data-scope resolver (v3 hierarchy)
+│   │   ├── repositories/             # DB query helpers
+│   │   └── prompts/                  # Ollama prompt templates
+│   ├── alembic/                      # DB migrations (0001–0005)
+│   ├── seed.py                       # Dev seed (Danish May 2026 data)
+│   └── Dockerfile
+├── frontend/
+│   ├── src/
+│   │   ├── pages/
+│   │   │   ├── Login.tsx             # Split-screen WEPSol branded login
+│   │   │   ├── Dashboard.tsx         # Role-aware KPIs, AI panel, quick tiles
+│   │   │   ├── DSREntry.tsx          # Daily DSR form with self-scoring
+│   │   │   ├── Meetings.tsx          # BANT-scored meeting log
+│   │   │   ├── Leads.tsx             # Lead pipeline
+│   │   │   ├── Pipeline.tsx          # Deal pipeline
+│   │   │   ├── Opportunities.tsx     # Opportunity intelligence (v2)
+│   │   │   ├── Analytics.tsx         # Charts: calls, follow-ups, rigor trend
+│   │   │   ├── Team.tsx              # Team management + performance matrix
+│   │   │   ├── RevenueIntelligence.tsx # Revenue vs target dashboard
+│   │   │   ├── FGAApproval.tsx       # FGA approval workflow (all stages)
+│   │   │   └── ScoringAdmin.tsx      # FGA weight configuration
+│   │   ├── components/
+│   │   │   └── layout/Layout.tsx     # Dark navy sidebar + mobile nav
+│   │   ├── hooks/useApi.ts           # Axios + JWT refresh (singleton pattern)
+│   │   └── store/authStore.ts        # Zustand auth state
+│   ├── tailwind.config.js            # WEPSol brand tokens
+│   ├── vite.config.ts                # PWA manifest
+│   └── Dockerfile.dev
+├── nginx/dev.conf                    # Reverse proxy config
+├── docker-compose.yml                # All 5 services
+├── .env.example                      # Required env vars
+└── README.md                         # This file
+```
+
+---
+
+## 🛠️ Dev Commands
 
 ```bash
-docker compose exec backend python seed.py     # v1: 4 users + a month of DSR/meeting/lead data
-docker compose exec backend python seed_v2.py  # v2: org roles + default Sales/PreSales FGA templates
+# View all logs
+docker compose logs -f
+
+# Backend only
+docker compose logs -f backend
+
+# Run a new migration
+docker compose exec backend alembic upgrade head
+
+# Connect to database
+docker compose exec db psql -U fluidgo fluidgo
+
+# List Ollama models
+docker compose exec ollama ollama list
+
+# Pull a better model (needs t3.large / 8GB RAM)
+docker compose exec ollama ollama pull mistral
+
+# Restart backend after code changes
+docker compose restart backend
+
+# Re-seed database (safe — skips existing records)
+docker compose exec backend python seed.py
+
+# Run auth/permission verification
+docker compose exec backend python debug_auth.py
 ```
 
-Both are idempotent — safe to re-run. `seed_v2.py` also bootstraps `org_role_key` on the four
-`seed.py` users (amit → `super_admin`, manager → `manager`, danish → `sales`, inside → `presales`)
-so there's at least one admin able to reach `/scoring-admin` on a fresh deploy.
+---
 
-Test logins (role in parentheses):
+## 💰 Monthly Cost (AWS Production)
 
-| Email | Password | Legacy Role | Org Role |
-|---|---|---|---|
-| danish@fluidpro.in | `Fluid@2026!` | rep | sales |
-| amit@wepsol.com | `Admin@2026!` | bu_head | super_admin |
-| manager@fluidpro.in | `Mgr@2026!` | manager | manager |
-| inside@fluidpro.in | `Inside@2026!` | inside_sales | presales |
+| Resource | Spec | Cost/month |
+|----------|------|-----------|
+| EC2 t3.large (1yr reserved) | 8GB RAM, 2 vCPU | ~₹3,200 |
+| EBS gp3 50GB | Root + data | ~₹350 |
+| Data transfer | ~5GB/mo | ~₹45 |
+| **Total** | | **~₹3,600/month** |
 
-**Change or remove these before any real deployment** — they're dev-only seed credentials.
+---
 
-## Running tests
+## 🚀 Production Deployment (EC2 + k3s)
 
-```bash
-docker compose exec backend python -m pytest tests/ -v
-```
+> See WEP-33 in Linear for full k8s manifests.
 
-Covers `scoring_engine` period math, `deal_health_service` rule scoring, `permission_service`
-data-scope isolation (mocked repos), and regression coverage for the v1 rigor/BANT/lead scorers.
+**Quick steps:**
+1. Launch EC2 t3.large, Ubuntu 22.04, 50GB gp3
+2. SSH in, run `setup-ec2.sh`
+3. Point DNS `dsr.fluidpro.in` → EC2 public IP
+4. Push to `main` branch → GitHub Actions CI/CD deploys automatically
 
-## Installing as a PWA (no app store needed)
+**k8s manifests location:** `k8s/` directory (apply with `kubectl apply -f k8s/`)
 
-On a phone, open `http://<host>` in Chrome (Android) or Safari (iOS) and choose
-**Add to Home Screen**. It installs like a native app icon and works offline for DSR entry
-(queued submissions sync automatically once back online).
+---
 
-## Project layout
+## 📋 Linear Sprint Status
 
-```
-backend/
-├── app/
-│   ├── models/          SQLAlchemy models (v1 + v2, all in one module)
-│   ├── repositories/    v2 data-access layer (opportunity/scoring/role repos)
-│   ├── routers/         v1 + v2 API routes
-│   ├── services/        rigor/BANT/AI (v1) + scoring_engine/deal_health/permission (v2)
-│   └── prompts/         Ollama prompt templates
-├── alembic/versions/    0001 (v1 schema) → 0002 (user deactivation) → 0003 (v2 foundation)
-├── tests/                pytest suite
-├── seed.py / seed_v2.py
-frontend/src/
-├── pages/                one file per route, incl. Opportunities/RevenueIntelligence/ScoringAdmin
-├── components/layout/    role-gated nav
-└── store/                Zustand auth store
-k8s/        Kubernetes manifests for the k3s/EC2 production deployment
-.github/    CI/CD (GitHub Actions — build, push, deploy on push to main)
-```
+| Issue | Title | Status |
+|-------|-------|--------|
+| WEP-27 | Docker Compose scaffold | ✅ Done |
+| WEP-28 | DB schema + migrations | ✅ Done |
+| WEP-29 | FastAPI backend + Ollama | ✅ Done |
+| WEP-30 | React PWA frontend | ✅ Done |
+| WEP-31 | AI engine (Ollama + BANT) | ✅ Done |
+| WEP-32 | Integration + E2E testing | 🔄 In Review |
+| WEP-33 | EC2 + k3s + HTTPS | ⏳ Todo |
+| WEP-34 | CI/CD + pilot onboarding | ⏳ Todo |
+| WEP-35 | Pilot feedback + full rollout | ⏳ Todo |
+| WEP-36 | Revenue Intelligence Dashboard | 🔄 In Progress |
+| WEP-37 | Opportunity Intelligence | 🔄 In Progress |
+| WEP-38 | Sales Performance Engine (FGA) | 🔄 In Progress |
+| WEP-39 | Variable Pay Automation | 📋 Backlog |
+| WEP-40 | AI Coaching | 📋 Backlog |
+| WEP-41 | Role-Based Governance (v3) | 🔄 In Progress |
+| WEP-42 | Kylas CRM Integration | 📋 Backlog (deferred) |
+| WEP-43 | Platform & Infrastructure | 📋 Backlog (deferred) |
 
-## Known limitations
+---
 
-- **Org-role assignment has no dedicated UI yet** — only the four seeded users have an `org_role_key`
-  (set by `seed_v2.py`). Assigning more requires `PATCH /api/roles/assign/{user_id}` directly (via
-  `/api/docs`) until a Phase 2 admin UI exists.
-- **"Team" data-scope currently falls back to "BU" scope** — there's no manager→report reporting-line
-  column on `users` yet, so a manager's data-scope is same-BU rather than their actual direct reports.
-- **Knowledge Excellence (PreSales FGA) and Professional Excellence (Sales FGA)** are proxied via
-  self-scoring — no dedicated training/certification/manager-rating capture exists yet.
-- Everything in Phase 2-4 of the Roadmap above (AI Coach, Variable Pay, Kylas sync, notifications,
-  multi-BU, audit logs) is not built.
+## 🔮 What's Next (Priority Order)
+
+### Immediate — Frontend pages not yet built
+1. **Gamification UI** — `Leaderboard.tsx` + `MyProgress.tsx` + `SchemeManager.tsx`
+2. **Team.tsx v3 update** — new role dropdown (all 10 roles), manager_id assignment, business field
+3. **Analytics.tsx** — add month picker (same as Dashboard), rep selector for BU Head
+
+### Short-term (WEP-33/34)
+4. **EC2 + k3s production deploy** — use `setup-ec2.sh` + k8s manifests
+5. **CI/CD pipeline** — GitHub Actions → GHCR → k3s rolling deploy
+6. **Revenue targets setup** — set Danish's May 2026 target so FGA Business Generation score shows real data
+
+### Medium-term
+7. **WhatsApp/email DSR reminder** — 6pm daily if not submitted
+8. **Weekly PDF summary** — auto-generated for BU Head
+9. **Manager coaching notes** — inline on team DSR view
+10. **Kylas CRM sync** (WEP-42, deferred until stable)
+
+---
+
+## 🏢 Multi-Business Roadmap
+
+| Business | Status | Notes |
+|----------|--------|-------|
+| fluidPro | ✅ Phase 1 (active) | IT Infra Managed Services — West BU |
+| fluidPrint | 📋 Phase 2 | Managed Print Services |
+| floxtax | 📋 Phase 2 | GST / ASP / GSP Solutions |
+| Hooks | 📋 Phase 2 | POS / Printer / AIDC / Channel Sales |
+
+Data model supports all 4 businesses. Phase 1 = fluidPro West BU only. Phase 2 activates other businesses when ready.
+
+---
+
+## ⚠️ Known Issues / Limitations
+
+- **Revenue target for FGA** — Danish has no target set for May 2026, so Business Generation (40%) scores 0. Set via `POST /api/analytics/revenue/targets`.
+- **Duplicate scoring_result rows** — if freeze is called multiple times, Danish shows 2 rows. Fixed by scoping to `(user_id, template_id, period)` in the query. Non-blocking.
+- **FGA period default** — FGA Approval page defaults to previous month (correct). Current month scores can only be frozen after month-end.
+- **manager_id not set on existing users** — seeded users have `manager_id = null`. Manager scope falls back to full-BU until manager_id is assigned via Team → Edit.
+- **Ollama cold start** — first AI analysis after container start takes 15–30s on CPU-only mode.
+- **PostCSS warning** — `postcss.config.js` needs `"type": "module"` in `package.json`. Non-blocking.
+
+---
+
+*Built by WEP Solutions Ltd · Internal Confidential · fluidGo v1 · July 2026*

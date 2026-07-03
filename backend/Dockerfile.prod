@@ -1,0 +1,35 @@
+# Production backend — no --reload, gunicorn + uvicorn workers
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir gunicorn
+
+COPY . .
+
+# Non-root user for security
+RUN useradd -r -u 1001 fluidgo \
+    && chown -R fluidgo:fluidgo /app
+USER fluidgo
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -sf http://localhost:8000/api/health || exit 1
+
+# Run migrations then start with gunicorn (3 uvicorn workers for t3.large)
+CMD ["sh", "-c", "alembic upgrade head && gunicorn app.main:app \
+    -k uvicorn.workers.UvicornWorker \
+    -w 3 \
+    --bind 0.0.0.0:8000 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    --error-logfile -"]

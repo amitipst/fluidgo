@@ -6,14 +6,16 @@ from typing import Optional
 from datetime import date
 from app.database import get_db
 from app.models import User, ScoringTemplate, ScoringParameter
-from app.services.deps import get_current_user
-from app.services.permission_service import require_org_role
+from app.services.deps import get_current_user, require_level
 from app.services import scoring_engine
 from app.repositories import scoring_repo
+from app.models import role_level
 
 router = APIRouter()
 
-ADMIN_ROLES = ("admin", "super_admin", "practice_head")
+# v3: scoring admin access = bu_head (30) and above, plus explicit admin org_role_key
+def _can_manage_scoring(user: User) -> bool:
+    return role_level(user.role) >= 30 or user.org_role_key in ("admin","super_admin","practice_head")
 
 
 class ParameterIn(BaseModel):
@@ -43,7 +45,9 @@ def _validate_weights(parameters: list[ParameterIn]):
 
 @router.get("/templates")
 async def list_templates(db: AsyncSession = Depends(get_db),
-                         user: User = Depends(require_org_role(*ADMIN_ROLES))):
+                         user: User = Depends(get_current_user)):
+    if not _can_manage_scoring(user):
+        raise HTTPException(403, "Scoring admin requires bu_head role or above")
     result = await db.execute(select(ScoringTemplate))
     out = []
     for t in result.scalars().all():
@@ -60,7 +64,9 @@ async def list_templates(db: AsyncSession = Depends(get_db),
 
 @router.post("/templates")
 async def create_template(body: TemplateIn, db: AsyncSession = Depends(get_db),
-                          user: User = Depends(require_org_role(*ADMIN_ROLES))):
+                          user: User = Depends(get_current_user)):
+    if not _can_manage_scoring(user):
+        raise HTTPException(403, "Scoring admin requires bu_head role or above")
     _validate_weights(body.parameters)
     existing = await scoring_repo.get_active_template(db, body.role_key)
     version = 1
@@ -79,7 +85,9 @@ async def create_template(body: TemplateIn, db: AsyncSession = Depends(get_db),
 
 @router.patch("/templates/{template_id}/parameters")
 async def update_parameters(template_id: str, body: list[ParameterIn], db: AsyncSession = Depends(get_db),
-                            user: User = Depends(require_org_role(*ADMIN_ROLES))):
+                            user: User = Depends(get_current_user)):
+    if not _can_manage_scoring(user):
+        raise HTTPException(403, "Scoring admin requires bu_head role or above")
     _validate_weights(body)
     result = await db.execute(select(ScoringParameter).where(ScoringParameter.template_id == template_id))
     for existing in result.scalars().all():
@@ -93,7 +101,7 @@ async def update_parameters(template_id: str, body: list[ParameterIn], db: Async
 
 
 @router.get("/metrics")
-async def list_available_metrics(user: User = Depends(require_org_role(*ADMIN_ROLES))):
+async def list_available_metrics(user: User = Depends(get_current_user)):
     """Feeds a dropdown in ScoringAdmin.tsx so admins pick from real calculators
     instead of typing a metric_source string freehand."""
     return sorted(scoring_engine.METRIC_REGISTRY.keys())

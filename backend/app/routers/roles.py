@@ -5,8 +5,9 @@ from sqlalchemy import select
 from typing import Optional, Literal
 from app.database import get_db
 from app.models import User, OrgRole
-from app.services.permission_service import require_org_role
+from app.services.deps import require_level
 from app.repositories import role_repo
+from app.models import role_level
 
 router = APIRouter()
 
@@ -26,7 +27,7 @@ class UserRoleAssign(BaseModel):
 
 @router.get("")
 async def list_roles(db: AsyncSession = Depends(get_db),
-                     user: User = Depends(require_org_role(*ADMIN_ROLES))):
+                     user: User = Depends(require_level(30))):
     roles = await role_repo.list_roles(db)
     return [{"role_key": r.role_key, "display_name": r.display_name,
              "parent_role_key": r.parent_role_key, "data_scope": r.data_scope} for r in roles]
@@ -34,7 +35,7 @@ async def list_roles(db: AsyncSession = Depends(get_db),
 
 @router.post("")
 async def upsert_role(body: RoleIn, db: AsyncSession = Depends(get_db),
-                      user: User = Depends(require_org_role(*ADMIN_ROLES))):
+                      user: User = Depends(require_level(50))):
     existing = await role_repo.get_role(db, body.role_key)
     if existing:
         existing.display_name = body.display_name
@@ -48,7 +49,7 @@ async def upsert_role(body: RoleIn, db: AsyncSession = Depends(get_db),
 
 @router.patch("/assign/{user_id}")
 async def assign_org_role(user_id: str, body: UserRoleAssign, db: AsyncSession = Depends(get_db),
-                          user: User = Depends(require_org_role(*ADMIN_ROLES))):
+                          user: User = Depends(require_level(30))):
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
     if not target:

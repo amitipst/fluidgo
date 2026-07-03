@@ -15,6 +15,8 @@ import Team from '@/pages/Team'
 import Opportunities from '@/pages/Opportunities'
 import RevenueIntelligence from '@/pages/RevenueIntelligence'
 import ScoringAdmin from '@/pages/ScoringAdmin'
+import FGAApproval from '@/pages/FGAApproval'
+import Gamification from '@/pages/Gamification'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import './index.css'
 
@@ -55,6 +57,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 </ProtectedRoute>
               } />
               <Route path="scoring-admin" element={<ScoringAdmin />} />
+              <Route path="fga-approval" element={
+                <ProtectedRoute roles={['manager','bu_head','business_head','ceo','super_admin','hr','finance']}>
+                  <FGAApproval />
+                </ProtectedRoute>
+              } />
+              <Route path="gamification" element={<Gamification />} />
             </Route>
           </Routes>
         </BrowserRouter>

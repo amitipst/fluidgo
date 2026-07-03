@@ -5,12 +5,30 @@ import { useAuthStore } from '@/store/authStore'
 import { format } from 'date-fns'
 
 const rigorColor = (s: number) =>
-  s >= 80 ? 'text-wep-teal' : s >= 60 ? 'text-wep-amber' : s > 0 ? 'text-wep-red' : 'text-wep-muted'
+  s >= 80 ? 'text-wep-teal' : s >= 60 ? 'text-wep-amber' : s > 0 ? 'text-red-500' : 'text-wep-muted'
 
-const rigorBg = (s: number) =>
-  s >= 80 ? 'bg-teal-50 border-teal-200' : s >= 60 ? 'bg-amber-50 border-amber-200' : s > 0 ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
+// v3 role definitions — matches backend ROLE_HIERARCHY
+const V3_ROLES = [
+  { key: 'rep',           label: '💼 Salesperson (Rep)',       level: 10 },
+  { key: 'inside_sales',  label: '📞 Inside Sales',           level: 10 },
+  { key: 'pre_sales',     label: '🔧 Pre-Sales',              level: 10 },
+  { key: 'manager',       label: '👔 Manager',                level: 20 },
+  { key: 'bu_head',       label: '🏢 BU Head',                level: 30 },
+  { key: 'business_head', label: '🏭 Business Head',          level: 40 },
+  { key: 'hr',            label: '👥 HR',                     level: 25 },
+  { key: 'finance',       label: '💰 Finance',                level: 25 },
+  { key: 'ceo',           label: '👑 CEO',                    level: 50 },
+  { key: 'super_admin',   label: '⚙️ Super Admin',            level: 99 },
+]
 
-const emptyForm = { name: '', email: '', password: '', role: 'rep', bu: 'West' }
+const BUSINESSES = [
+  { key: 'fluidpro',   label: 'fluidPro (IT Infra)' },
+  { key: 'fluidprint', label: 'fluidPrint (Managed Print)' },
+  { key: 'floxtax',    label: 'floxtax (GST/ASP)' },
+  { key: 'hooks',      label: 'Hooks (POS/Channel)' },
+]
+
+const emptyForm = { name: '', email: '', password: '', role: 'rep', bu: 'West', business: 'fluidpro' }
 
 export default function Team() {
   const { user } = useAuthStore()
@@ -38,6 +56,13 @@ export default function Team() {
     queryKey: ['users'],
     queryFn: () => api.get('/users').then(r => r.data),
     enabled: canManageUsers && showManage
+  })
+
+  // Get roles assignable by current actor
+  const { data: assignableRoles = [] } = useQuery({
+    queryKey: ['assignable-roles'],
+    queryFn: () => api.get('/users/roles').then(r => r.data),
+    enabled: canManageUsers
   })
 
   const createUser = useMutation({
@@ -76,7 +101,13 @@ export default function Team() {
     }
   }
 
-  const viewTitle = user?.role === 'bu_head' ? '🏢 BU Head Dashboard' : user?.role === 'inside_sales' ? '📞 Inside Sales View' : '👥 Manager Dashboard'
+  const viewTitle = user?.role === 'bu_head'
+    ? `🏢 BU Head — ${user?.bu} BU`
+    : user?.role === 'inside_sales'
+      ? '📞 Inside Sales View'
+      : user?.role === 'manager'
+        ? `👥 Manager Dashboard — ${user?.bu} BU`
+        : '👥 Team Dashboard'
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -99,29 +130,59 @@ export default function Team() {
 
       {canManageUsers && showManage && (
         <div className="card mb-6">
-          <div className="font-semibold text-sm text-wep-navy mb-4">Onboard a new member</div>
+          <div className="font-bold text-sm text-wep-navy mb-4">👤 Onboard a New Team Member</div>
           <form
             onSubmit={e => { e.preventDefault(); createUser.mutate() }}
-            className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-2"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3"
           >
-            <input className="form-input" placeholder="Full name" required
-              value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-            <input className="form-input" type="email" placeholder="Email" required
-              value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
-            <input className="form-input" type="text" placeholder="Temp password (min 8 chars)" required
-              value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
-            <select className="form-input" value={form.role}
-              onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-              <option value="rep">Rep</option>
-              <option value="inside_sales">Inside Sales</option>
-              <option value="manager">Manager</option>
-              <option value="bu_head">BU Head</option>
-            </select>
-            <button type="submit" disabled={createUser.isPending} className="btn-primary">
-              {createUser.isPending ? 'Adding...' : '+ Add Member'}
-            </button>
+            <div>
+              <label className="form-label block mb-1">Full Name *</label>
+              <input className="form-input" placeholder="e.g. Rahul Sharma" required
+                value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label block mb-1">Work Email *</label>
+              <input className="form-input" type="email" placeholder="rahul@fluidpro.in" required
+                value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label block mb-1">Temp Password (min 8 chars) *</label>
+              <input className="form-input" type="text" placeholder="Temp@2026!" required
+                value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label block mb-1">Role *</label>
+              <select className="form-input" value={form.role}
+                onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+                {/* Dynamic from backend — shows only roles below current actor's level */}
+                {(assignableRoles.length ? assignableRoles : V3_ROLES).map((r: any) => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-wep-muted mt-0.5">Only roles below your level shown</p>
+            </div>
+            <div>
+              <label className="form-label block mb-1">Business *</label>
+              <select className="form-input" value={form.business}
+                onChange={e => setForm(f => ({ ...f, business: e.target.value }))}>
+                {BUSINESSES.map(b => (
+                  <option key={b.key} value={b.key}>{b.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="form-label block mb-1">BU *</label>
+              <input className="form-input" placeholder="West" required
+                value={form.bu} onChange={e => setForm(f => ({ ...f, bu: e.target.value }))} />
+              <p className="text-[10px] text-wep-muted mt-0.5">Must match your own BU</p>
+            </div>
+            <div className="md:col-span-2 lg:col-span-3 flex items-center gap-3">
+              <button type="submit" disabled={createUser.isPending} className="btn-primary">
+                {createUser.isPending ? '⏳ Adding...' : '➕ Add Member'}
+              </button>
+              {formError && <p className="text-red-500 text-sm">{formError}</p>}
+            </div>
           </form>
-          {formError && <p className="text-red-500 text-sm mb-3">{formError}</p>}
 
           <label className="flex items-center gap-2 text-xs text-wep-muted mb-3">
             <input type="checkbox" checked={showExited} onChange={e => setShowExited(e.target.checked)} />

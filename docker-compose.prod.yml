@@ -1,0 +1,120 @@
+# docker-compose.prod.yml — Production deployment on EC2
+# Usage: docker compose -f docker-compose.prod.yml up -d
+# DO NOT use docker-compose.yml (dev) on the server.
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB:       fluidgo
+      POSTGRES_USER:     fluidgo
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Point-in-time backup directory (pg_dump cron writes here)
+      - /opt/fluidgo/backups:/backups
+    # NOT exposed on host — internal only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fluidgo"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ── Ollama (local LLM) ────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    restart: always
+    volumes:
+      - ollama_models:/root/.ollama
+    # NOT exposed on host — backend calls ollama:11434 internally
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 5g     # phi3:mini needs ~4GB; leave 3GB for backend+frontend
+
+  # Pull model on first run (no-op if already pulled)
+  ollama-init:
+    image: curlimages/curl:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "Pulling ${OLLAMA_MODEL:-phi3:mini}..."
+        curl -s -X POST http://ollama:11434/api/pull \
+          -d "{\"name\":\"${OLLAMA_MODEL:-phi3:mini}\",\"stream\":false}" \
+          && echo "Model ready"
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    restart: always
+    env_file: .env.prod
+    environment:
+      DATABASE_URL:  postgresql+asyncpg://fluidgo:${DB_PASSWORD}@db:5432/fluidgo
+      OLLAMA_URL:    http://ollama:11434
+      ENVIRONMENT:   production
+    ports:
+      - "127.0.0.1:8000:8000"   # bind localhost ONLY — nginx proxies externally
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Frontend (built React SPA) ────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    restart: always
+    ports:
+      - "127.0.0.1:3000:80"     # bind localhost ONLY — nginx proxies externally
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  pgdata:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/fluidgo/pgdata   # EBS-backed directory
+  ollama_models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/fluidgo/ollama   # EBS-backed directory

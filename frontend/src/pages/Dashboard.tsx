@@ -1,21 +1,35 @@
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
 import { format } from 'date-fns'
-import { useState } from 'react'
+import { Link } from 'react-router-dom'
 
-function StatCard({ label, value, accent, icon }: { label:string; value:string|number; accent:string; icon:string }) {
+// ── KPI Stat Card ─────────────────────────────────────────────────────────────
+function KPICard({ label, value, sub, accentColor, icon, loading }: {
+  label: string; value: string | number; sub?: string;
+  accentColor: string; icon: string; loading?: boolean
+}) {
   return (
-    <div className={`card relative overflow-hidden border-t-2 ${accent}`}>
-      <div className="text-[10px] font-bold uppercase tracking-widest text-wep-muted mb-2">{label}</div>
-      <div className="font-display font-bold text-3xl text-wep-navy">{value}</div>
-      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-4xl opacity-10">{icon}</div>
+    <div className="stat-card">
+      <div className="stat-card-accent" style={{ background: accentColor }} />
+      <div className="text-[10px] font-bold uppercase tracking-widest text-wep-muted mb-3">{label}</div>
+      {loading ? (
+        <div className="skeleton h-9 w-20 mb-1" />
+      ) : (
+        <div className="font-display font-black text-wep-navy text-[2rem] leading-none mb-1">{value}</div>
+      )}
+      {sub && <div className="text-xs text-wep-muted mt-1">{sub}</div>}
+      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-4xl opacity-[0.06] select-none pointer-events-none">
+        {icon}
+      </div>
     </div>
   )
 }
 
+// ── AI Panel ──────────────────────────────────────────────────────────────────
 function AIPanel({ userId }: { userId: string }) {
-  const [content, setContent] = useState<string>('')
+  const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
 
   async function runAI() {
@@ -24,105 +38,190 @@ function AIPanel({ userId }: { userId: string }) {
       const res = await api.get(`/ai/dashboard/${userId}`)
       setContent(res.data.content)
     } catch {
-      setContent('⚠️ AI analysis unavailable. Ensure Ollama is running with phi3:mini pulled.')
-    } finally {
-      setLoading(false)
-    }
+      setContent('⚠️ AI unavailable — ensure Ollama is running with phi3:mini pulled.\n\nRun: docker compose exec ollama ollama pull phi3:mini')
+    } finally { setLoading(false) }
   }
 
   return (
-    <div className="ai-panel mb-6">
+    <div className="ai-panel mb-6" style={{ background: 'linear-gradient(135deg, #1A0B2E 0%, #3D1A6E 100%)' }}>
+      {/* Top bar */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 bg-wep-electric/20 border border-wep-electric/30 text-wep-electric text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-wep-electric animate-pulse inline-block"/>
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
+            style={{ background: 'rgba(14,165,233,0.20)', color: '#38BDF8', border: '1px solid rgba(14,165,233,0.25)' }}>
+            <span className="ai-pulse" />
             AI · Ollama Local
           </span>
           <span className="font-display font-bold text-white text-sm">Performance Intelligence</span>
         </div>
         <button onClick={runAI} disabled={loading}
-          className="text-xs text-wep-electric/70 hover:text-wep-electric transition-colors disabled:opacity-50">
-          {loading ? '⏳ Analysing...' : '✨ Analyse'}
+          className="text-xs font-semibold transition-colors disabled:opacity-40"
+          style={{ color: loading ? 'rgba(255,255,255,0.4)' : '#F5921E' }}>
+          {loading ? '⏳ Analysing…' : '✨ Run Analysis'}
         </button>
       </div>
+
+      {/* Content */}
       {loading && (
-        <div className="flex items-center gap-2 text-white/60 text-sm">
-          <span className="flex gap-1">{[0,1,2].map(i=>(
-            <span key={i} className="w-1.5 h-1.5 rounded-full bg-wep-electric animate-bounce"
-              style={{animationDelay:`${i*0.15}s`}}/>
-          ))}</span>
-          Querying local LLM...
+        <div className="flex items-center gap-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
+          <span className="flex gap-1">
+            {[0,1,2].map(i => (
+              <span key={i} className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-bounce"
+                style={{ animationDelay: `${i*0.15}s` }} />
+            ))}
+          </span>
+          Querying local Ollama LLM — this takes 10–30 seconds…
         </div>
       )}
-      {content && (
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white/85 leading-relaxed whitespace-pre-wrap"
-          dangerouslySetInnerHTML={{__html: content.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br/>')}}/>
-      )}
       {!content && !loading && (
-        <p className="text-white/40 text-sm">Click Analyse to get AI-powered insights from your local Ollama model.</p>
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.35)' }}>
+          Click "Run Analysis" to get BANT insights, rigor assessment and coaching recommendations
+          generated locally by your Ollama model. No data leaves this server.
+        </p>
+      )}
+      {content && (
+        <div className="text-sm leading-relaxed rounded-xl p-4"
+          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.85)' }}
+          dangerouslySetInnerHTML={{
+            __html: content
+              .replace(/\*\*(.*?)\*\*/g, '<strong style="color:#fff">$1</strong>')
+              .replace(/^#{1,3}\s(.+)$/gm, '<div style="color:#F5921E;font-weight:700;margin-top:12px;margin-bottom:4px">$1</div>')
+              .replace(/\n/g, '<br/>')
+          }} />
       )}
     </div>
   )
 }
 
+// ── Quick-link tile ───────────────────────────────────────────────────────────
+function QuickTile({ to, icon, label, desc }: { to: string; icon: string; label: string; desc: string }) {
+  return (
+    <Link to={to}
+      className="card group flex flex-col gap-2 hover:border-wep-orange transition-all duration-200 cursor-pointer"
+      style={{ boxShadow: '0 1px 3px rgba(11,31,58,0.06)' }}>
+      <div className="text-2xl">{icon}</div>
+      <div className="font-bold text-sm text-wep-navy group-hover:text-wep-orange transition-colors">{label}</div>
+      <div className="text-xs text-wep-muted leading-relaxed">{desc}</div>
+    </Link>
+  )
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { user } = useAuthStore()
-  const today = format(new Date(), 'yyyy-MM-dd')
+  const today  = format(new Date(), 'yyyy-MM-dd')
+  const hour   = new Date().getHours()
+  const isBU   = ['manager','bu_head'].includes(user?.role ?? '')
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'))
+
+  const { data: dash, isLoading } = useQuery({
+    queryKey: ['dashboard', user?.id, selectedMonth],
+    queryFn: () => api.get(`/analytics/dashboard?month=${selectedMonth}`).then(r => r.data),
+    enabled: !!user?.id,
+  })
 
   const { data: todayDSR } = useQuery({
-    queryKey: ['dsr', today],
-    queryFn: () => api.get(`/dsr?date=${today}`).then(r => r.data)
-  })
-  const { data: analytics } = useQuery({
-    queryKey: ['analytics', user?.id],
-    queryFn: () => api.get(`/analytics/rep/${user?.id}`).then(r => r.data),
-    enabled: !!user?.id
+    queryKey: ['dsr-today', today],
+    queryFn: () => api.get(`/dsr?date=${today}`).then(r => r.data),
   })
 
-  const totals = analytics?.reduce((acc: any, d: any) => ({
-    calls: acc.calls + (d.calls||0),
-    visits: acc.visits + (d.visits||0),
-    followups: acc.followups + (d.followups||0),
-    leads: acc.leads + (d.new_leads||0),
-    proposals: acc.proposals + (d.proposals||0),
-  }), { calls:0, visits:0, followups:0, leads:0, proposals:0 })
-
-  const avgRigor = analytics?.length
-    ? Math.round(analytics.filter((d:any)=>d.rigor_score>=0).reduce((a:number,d:any)=>a+d.rigor_score,0) / analytics.filter((d:any)=>d.rigor_score>=0).length)
-    : 0
+  const rigor = dash?.avg_rigor ?? 0
+  const rigorColor = rigor >= 80 ? '#059669' : rigor >= 60 ? '#D97706' : rigor > 0 ? '#DC2626' : '#DDE3EE'
+  const rigorLabel = rigor >= 80 ? '🏆 Excellent' : rigor >= 60 ? '✅ Good' : rigor > 0 ? '⚠️ Needs focus' : undefined
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="flex items-start justify-between mb-6">
+
+      {/* ── Page header ── */}
+      <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
         <div>
-          <h1 className="font-display font-bold text-wep-navy text-xl md:text-2xl">
-            Good {new Date().getHours()<12?'morning':'afternoon'}, {user?.name?.split(' ')[0]} 👋
-          </h1>
-          <p className="text-wep-muted text-sm mt-1">
-            {format(new Date(),'EEEE, d MMMM yyyy')} · {user?.bu} BU
-          </p>
+          <div className="font-display font-black text-wep-navy text-2xl leading-tight">
+            {greeting}, {user?.name?.split(' ')[0]} 👋
+          </div>
+          <div className="text-wep-muted text-sm mt-1 flex items-center gap-2 flex-wrap">
+            <span>{format(new Date(), 'EEEE, d MMMM yyyy')}</span>
+            <span className="text-wep-border-strong">·</span>
+            <span>{user?.bu} BU · {user?.business ?? 'fluidPro'}</span>
+            {isBU && dash?.pending_today > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold"
+                style={{ background: '#FEF2F2', color: '#DC2626' }}>
+                🔴 {dash.pending_today} DSR pending today
+              </span>
+            )}
+          </div>
         </div>
-        <a href="/dsr" className="btn-primary hidden md:block">✏️ Submit DSR</a>
+        <div className="flex items-center gap-2">
+          {isBU && (
+            <input type="month" className="form-input py-2 text-sm w-40"
+              value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+          )}
+          <Link to="/dsr" className="btn-primary">✏️ Submit DSR</Link>
+        </div>
       </div>
 
+      {/* ── KPI Grid ── */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-        <StatCard label="Visits"     value={totals?.visits    ?? '—'} accent="border-t-wep-teal"    icon="🏢"/>
-        <StatCard label="Calls"      value={totals?.calls     ?? '—'} accent="border-t-wep-accent"  icon="📞"/>
-        <StatCard label="Follow-Ups" value={totals?.followups ?? '—'} accent="border-t-wep-amber"   icon="🔄"/>
-        <StatCard label="Leads"      value={totals?.leads     ?? '—'} accent="border-t-wep-electric" icon="🎯"/>
-        <StatCard label="Rigor Score" value={avgRigor ? `${avgRigor}/100` : '—'} accent="border-t-wep-green" icon="⚡"/>
+        <KPICard label="Visits"      value={dash?.total_visits    ?? 0} icon="🏢"
+          sub={isBU ? `BU · ${selectedMonth}` : selectedMonth}
+          accentColor="#0D9488" loading={isLoading} />
+        <KPICard label="Calls"       value={dash?.total_calls     ?? 0} icon="📞"
+          accentColor="#1E6FD9" loading={isLoading} />
+        <KPICard label="Follow-Ups"  value={dash?.total_followups ?? 0} icon="🔄"
+          accentColor="#D97706" loading={isLoading} />
+        <KPICard label="New Leads"   value={dash?.total_leads     ?? 0} icon="🎯"
+          accentColor="#0EA5E9" loading={isLoading} />
+        <KPICard label="Avg Rigor"
+          value={isLoading ? '…' : rigor > 0 ? `${rigor}/100` : '—'}
+          sub={rigorLabel} icon="⚡"
+          accentColor={rigorColor} loading={isLoading} />
       </div>
 
+      {/* ── AI Panel ── */}
       {user?.id && <AIPanel userId={user.id} />}
 
-      {todayDSR && (
-        <div className="card">
-          <div className="font-semibold text-sm text-wep-navy mb-3">Today's DSR</div>
-          <div className="grid grid-cols-3 gap-3 text-center text-sm">
-            <div><div className="font-bold text-wep-accent">{todayDSR.calls}</div><div className="text-wep-muted text-xs">Calls</div></div>
-            <div><div className="font-bold text-wep-teal">{todayDSR.followups}</div><div className="text-wep-muted text-xs">Follow-ups</div></div>
-            <div><div className="font-bold text-wep-amber">{todayDSR.rigor_score}</div><div className="text-wep-muted text-xs">Rigor</div></div>
+      {/* ── Today's DSR (rep only) ── */}
+      {!isBU && (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-bold text-wep-navy text-sm">📋 Today's DSR</div>
+            {!todayDSR && (
+              <Link to="/dsr" className="text-xs font-semibold text-wep-orange hover:underline">
+                Submit now →
+              </Link>
+            )}
           </div>
+          {todayDSR ? (
+            <div className="grid grid-cols-3 gap-4 text-center">
+              {[
+                { label: 'Calls',      val: todayDSR.calls,     color: '#1E6FD9' },
+                { label: 'Follow-ups', val: todayDSR.followups, color: '#0D9488' },
+                { label: 'Rigor',      val: `${todayDSR.rigor_score}/100`,
+                  color: todayDSR.rigor_score >= 80 ? '#059669' : todayDSR.rigor_score >= 60 ? '#D97706' : '#DC2626' },
+              ].map(({ label, val, color }) => (
+                <div key={label}>
+                  <div className="font-display font-black text-2xl" style={{ color }}>{val}</div>
+                  <div className="text-wep-muted text-xs mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <div className="text-4xl mb-3">📋</div>
+              <p className="text-wep-muted text-sm mb-4">No DSR submitted yet today.</p>
+              <Link to="/dsr" className="btn-primary text-sm">Submit Today's DSR →</Link>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── BU Head quick tiles ── */}
+      {isBU && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <QuickTile to="/team"          icon="👥" label="Team"         desc="DSR compliance & rigor leaderboard" />
+          <QuickTile to="/revenue"       icon="💰" label="Revenue"      desc="Target achievement & pipeline" />
+          <QuickTile to="/opportunities" icon="🧭" label="Opportunities" desc="Deal health & BANT scores" />
+          <QuickTile to="/fga-approval"  icon="🏆" label="FGA Approval" desc="Score review & Finance export" />
         </div>
       )}
     </div>

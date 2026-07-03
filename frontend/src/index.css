@@ -1,25 +1,150 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800;900&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── fluidGo Design System — WEP Solutions Brand ────────────────────────── */
+
 @layer base {
   * { box-sizing: border-box; }
-  body { @apply bg-wep-surface text-wep-navy font-sans antialiased; }
+  body {
+    @apply bg-wep-surface text-wep-text font-sans antialiased;
+    font-feature-settings: "cv02","cv03","cv04","cv11";
+  }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-thumb { @apply bg-wep-border rounded-full; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { background: #C8B4E8; border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #92278E; }
 }
 
 @layer components {
-  .card { @apply bg-white border border-wep-border rounded-xl p-5 shadow-sm; }
-  .btn-primary { @apply bg-wep-accent text-white font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm; }
-  .btn-outline { @apply border border-wep-border text-wep-navy font-medium px-4 py-2 rounded-lg hover:border-wep-accent hover:text-wep-accent transition-colors text-sm bg-white; }
-  .btn-ghost { @apply text-wep-muted px-3 py-2 rounded-lg hover:bg-wep-surface transition-colors text-sm; }
-  .form-input { @apply w-full border border-wep-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-wep-accent bg-white; }
-  .form-label { @apply text-xs font-semibold uppercase tracking-wide text-wep-muted; }
-  .badge-hot { @apply bg-red-50 text-red-600 text-xs font-bold px-2.5 py-1 rounded-full; }
-  .badge-warm { @apply bg-amber-50 text-amber-600 text-xs font-bold px-2.5 py-1 rounded-full; }
-  .badge-cold { @apply bg-blue-50 text-blue-400 text-xs font-bold px-2.5 py-1 rounded-full; }
-  .badge-engaged { @apply bg-teal-50 text-teal-600 text-xs font-bold px-2.5 py-1 rounded-full; }
-  .ai-panel { @apply bg-wep-navy text-white rounded-xl p-5 relative overflow-hidden; }
+
+  /* ── Cards ────────────────────────────────────────────────── */
+  .card {
+    @apply bg-wep-card border border-wep-border rounded-2xl p-5;
+    box-shadow: 0 1px 3px rgba(26,11,46,0.07), 0 1px 2px rgba(26,11,46,0.04);
+  }
+  .card-hover {
+    @apply card transition-all duration-200 hover:border-wep-border-strong;
+    &:hover { box-shadow: 0 4px 12px rgba(26,11,46,0.10); }
+  }
+
+  /* ── Primary CTA — fluidPro pink ─────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 font-semibold text-sm text-white
+           px-4 py-2.5 rounded-xl transition-all duration-200 cursor-pointer select-none;
+    background: linear-gradient(135deg, #F0115E 0%, #C2005A 100%);
+    box-shadow: 0 2px 8px rgba(240,17,94,0.28);
+    &:hover { filter: brightness(1.08); box-shadow: 0 4px 14px rgba(240,17,94,0.40); }
+    &:active { filter: brightness(0.97); transform: translateY(1px); }
+    &:disabled { @apply opacity-50 cursor-not-allowed; filter: none; box-shadow: none; }
+  }
+
+  /* ── Secondary CTA — blue (data actions) ─────────────────── */
+  .btn-blue {
+    @apply inline-flex items-center justify-center gap-2 font-semibold text-sm text-white
+           px-4 py-2.5 rounded-xl transition-all duration-200 cursor-pointer select-none;
+    background: linear-gradient(135deg, #1E6FD9 0%, #0EA5E9 100%);
+    box-shadow: 0 2px 8px rgba(30,111,217,0.22);
+    &:hover { filter: brightness(1.06); box-shadow: 0 4px 14px rgba(30,111,217,0.32); }
+    &:active { filter: brightness(0.97); transform: translateY(1px); }
+    &:disabled { @apply opacity-50 cursor-not-allowed; filter: none; box-shadow: none; }
+  }
+
+  /* ── Outline button ───────────────────────────────────────── */
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 font-medium text-sm
+           px-4 py-2.5 rounded-xl border border-wep-border bg-white text-wep-text
+           hover:border-brand-pink hover:text-brand-pink transition-all duration-200
+           cursor-pointer select-none;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 font-medium text-sm
+           px-3 py-2 rounded-lg text-wep-muted hover:bg-wep-surface hover:text-wep-text
+           transition-all duration-200 cursor-pointer select-none;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 font-semibold text-sm text-white
+           px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700
+           transition-all duration-200 cursor-pointer select-none;
+  }
+
+  /* ── Form elements ────────────────────────────────────────── */
+  .form-input {
+    @apply w-full border border-wep-border rounded-xl px-3.5 py-2.5 text-sm
+           text-wep-text bg-white placeholder-wep-light
+           focus:outline-none transition-all duration-150;
+    &:focus {
+      border-color: #F0115E;
+      box-shadow: 0 0 0 3px rgba(240,17,94,0.08);
+    }
+  }
+
+  .form-select {
+    @apply form-input appearance-none cursor-pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B5F7A'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    padding-right: 36px;
+  }
+
+  .form-label {
+    @apply text-[11px] font-bold uppercase tracking-wider text-wep-muted;
+  }
+
+  /* ── Badges ───────────────────────────────────────────────── */
+  .badge { @apply inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full; }
+  .badge-hot      { @apply badge bg-red-50 text-red-600; }
+  .badge-warm     { @apply badge bg-amber-50 text-amber-700; }
+  .badge-cold     { @apply badge bg-sky-50 text-sky-600; }
+  .badge-engaged  { @apply badge bg-teal-50 text-teal-700; }
+  .badge-success  { @apply badge bg-emerald-50 text-emerald-700; }
+  /* fluidPro brand badge */
+  .badge-brand    { @apply badge; background: #F3E6F3; color: #92278E; }
+
+  /* ── AI panel — deep purple (fluidPro identity) ───────────── */
+  .ai-panel {
+    @apply text-white rounded-2xl p-5 relative overflow-hidden;
+    background: linear-gradient(135deg, #1A0B2E 0%, #3D1A6E 100%);
+    box-shadow: 0 4px 20px rgba(26,11,46,0.25);
+  }
+  .ai-pulse {
+    @apply w-2 h-2 rounded-full bg-sky-400 inline-block;
+    animation: ai-ping 2s cubic-bezier(0,0,0.2,1) infinite;
+  }
+  @keyframes ai-ping {
+    0%,100%  { opacity:1; transform:scale(1); }
+    50%      { opacity:0.5; transform:scale(0.75); }
+  }
+
+  /* ── Stat card ────────────────────────────────────────────── */
+  .stat-card {
+    @apply bg-wep-card border border-wep-border rounded-2xl p-4 relative overflow-hidden;
+    box-shadow: 0 1px 3px rgba(26,11,46,0.06);
+  }
+  .stat-card-accent { @apply absolute inset-x-0 top-0 h-[3px] rounded-t-2xl; }
+
+  /* ── Page header ──────────────────────────────────────────── */
+  .page-header { @apply flex items-start justify-between gap-4 mb-6 flex-wrap; }
+  .page-title  { @apply font-display font-bold text-wep-text text-xl md:text-2xl leading-tight; }
+  .page-sub    { @apply text-wep-muted text-sm mt-1; }
+
+  /* ── Table ────────────────────────────────────────────────── */
+  .data-table { @apply w-full text-sm; }
+  .data-table th {
+    @apply text-left text-[10px] font-bold uppercase tracking-wider text-wep-muted
+           py-3 px-4 border-b border-wep-border bg-wep-surface whitespace-nowrap;
+  }
+  .data-table td { @apply py-3 px-4 border-b border-wep-border/60 text-wep-text; }
+  .data-table tr:last-child td { @apply border-b-0; }
+  .data-table tbody tr:hover td { @apply bg-brand-purple-lt/30; }
+
+  /* ── Skeleton ─────────────────────────────────────────────── */
+  .skeleton { @apply bg-wep-border rounded-lg animate-pulse; }
+
+  /* ── Misc ─────────────────────────────────────────────────── */
+  .divider { @apply border-t border-wep-border; }
 }
