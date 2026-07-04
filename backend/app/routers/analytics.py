@@ -36,16 +36,17 @@ async def rep_analytics(user_id: str, db: AsyncSession = Depends(get_db),
 
 @router.get("/team")
 async def team_analytics(include_inactive: bool = False, db: AsyncSession = Depends(get_db),
-                         user: User = Depends(require_role("manager", "bu_head", "inside_sales"))):
+                         user: User = Depends(require_role("manager", "bu_head", "business_head", "inside_sales", "ceo", "super_admin"))):
     """Team performance matrix — scoped by role/BU automatically.
     Exited reps (is_active=False) excluded by default; include_inactive=true shows them."""
-    # Scope: BU Head and Manager see their BU; inside_sales sees everyone (for lead routing)
+    # Use permission_service for consistent scope resolution across all roles
+    visible_ids = await resolve_visible_user_ids(db, user)
+
     query = select(User)
     if not include_inactive:
         query = query.where(User.is_active == True)
-    # BU scope — bu_head and manager only see their own BU
-    if user.role in ("manager", "bu_head") and user.bu:
-        query = query.where(User.bu == user.bu)
+    if visible_ids is not None:
+        query = query.where(User.id.in_(visible_ids))
 
     users_result = await db.execute(query)
     users = users_result.scalars().all()
@@ -96,10 +97,13 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
         yr, mo = today.year, today.month
     month_end = date(yr, mo, monthrange(yr, mo)[1])
 
-    if user.role in ("manager", "bu_head"):
-        bu_users = (await db.execute(
-            select(User).where(User.bu == user.bu, User.is_active == True)
-        )).scalars().all()
+    if user.role in ("manager", "bu_head", "business_head", "ceo", "super_admin", "hr"):
+        # Use permission_service — handles business_head (all regions), manager (team), etc.
+        visible_ids = await resolve_visible_user_ids(db, user)
+        q = select(User).where(User.is_active == True)
+        if visible_ids is not None:
+            q = q.where(User.id.in_(visible_ids))
+        bu_users = (await db.execute(q)).scalars().all()
         user_ids = [u.id for u in bu_users]
         dsrs = (await db.execute(
             select(DSRDaily).where(
@@ -108,7 +112,6 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
                 DSRDaily.date <= month_end
             )
         )).scalars().all()
-        # pending_today only meaningful for current month
         pending_today = len([u for u in bu_users
                              if u.id not in {d.user_id for d in dsrs if d.date == today}]) \
                         if not month else 0
@@ -138,17 +141,18 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
 
 @router.get("/revenue")
 async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
-                            user: User = Depends(require_role("manager", "bu_head"))):
-    """Revenue Intelligence: forecast, target achievement, gap, pipeline coverage,
-    win %, avg deal size — derived from extended pipeline table + revenue_targets."""
+                            user: User = Depends(require_role("manager", "bu_head", "business_head", "ceo", "super_admin", "finance"))):
+    """Revenue Intelligence — scoped by permission_service (works for all roles)."""
     today = date.today()
     p = period or f"{today.year}-{today.month:02d}"
     start, end = _period_bounds(p)
 
-    # Scope deals to this user's BU
-    bu_users = (await db.execute(
-        select(User).where(User.bu == user.bu, User.is_active == True)
-    )).scalars().all()
+    # Use permission_service — handles business_head (all regions), manager (team), etc.
+    visible_ids = await resolve_visible_user_ids(db, user)
+    q = select(User).where(User.is_active == True)
+    if visible_ids is not None:
+        q = q.where(User.id.in_(visible_ids))
+    bu_users = (await db.execute(q)).scalars().all()
     bu_user_ids = [u.id for u in bu_users]
 
     deals = (await db.execute(

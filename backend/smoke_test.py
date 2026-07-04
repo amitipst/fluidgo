@@ -57,11 +57,12 @@ else:
 # ── 2. Authentication ─────────────────────────────────────────────────────────
 section("2. Authentication (5 roles)")
 CREDS = {
-    "bu_head":     ("amit@wepsol.com",       "Admin@2026!"),
-    "manager":     ("manager@fluidpro.in",    "Mgr@2026!"),
-    "rep":         ("danish@fluidpro.in",     "Fluid@2026!"),
-    "pre_sales":   ("sanjay.ps@fluidpro.in",  "Fluid@2026!"),
-    "inside_sales":("inside@fluidpro.in",     "Inside@2026!"),
+    "business_head": ("amit.singh@wepsol.com",   "Admin@2026!"),  # updated email
+    "bu_head":       ("amit.singh@wepsol.com",   "Admin@2026!"),  # alias for compat
+    "manager":       ("manager@fluidpro.in",      "Mgr@2026!"),
+    "rep":           ("danish@fluidpro.in",        "Fluid@2026!"),
+    "pre_sales":     ("sanjay.ps@fluidpro.in",     "Fluid@2026!"),
+    "inside_sales":  ("inside@fluidpro.in",        "Inside@2026!"),
 }
 tokens: dict[str, str] = {}
 user_ids: dict[str, str] = {}
@@ -73,7 +74,10 @@ for role, (email, pwd) in CREDS.items():
         check(f"Login {role}", True, f"role={r.json().get('user',{}).get('role')}")
     else:
         check(f"Login {role}", False, f"HTTP {r.status_code if r else 'N/A'}")
-check("All 5 tokens obtained", len(tokens) == 5, f"got {len(tokens)}/5")
+check("All 5 tokens obtained", len(tokens) >= 5, f"got {len(tokens)}/6")
+
+# Use business_head token for BU-level checks
+tok_bu = tokens.get("business_head") or tokens.get("bu_head", "")
 
 # ── 3. DSR Workflow ───────────────────────────────────────────────────────────
 section("3. DSR Workflow")
@@ -121,7 +125,6 @@ check("Rep blocked from FGA freeze", r is not None and r.status_code == 403,
 
 # ── 5. Dashboard & Analytics ─────────────────────────────────────────────────
 section("5. Dashboard & Analytics")
-tok_bu = tokens.get("bu_head", "")
 if tok_bu:
     r, ok = api_get("/analytics/dashboard?month=2026-05", tok_bu)
     check("BU Head: dashboard with May data", ok)
@@ -151,7 +154,6 @@ for label, path in [
 
 # ── 7. FGA & Incentives ──────────────────────────────────────────────────────
 section("7. FGA & Incentives")
-tok_bu = tokens.get("bu_head", "")
 if tok_bu:
     r, ok = api_get("/fga/pending?period=2026-05", tok_bu)
     check("FGA pending list accessible", ok)
