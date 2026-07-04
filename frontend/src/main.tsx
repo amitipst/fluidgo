@@ -7,6 +7,7 @@ import Login from '@/pages/Login'
 import Layout from '@/components/layout/Layout'
 import Dashboard from '@/pages/Dashboard'
 import DSREntry from '@/pages/DSREntry'
+import DSRHistory from '@/pages/DSRHistory'
 import Meetings from '@/pages/Meetings'
 import Leads from '@/pages/Leads'
 import Pipeline from '@/pages/Pipeline'
@@ -14,10 +15,10 @@ import Analytics from '@/pages/Analytics'
 import Team from '@/pages/Team'
 import Opportunities from '@/pages/Opportunities'
 import RevenueIntelligence from '@/pages/RevenueIntelligence'
+import RegionalPerformance from '@/pages/RegionalPerformance'
 import ScoringAdmin from '@/pages/ScoringAdmin'
 import FGAApproval from '@/pages/FGAApproval'
 import Gamification from '@/pages/Gamification'
-import DSRHistory from '@/pages/DSRHistory'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import './index.css'
 
@@ -32,6 +33,9 @@ function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?
   return <>{children}</>
 }
 
+const MANAGER_ROLES = ['manager','bu_head','business_head','ceo','super_admin']
+const MGMT_FINANCE  = [...MANAGER_ROLES, 'hr', 'finance']
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
@@ -41,30 +45,43 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<Dashboard />} />
-              <Route path="dsr" element={<DSREntry />} />
+              {/* DSR */}
+              <Route path="dsr"         element={<DSREntry />} />
               <Route path="dsr/history" element={<DSRHistory />} />
-              <Route path="meetings" element={<Meetings />} />
-              <Route path="leads" element={<Leads />} />
-              <Route path="pipeline" element={<Pipeline />} />
-              <Route path="analytics" element={<Analytics />} />
+              {/* Field activities */}
+              <Route path="meetings"      element={<Meetings />} />
+              <Route path="leads"         element={<Leads />} />
+              <Route path="pipeline"      element={<Pipeline />} />
               <Route path="opportunities" element={<Opportunities />} />
+              <Route path="analytics"     element={<Analytics />} />
+              <Route path="gamification"  element={<Gamification />} />
+              {/* Management — manager+ */}
               <Route path="team" element={
-                <ProtectedRoute roles={['manager','bu_head','inside_sales']}>
+                <ProtectedRoute roles={[...MANAGER_ROLES, 'inside_sales']}>
                   <Team />
                 </ProtectedRoute>
               } />
               <Route path="revenue" element={
-                <ProtectedRoute roles={['manager','bu_head']}>
+                <ProtectedRoute roles={MANAGER_ROLES}>
                   <RevenueIntelligence />
                 </ProtectedRoute>
               } />
-              <Route path="scoring-admin" element={<ScoringAdmin />} />
+              <Route path="regional" element={
+                <ProtectedRoute roles={['business_head','ceo','super_admin']}>
+                  <RegionalPerformance />
+                </ProtectedRoute>
+              } />
               <Route path="fga-approval" element={
-                <ProtectedRoute roles={['manager','bu_head','business_head','ceo','super_admin','hr','finance']}>
+                <ProtectedRoute roles={MGMT_FINANCE}>
                   <FGAApproval />
                 </ProtectedRoute>
               } />
-              <Route path="gamification" element={<Gamification />} />
+              {/* Admin */}
+              <Route path="scoring-admin" element={
+                <ProtectedRoute roles={['bu_head','business_head','ceo','super_admin']}>
+                  <ScoringAdmin />
+                </ProtectedRoute>
+              } />
             </Route>
           </Routes>
         </BrowserRouter>

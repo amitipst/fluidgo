@@ -13,8 +13,9 @@ const NAV_CORE = [
   { to: '/gamification',  icon: '🎮', label: 'My Schemes'             },
 ]
 const NAV_MANAGER = [
-  { to: '/team',         icon: '👥', label: 'Team'    },
-  { to: '/revenue',      icon: '💰', label: 'Revenue' },
+  { to: '/team',     icon: '👥', label: 'Team'     },
+  { to: '/revenue',  icon: '💰', label: 'Revenue'  },
+  { to: '/regional', icon: '🗺️', label: 'Regions'  },   // business_head+ only
   { to: '/gamification', icon: '🎮', label: 'Schemes' },
 ]
 const NAV_FGA     = { to: '/fga-approval',  icon: '🏆', label: 'FGA Approval' }
@@ -139,7 +140,10 @@ export default function Layout() {
               <NavSection label="Management" />
               {canSeeTeam    && <SideLink {...NAV_MANAGER[0]} />}
               {canSeeRevenue && <SideLink {...NAV_MANAGER[1]} />}
-              {canSeeTeam    && <SideLink to="/gamification" icon="🎮" label="Schemes" />}
+              {/* Regional view — business_head / CEO only */}
+              {['business_head','ceo','super_admin'].includes(user?.role ?? '') &&
+                <SideLink {...NAV_MANAGER[2]} />}
+              {canSeeTeam    && <SideLink {...NAV_MANAGER[3]} />}
               {canSeeFGA     && <SideLink {...NAV_FGA} />}
             </>
           )}
