@@ -48,8 +48,8 @@ def upgrade():
         WHERE email IN ('amit@wepsol.com', 'amit.singh@wepsol.com')
     """))
 
-    op.create_index('ix_users_region', 'users', ['region'])
-    op.create_index('ix_users_business_region', 'users', ['business', 'region'])
+    op.create_index('ix_users_region',          'users', ['region'],            if_not_exists=True)
+    op.create_index('ix_users_business_region', 'users', ['business','region'], if_not_exists=True)
 
     # Add region to analytics-relevant tables for fast slicing
     op.add_column('dsr_daily', sa.Column('region', sa.String(100), nullable=True))
@@ -71,8 +71,8 @@ def upgrade():
         WHERE p.user_id = u.id
     """))
 
-    op.create_index('ix_dsr_region', 'dsr_daily', ['region'])
-    op.create_index('ix_pipeline_region', 'pipeline', ['region'])
+    op.create_index('ix_dsr_region',      'dsr_daily', ['region'], if_not_exists=True)
+    op.create_index('ix_pipeline_region', 'pipeline',  ['region'], if_not_exists=True)
 
 def downgrade():
     op.drop_index('ix_pipeline_region', 'pipeline')

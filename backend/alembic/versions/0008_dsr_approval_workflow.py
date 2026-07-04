@@ -37,8 +37,10 @@ def upgrade():
     ))
 
     # Index for fast approval queue queries
-    op.create_index('ix_dsr_approval_status', 'dsr_daily', ['approval_status'])
-    op.create_index('ix_dsr_user_date', 'dsr_daily', ['user_id', 'date'])
+    op.create_index('ix_dsr_approval_status', 'dsr_daily', ['approval_status'],
+                    if_not_exists=True)
+    op.create_index('ix_dsr_user_date', 'dsr_daily', ['user_id', 'date'],
+                    if_not_exists=True)
 
 def downgrade():
     op.drop_index('ix_dsr_user_date', 'dsr_daily')
