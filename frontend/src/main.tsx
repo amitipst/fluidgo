@@ -17,6 +17,7 @@ import RevenueIntelligence from '@/pages/RevenueIntelligence'
 import ScoringAdmin from '@/pages/ScoringAdmin'
 import FGAApproval from '@/pages/FGAApproval'
 import Gamification from '@/pages/Gamification'
+import DSRHistory from '@/pages/DSRHistory'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import './index.css'
 
@@ -41,6 +42,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<Dashboard />} />
               <Route path="dsr" element={<DSREntry />} />
+              <Route path="dsr/history" element={<DSRHistory />} />
               <Route path="meetings" element={<Meetings />} />
               <Route path="leads" element={<Leads />} />
               <Route path="pipeline" element={<Pipeline />} />

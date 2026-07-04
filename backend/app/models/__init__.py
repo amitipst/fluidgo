@@ -108,6 +108,13 @@ class DSRDaily(Base):
     # ── Common ────────────────────────────────────────────────────────────────
     notes:            Mapped[str]        = mapped_column(Text, nullable=True)
     submitted_at:     Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # ── Approval workflow ─────────────────────────────────────────────────────
+    # draft → submitted → approved | rejected
+    # Once 'approved', rep cannot edit. Manager can reject back to 'submitted'.
+    approval_status:  Mapped[str]        = mapped_column(String(20), default="submitted")
+    approved_by:      Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=True)
+    approved_at:      Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
+    manager_comment:  Mapped[str]        = mapped_column(String(500), nullable=True)
 
 class SelfScore(Base):
     __tablename__ = "self_scores"

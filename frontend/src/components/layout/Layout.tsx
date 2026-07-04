@@ -4,9 +4,10 @@ import { useAuthStore } from '@/store/authStore'
 const NAV_CORE = [
   { to: '/',              icon: '⚡', label: 'Dashboard',    exact: true },
   { to: '/dsr',           icon: '✏️', label: 'Submit DSR'              },
+  { to: '/dsr/history',   icon: '📋', label: 'My DSR Log'              },
   { to: '/meetings',      icon: '🤝', label: 'Meetings'                },
   { to: '/leads',         icon: '🎯', label: 'Leads'                   },
-  { to: '/pipeline',      icon: '📋', label: 'Pipeline'                },
+  { to: '/pipeline',      icon: '📊', label: 'Pipeline'                },
   { to: '/opportunities', icon: '🧭', label: 'Opportunities'           },
   { to: '/analytics',     icon: '📈', label: 'Analytics'              },
   { to: '/gamification',  icon: '🎮', label: 'My Schemes'             },

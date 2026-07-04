@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import api from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 
@@ -179,7 +180,7 @@ export default function DSREntry() {
   if (submitted) return (
     <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
       <div className="text-5xl mb-4">✅</div>
-      <h2 className="font-display font-bold text-2xl text-wep-navy mb-2">DSR Submitted!</h2>
+      <h2 className="font-display font-bold text-2xl text-wep-text mb-2">DSR Submitted!</h2>
       {lastRigor !== null && lastRigor >= 0 && (
         <div className="mb-4">
           <span className="text-lg font-bold"
@@ -191,8 +192,14 @@ export default function DSREntry() {
           </div>
         </div>
       )}
-      <p className="text-wep-muted mb-6">Dashboard and team views updated in real time.</p>
-      <button className="btn-primary" onClick={() => setSubmitted(false)}>Submit Another</button>
+      <p className="text-wep-muted mb-2">Dashboard and team views updated in real time.</p>
+      <p className="text-sm text-wep-muted mb-6">
+        ⏳ Pending manager approval — you can still edit until approved.
+      </p>
+      <div className="flex gap-3 flex-wrap justify-center">
+        <button className="btn-primary" onClick={() => setSubmitted(false)}>Submit Another</button>
+        <Link to="/dsr/history" className="btn-outline">View My DSR Log →</Link>
+      </div>
     </div>
   )
 
