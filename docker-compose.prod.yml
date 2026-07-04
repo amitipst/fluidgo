@@ -1,6 +1,14 @@
 # docker-compose.prod.yml — Production deployment on EC2
 # Usage: docker compose -f docker-compose.prod.yml up -d
+# Requires: .env file (copy from .env.prod — see setup-ec2.sh)
 # DO NOT use docker-compose.yml (dev) on the server.
+
+# Top-level env_file — loads .env.prod for ALL services and variable substitution
+# This ensures DB_PASSWORD is available for the db service's POSTGRES_PASSWORD
+x-env: &env
+  env_file:
+    - path: .env.prod
+      required: true
 
 services:
 
@@ -8,15 +16,14 @@ services:
   db:
     image: postgres:15-alpine
     restart: always
+    <<: *env
     environment:
       POSTGRES_DB:       fluidgo
       POSTGRES_USER:     fluidgo
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Point-in-time backup directory (pg_dump cron writes here)
       - /opt/fluidgo/backups:/backups
-    # NOT exposed on host — internal only
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fluidgo"]
       interval: 10s
@@ -33,7 +40,6 @@ services:
     restart: always
     volumes:
       - ollama_models:/root/.ollama
-    # NOT exposed on host — backend calls ollama:11434 internally
     healthcheck:
       test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 30s
@@ -43,11 +49,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 5g     # phi3:mini needs ~4GB; leave 3GB for backend+frontend
+          memory: 5g
 
-  # Pull model on first run (no-op if already pulled)
+  # Pull model on first run
   ollama-init:
     image: curlimages/curl:latest
+    <<: *env
     depends_on:
       ollama:
         condition: service_healthy
@@ -67,13 +74,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     restart: always
-    env_file: .env.prod
+    <<: *env
     environment:
-      DATABASE_URL:  postgresql+asyncpg://fluidgo:${DB_PASSWORD}@db:5432/fluidgo
-      OLLAMA_URL:    http://ollama:11434
-      ENVIRONMENT:   production
+      DATABASE_URL: postgresql+asyncpg://fluidgo:${DB_PASSWORD}@db:5432/fluidgo
+      OLLAMA_URL:   http://ollama:11434
+      ENVIRONMENT:  production
     ports:
-      - "127.0.0.1:8000:8000"   # bind localhost ONLY — nginx proxies externally
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -94,7 +101,7 @@ services:
       dockerfile: Dockerfile.prod
     restart: always
     ports:
-      - "127.0.0.1:3000:80"     # bind localhost ONLY — nginx proxies externally
+      - "127.0.0.1:3000:80"
     deploy:
       resources:
         limits:
@@ -111,10 +118,10 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /opt/fluidgo/pgdata   # EBS-backed directory
+      device: /opt/fluidgo/pgdata
   ollama_models:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: /opt/fluidgo/ollama   # EBS-backed directory
+      device: /opt/fluidgo/ollama
