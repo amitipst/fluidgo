@@ -28,7 +28,18 @@ const BUSINESSES = [
   { key: 'hooks',      label: 'Hooks (POS/Channel)' },
 ]
 
-const emptyForm = { name: '', email: '', password: '', role: 'rep', bu: 'West', business: 'fluidpro' }
+const REGIONS = [
+  { key: 'India - North',   label: '🗺️ India — North   (Delhi, NCR, Chandigarh)' },
+  { key: 'India - South',   label: '🗺️ India — South   (Bangalore, Chennai, Hyderabad)' },
+  { key: 'India - West',    label: '🗺️ India — West    (Mumbai, Pune, Ahmedabad)' },
+  { key: 'India - East',    label: '🗺️ India — East    (Kolkata, Bhubaneswar)' },
+  { key: 'India - Central', label: '🗺️ India — Central (Nagpur, Bhopal, Indore)' },
+]
+
+const emptyForm = {
+  name: '', email: '', password: '', role: 'rep',
+  region: 'India - West', business: 'fluidpro'
+}
 
 export default function Team() {
   const { user } = useAuthStore()
@@ -36,7 +47,7 @@ export default function Team() {
   const today = format(new Date(), 'yyyy-MM-dd')
   const [aiContent, setAiContent] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
-  const canManageUsers = user?.role === 'manager' || user?.role === 'bu_head'
+  const canManageUsers = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const [showManage, setShowManage] = useState(false)
   const [showExited, setShowExited] = useState(false)
   const [form, setForm] = useState(emptyForm)
@@ -171,10 +182,14 @@ export default function Team() {
               </select>
             </div>
             <div>
-              <label className="form-label block mb-1">BU *</label>
-              <input className="form-input" placeholder="West" required
-                value={form.bu} onChange={e => setForm(f => ({ ...f, bu: e.target.value }))} />
-              <p className="text-[10px] text-wep-muted mt-0.5">Must match your own BU</p>
+              <label className="form-label block mb-1">Region *</label>
+              <select className="form-input" value={form.region}
+                onChange={e => setForm(f => ({ ...f, region: e.target.value }))}>
+                {REGIONS.map(r => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-wep-muted mt-0.5">Which India region is this person based in?</p>
             </div>
             <div className="md:col-span-2 lg:col-span-3 flex items-center gap-3">
               <button type="submit" disabled={createUser.isPending} className="btn-primary">

@@ -24,8 +24,9 @@ export interface AuthUser {
   name:         string
   email:        string
   role:         Role
-  bu:           string
-  business?:    string        // which product business (fluidpro | fluidprint | floxtax | hooks)
+  bu:           string       // legacy
+  region?:      string       // India - North | India - West | etc.
+  business?:    string
   manager_id?:  string | null
   org_role_key?: OrgRoleKey
 }

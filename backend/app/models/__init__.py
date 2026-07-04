@@ -13,8 +13,9 @@ class User(Base):
     email:        Mapped[str]        = mapped_column(String(255), unique=True, nullable=False)
     password_hash:Mapped[str]        = mapped_column(Text, nullable=False)
     role:         Mapped[str]        = mapped_column(String(30), nullable=False)
-    bu:           Mapped[str]        = mapped_column(String(50), default="West")
-    business:     Mapped[str]        = mapped_column(String(50), default="fluidpro")
+    bu:           Mapped[str]        = mapped_column(String(50), default="West")       # legacy — kept for compat
+    region:       Mapped[str]        = mapped_column(String(100), nullable=True)       # India - North | India - West | etc.
+    business:     Mapped[str]        = mapped_column(String(50), default="fluidpro")  # fluidpro | fluidprint | floxtax | hooks
     manager_id:   Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=True)
     is_active:    Mapped[bool]       = mapped_column(Boolean, default=True)
     org_role_key: Mapped[str]        = mapped_column(String(30), nullable=True)

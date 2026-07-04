@@ -19,19 +19,28 @@ V3_ROLES = Literal[
 ]
 BUSINESSES = Literal["fluidpro", "fluidprint", "floxtax", "hooks"]
 
+# India regions — canonical list
+INDIA_REGIONS = [
+    "India - North",
+    "India - South",
+    "India - West",
+    "India - East",
+    "India - Central",
+]
+
 class UserCreate(BaseModel):
     name:       str
     email:      EmailStr
     password:   str = Field(min_length=8)
     role:       V3_ROLES = "rep"
-    bu:         str      = "West"
+    region:     str = "India - West"     # canonical region
     business:   BUSINESSES = "fluidpro"
     manager_id: Optional[str] = None
 
 class UserUpdate(BaseModel):
     name:       Optional[str] = None
     role:       Optional[V3_ROLES] = None
-    bu:         Optional[str] = None
+    region:     Optional[str] = None
     business:   Optional[BUSINESSES] = None
     manager_id: Optional[str] = None
 
@@ -45,7 +54,8 @@ def _serialize(u: User) -> dict:
         "email":      u.email,
         "role":       u.role,
         "role_level": role_level(u.role),
-        "bu":         u.bu,
+        "region":     getattr(u, "region", None) or u.bu,  # new region field
+        "bu":         u.bu,                                  # legacy compat
         "business":   u.business,
         "manager_id": str(u.manager_id) if u.manager_id else None,
         "is_active":  u.is_active,
@@ -90,10 +100,12 @@ async def create_user(
             f"'{actor.role}' cannot create a user with role '{body.role}'. "
             f"You can only create roles below your own level.")
 
-    # Enforce BU isolation — managers/bu_heads can only create in their own BU
-    if role_level(actor.role) < 50 and body.bu != actor.bu:
-        raise HTTPException(403,
-            f"You can only onboard users to your own BU ({actor.bu})")
+    # Enforce region isolation — managers can only create in their own region
+    user_region = getattr(actor, "region", None) or actor.bu
+    if role_level(actor.role) < 50 and role_level(actor.role) < 40:
+        if body.region and body.region != user_region:
+            raise HTTPException(403,
+                f"You can only onboard users to your own region ({user_region})")
 
     existing = (await db.execute(
         select(User).where(User.email == body.email)
@@ -104,7 +116,10 @@ async def create_user(
     new_user = User(
         name=body.name, email=body.email,
         password_hash=hash_password(body.password),
-        role=body.role, bu=body.bu, business=body.business,
+        role=body.role,
+        bu=body.region.split(" - ")[-1] if " - " in body.region else body.region,  # legacy compat
+        region=body.region,
+        business=body.business,
         is_active=True,
         manager_id=uuid.UUID(body.manager_id) if body.manager_id else None
     )
@@ -134,7 +149,9 @@ async def update_user(
 
     if body.name:       target.name = body.name
     if body.role:       target.role = body.role
-    if body.bu:         target.bu = body.bu
+    if body.region:
+        target.region = body.region
+        target.bu = body.region.split(" - ")[-1] if " - " in body.region else body.region
     if body.business:   target.business = body.business
     if body.manager_id is not None:
         target.manager_id = uuid.UUID(body.manager_id) if body.manager_id else None
@@ -169,6 +186,13 @@ async def list_roles(user: User = Depends(require_level(20))):
         {"key": k, "label": k.replace("_"," ").title(), "level": v["level"], "scope": v["scope"]}
         for k, v in ROLE_HIERARCHY.items()
         if v["level"] < my_level
+    ]
+
+@router.get("/regions")
+async def list_regions():
+    """Returns canonical India region list for team member creation."""
+    return [
+        {"key": r, "label": r} for r in INDIA_REGIONS
     ]
 
 @router.get("/me")

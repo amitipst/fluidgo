@@ -104,14 +104,14 @@ export default function Layout() {
     hr: 'HR', finance: 'Finance', ceo: 'CEO', super_admin: 'Super Admin',
   }
 
-  // Show contextual org info — role-aware, never hardcoded "West BU"
-  const orgLabel = user?.role === 'ceo' || user?.role === 'super_admin'
-    ? 'All BUs · All Businesses'
-    : user?.role === 'business_head'
-      ? `${user?.business?.toUpperCase() ?? 'fluidPro'} · All BUs`
-      : user?.bu && user?.business
-        ? `${user.bu} BU · ${user.business}`
-        : user?.bu ?? 'fluidPro'
+  // Org label — role-aware, region-aware, never hardcoded
+  const orgLabel = (() => {
+    const r = user?.role ?? ''
+    if (r === 'ceo' || r === 'super_admin') return 'All Regions · All Businesses'
+    if (r === 'business_head') return `${user?.business?.toUpperCase() ?? 'fluidPro'} · Global`
+    const region = user?.region || user?.bu
+    return region ? `${region} · ${user?.business ?? 'fluidPro'}` : 'fluidPro'
+  })()
 
   return (
     <div className="flex flex-col h-screen md:flex-row">

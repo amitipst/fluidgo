@@ -212,3 +212,47 @@ async def set_revenue_target(body: TargetIn, db: AsyncSession = Depends(get_db),
         ))
     await db.commit()
     return body
+
+
+@router.get("/regional")
+async def regional_performance(
+    period: Optional[str] = None,
+    region: Optional[str] = None,   # drill into a specific region
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Regional performance dashboard — business_head and above only.
+    Returns performance KPIs sliced by India region.
+    Optional ?region=India+-+West to drill into one region."""
+    from app.models import role_level
+    from app.services.permission_service import get_region_summary, resolve_visible_user_ids
+
+    if role_level(user.role) < 20:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Regional analytics requires manager role or above")
+
+    today = date.today()
+    p = period or f"{today.year}-{today.month:02d}"
+
+    # Business head / CEO get full regional breakdown
+    if role_level(user.role) >= 40:
+        regions = await get_region_summary(db, user, p)
+        if region:
+            regions = [r for r in regions if r["region"] == region]
+        return {
+            "period": p,
+            "scope": "all_regions",
+            "business": user.business,
+            "regions": regions,
+            "total_regions": len(regions),
+        }
+
+    # Manager / BU Head — return their own region summary
+    return {
+        "period": p,
+        "scope": "own_region",
+        "region": user.region or user.bu,
+        "business": user.business,
+        "regions": [],   # drill-down not available at this level
+    }
+

@@ -46,10 +46,14 @@ async def run():
 
         if amit:
             old_email = amit.email
-            amit.email = "amit.singh@wepsol.com"
+            amit.email    = "amit.singh@wepsol.com"
+            amit.role     = "business_head"          # Global fluidPro BU Head
+            amit.region   = "Global - fluidPro"      # Sees all India regions
+            amit.bu       = "Global"                  # legacy field
             await db.flush()
-            print(f"  ✅ Email updated: {old_email} → amit.singh@wepsol.com")
-            print(f"  Role: {amit.role} | BU: {amit.bu} | Business: {amit.business}")
+            print(f"  ✅ Email: {old_email} → amit.singh@wepsol.com")
+            print(f"  ✅ Role:  bu_head → business_head (sees all India regions)")
+            print(f"  ✅ Region: Global - fluidPro")
         else:
             # Check if already updated
             amit2 = (await db.execute(
