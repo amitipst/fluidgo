@@ -198,8 +198,17 @@ class TargetIn(BaseModel):
 
 @router.post("/revenue/targets")
 async def set_revenue_target(body: TargetIn, db: AsyncSession = Depends(get_db),
-                             user: User = Depends(require_role("manager", "bu_head"))):
-    """Config-driven targets — upserts per (user, period). Never hardcoded."""
+                             user: User = Depends(require_role(
+                                 "manager", "bu_head", "business_head", "ceo", "super_admin"
+                             ))):
+    """Set/update revenue target for a user.
+    BU Head and above can set targets for anyone in their scope.
+    Manager can only set targets for their direct reports."""
+    from app.services.permission_service import can_user_edit_target
+    if not await can_user_edit_target(db, user, body.user_id):
+        from fastapi import HTTPException
+        raise HTTPException(403, "You cannot set targets for users outside your scope")
+
     existing = (await db.execute(
         select(RevenueTarget).where(
             RevenueTarget.user_id == uuid.UUID(body.user_id),
@@ -215,7 +224,8 @@ async def set_revenue_target(body: TargetIn, db: AsyncSession = Depends(get_db),
             target_amount=body.target_amount
         ))
     await db.commit()
-    return body
+    return {"user_id": body.user_id, "period": body.period,
+            "target_amount": body.target_amount, "updated_by": user.email}
 
 
 @router.get("/regional")
@@ -260,3 +270,185 @@ async def regional_performance(
         "regions": [],   # drill-down not available at this level
     }
 
+
+@router.get("/performance")
+async def performance_comparison(
+    mode: str = "monthly",           # weekly | monthly | quarterly | yearly
+    period: Optional[str] = None,   # "2026-05" | "2026-Q2" | "2026" | "2026-W28"
+    region: Optional[str] = None,   # optional region filter for business_head
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Multi-period performance comparison with CFY vs PFY.
+
+    Returns current + previous period KPIs with delta/trend.
+    Supports: weekly, monthly, quarterly, yearly.
+
+    India FY: April 1 → March 31
+    Quarters: Q1=Apr-Jun, Q2=Jul-Sep, Q3=Oct-Dec, Q4=Jan-Mar
+    """
+    from app.models import role_level
+    from app.services.period_service import parse_period
+    from app.services.permission_service import resolve_visible_user_ids
+
+    if role_level(user.role) < 10:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Authentication required")
+
+    parsed = parse_period(period, mode)
+    curr_start, curr_end = parsed["current"]
+    prev_start, prev_end = parsed.get("previous") or (None, None)
+
+    # Resolve visible users
+    visible_ids = await resolve_visible_user_ids(db, user, region_filter=region)
+    q_users = select(User).where(User.is_active == True)
+    if visible_ids is not None:
+        q_users = q_users.where(User.id.in_(visible_ids))
+    team = (await db.execute(q_users)).scalars().all()
+    team_ids = [u.id for u in team]
+
+    async def period_kpis(start: date, end: date) -> dict:
+        if not start:
+            return {}
+        dsrs = (await db.execute(
+            select(DSRDaily).where(
+                DSRDaily.user_id.in_(team_ids),
+                DSRDaily.date >= start,
+                DSRDaily.date <= end,
+            )
+        )).scalars().all()
+        deals = (await db.execute(
+            select(PipelineDeal).where(
+                PipelineDeal.user_id.in_(team_ids),
+                PipelineDeal.closure_eta >= start,
+                PipelineDeal.closure_eta <= end,
+                PipelineDeal.stage == "closed_won"
+            )
+        )).scalars().all()
+        targets = (await db.execute(
+            select(RevenueTarget).where(
+                RevenueTarget.user_id.in_(team_ids),
+                RevenueTarget.period.between(
+                    f"{start.year}-{start.month:02d}",
+                    f"{end.year}-{end.month:02d}"
+                )
+            )
+        )).scalars().all()
+        from app.services.rigor_service import calculate_avg_rigor
+        total_calls     = sum(d.calls for d in dsrs)
+        total_visits    = sum(d.visits for d in dsrs)
+        total_followups = sum(d.followups for d in dsrs)
+        total_leads     = sum(d.new_leads for d in dsrs)
+        total_proposals = sum(d.proposals for d in dsrs)
+        avg_rigor       = calculate_avg_rigor(dsrs)
+        total_revenue   = sum(float(d.deal_value or 0) for d in deals)
+        total_target    = sum(float(t.target_amount) for t in targets)
+        dsr_days        = len(dsrs)
+        working_days    = len([d for d in dsrs if d.status == "working"])
+        return {
+            "calls":          total_calls,
+            "visits":         total_visits,
+            "followups":      total_followups,
+            "leads":          total_leads,
+            "proposals":      total_proposals,
+            "avg_rigor":      round(avg_rigor, 1),
+            "revenue":        round(total_revenue, 2),
+            "target":         round(total_target, 2),
+            "achievement_pct": round((total_revenue/total_target*100) if total_target else 0, 1),
+            "deals_won":      len(deals),
+            "dsr_days":       dsr_days,
+            "working_days":   working_days,
+        }
+
+    def delta(curr_val, prev_val) -> dict:
+        if prev_val == 0:
+            return {"value": curr_val, "change": None, "trend": "new"}
+        chg = round((curr_val - prev_val) / prev_val * 100, 1)
+        return {
+            "value":  curr_val,
+            "change": chg,
+            "trend":  "up" if chg > 0 else "down" if chg < 0 else "flat",
+        }
+
+    curr_kpis = await period_kpis(curr_start, curr_end)
+    prev_kpis = await period_kpis(prev_start, prev_end) if prev_start else {}
+
+    # MoM comparison (monthly mode only)
+    mom_kpis = {}
+    if mode == "monthly" and parsed.get("mom"):
+        mom_start, mom_end = parsed["mom"]
+        mom_kpis = await period_kpis(mom_start, mom_end)
+
+    kpi_keys = ["calls", "visits", "followups", "leads", "proposals",
+                "avg_rigor", "revenue", "target", "achievement_pct", "deals_won"]
+    comparison = {}
+    for k in kpi_keys:
+        comparison[k] = {
+            "current":  curr_kpis.get(k, 0),
+            "yoy":      delta(curr_kpis.get(k, 0), prev_kpis.get(k, 0)) if prev_kpis else None,
+            "mom":      delta(curr_kpis.get(k, 0), mom_kpis.get(k, 0))  if mom_kpis  else None,
+        }
+
+    return {
+        "mode":       mode,
+        "period":     parsed.get("label"),
+        "prev_period": parsed.get("prev_label"),
+        "mom_period": parsed.get("mom_label"),
+        "quarter":    parsed.get("quarter"),
+        "fy_start":   parsed.get("fy_start"),
+        "region":     region,
+        "team_size":  len(team),
+        "kpis":       comparison,
+        "raw": {
+            "current":  curr_kpis,
+            "previous": prev_kpis,
+            "mom":      mom_kpis,
+        }
+    }
+
+
+@router.get("/revenue/team-targets")
+async def get_team_targets(
+    period: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("manager", "bu_head", "business_head", "ceo", "super_admin"))
+):
+    """Returns all team members with their revenue targets for a period.
+    Used by the Target Editor UI — business_head sees all, manager sees own team."""
+    from app.services.permission_service import resolve_visible_user_ids
+    today = date.today()
+    p = period or f"{today.year}-{today.month:02d}"
+
+    visible_ids = await resolve_visible_user_ids(db, user)
+    q = select(User).where(
+        User.is_active == True,
+        User.role.in_(["rep", "inside_sales", "pre_sales", "manager"])
+    )
+    if visible_ids is not None:
+        q = q.where(User.id.in_(visible_ids))
+    team = (await db.execute(q)).scalars().all()
+
+    targets = {
+        str(t.user_id): float(t.target_amount)
+        for t in (await db.execute(
+            select(RevenueTarget).where(
+                RevenueTarget.user_id.in_([u.id for u in team]),
+                RevenueTarget.period == p
+            )
+        )).scalars().all()
+    }
+
+    return {
+        "period": p,
+        "members": [
+            {
+                "user_id":   str(u.id),
+                "name":      u.name,
+                "email":     u.email,
+                "role":      u.role,
+                "region":    getattr(u, "region", None) or u.bu,
+                "target":    targets.get(str(u.id), 0),
+            }
+            for u in sorted(team, key=lambda x: (x.region or "", x.name))
+        ]
+    }
