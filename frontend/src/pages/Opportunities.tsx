@@ -25,11 +25,24 @@ export default function Opportunities() {
     }).then(r => r.data)
   })
 
+  const [healthError, setHealthError] = useState<Record<string, string>>({})
+
   const checkHealth = useMutation({
     mutationFn: (id: string) => api.get(`/opportunities/${id}/health`),
     onSuccess: (res, id) => {
-      setHealthContent(prev => ({ ...prev, [id]: res.data.recommendation }))
+      const rec = res.data.recommendation ?? res.data.ai_recommendation
+      if (rec && !rec.toLowerCase().includes('unavailable')) {
+        setHealthContent(prev => ({ ...prev, [id]: rec }))
+        setHealthError(prev => ({ ...prev, [id]: '' }))
+      } else {
+        // AI unavailable — show rule-based score only
+        const score = res.data.deal_health ?? res.data.ai_deal_health ?? '—'
+        setHealthError(prev => ({ ...prev, [id]: `Deal health score: ${score}/100. AI coaching unavailable (Ollama model loading — try again in a few minutes).` }))
+      }
       qc.invalidateQueries({ queryKey: ['opportunities'] })
+    },
+    onError: (_err, id) => {
+      setHealthError(prev => ({ ...prev, [id]: 'AI analysis unavailable right now. The local Ollama model may still be loading. Deal health score is shown above.' }))
     }
   })
 
@@ -100,8 +113,15 @@ export default function Opportunities() {
             </div>
 
             {healthContent[d.id] && (
-              <div className="mt-3 bg-wep-surface border border-wep-border rounded-lg p-3 text-xs text-wep-navy leading-relaxed whitespace-pre-wrap">
+              <div className="mt-3 bg-wep-surface border border-wep-border rounded-xl p-3 text-xs text-wep-text leading-relaxed whitespace-pre-wrap">
                 {healthContent[d.id]}
+              </div>
+            )}
+            {healthError[d.id] && (
+              <div className="mt-3 flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs"
+                style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
+                <span className="shrink-0">⚠️</span>
+                <span>{healthError[d.id]}</span>
               </div>
             )}
           </div>
