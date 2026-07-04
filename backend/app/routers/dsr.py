@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -9,6 +9,7 @@ from app.database import get_db
 from app.models import User, DSRDaily, SelfScore
 from app.services.deps import get_current_user, require_level
 from app.services.rigor_service import calculate_rigor_score, rigor_label
+from app.services.audit_service import audit
 
 router = APIRouter()
 
@@ -62,11 +63,16 @@ def _serialize_dsr(dsr: DSRDaily, rigor: int) -> dict:
     return d
 
 @router.post("")
-async def submit_dsr(body: DSRIn, db: AsyncSession = Depends(get_db),
-                     user: User = Depends(get_current_user)):
-    """Upsert DSR — one row per user per date.
-    dsr_type auto-set from user.role (presales roles → 'presales', else 'sales')."""
+async def submit_dsr(
+    body: DSRIn,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Upsert DSR — one row per user per date."""
     dsr_type = "presales" if user.role in PRESALES_ROLES else "sales"
+    is_update = False
 
     result = await db.execute(
         select(DSRDaily).where(and_(DSRDaily.user_id == user.id,
@@ -77,6 +83,7 @@ async def submit_dsr(body: DSRIn, db: AsyncSession = Depends(get_db),
     payload["dsr_type"] = dsr_type
 
     if dsr:
+        is_update = True
         for k, v in payload.items():
             setattr(dsr, k, v)
     else:
@@ -96,8 +103,17 @@ async def submit_dsr(body: DSRIn, db: AsyncSession = Depends(get_db),
 
     await db.commit()
     rigor = calculate_rigor_score(dsr)
-    return {"id": str(dsr.id), "rigor_score": rigor, "rigor_label": rigor_label(rigor),
-            "dsr_type": dsr_type}
+
+    # Audit log — fire and forget
+    action = "UPDATE" if is_update else "CREATE"
+    background_tasks.add_task(
+        audit, db, user, action, "dsr", str(dsr.id),
+        f"DSR {action.lower()}d for {body.date} — rigor={rigor}",
+        request=request
+    )
+
+    return {"id": str(dsr.id), "rigor_score": rigor,
+            "rigor_label": rigor_label(rigor), "dsr_type": dsr_type}
 
 @router.get("")
 async def get_my_dsr(date: date, db: AsyncSession = Depends(get_db),

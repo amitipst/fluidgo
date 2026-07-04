@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import String, Boolean, DateTime, Integer, Numeric, Text, Date, SmallInteger
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from app.models.audit import AuditLog  # noqa: F401 — ensure table is registered
 from app.database import Base
 
 class User(Base):
