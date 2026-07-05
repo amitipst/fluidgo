@@ -47,28 +47,43 @@ function KpiCard({ k, data, mode }: { k: string; data: any; mode: Mode }) {
   const curr  = data?.kpis?.[k]
   const yoy   = curr?.yoy
   const mom   = curr?.mom
+  const isFuture = data?.is_future
   if (!meta || !curr) return null
+
+  const valueText = meta.fmt(curr.current)
+  // Shrink font for long currency strings so they never clip the card
+  const valueSize = valueText.length > 7 ? 'text-lg' : valueText.length > 5 ? 'text-xl' : 'text-2xl'
+
   return (
     <div className="card">
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-base">{meta.icon}</span>
         <span className="text-[11px] font-bold uppercase tracking-wider text-wep-muted">{meta.label}</span>
       </div>
-      <div className="font-display font-black text-2xl text-wep-text mb-2">
-        {meta.fmt(curr.current)}
+      <div className={`font-display font-black text-wep-text mb-2 truncate ${valueSize}`} title={valueText}>
+        {valueText}
       </div>
       <div className="space-y-1">
-        {yoy && yoy.change !== null && (
-          <div className={`text-xs font-semibold flex items-center gap-1 ${trendColor(yoy.trend, k)}`}>
-            <span>{trendIcon(yoy.trend)}</span>
-            <span>{Math.abs(yoy.change)}% vs {data.prev_period}</span>
-          </div>
-        )}
-        {mode === 'monthly' && mom && mom.change !== null && (
-          <div className={`text-xs flex items-center gap-1 ${trendColor(mom.trend, k)}`}>
-            <span>{trendIcon(mom.trend)}</span>
-            <span>{Math.abs(mom.change)}% vs {data.mom_period}</span>
-          </div>
+        {isFuture ? (
+          <div className="text-xs text-wep-muted italic">Period hasn't started yet</div>
+        ) : (
+          <>
+            {yoy && yoy.change !== null && (
+              <div className={`text-xs font-semibold flex items-center gap-1 ${trendColor(yoy.trend, k)}`}>
+                <span>{trendIcon(yoy.trend)}</span>
+                <span>{Math.abs(yoy.change)}% vs {data.prev_period}</span>
+              </div>
+            )}
+            {yoy && yoy.trend === 'new' && (
+              <div className="text-xs text-wep-muted">No data for {data.prev_period}</div>
+            )}
+            {mode === 'monthly' && mom && mom.change !== null && (
+              <div className={`text-xs flex items-center gap-1 ${trendColor(mom.trend, k)}`}>
+                <span>{trendIcon(mom.trend)}</span>
+                <span>{Math.abs(mom.change)}% vs {data.mom_period}</span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

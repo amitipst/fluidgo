@@ -360,7 +360,9 @@ async def performance_comparison(
             "working_days":   working_days,
         }
 
-    def delta(curr_val, prev_val) -> dict:
+    def delta(curr_val, prev_val, is_future: bool = False) -> dict:
+        if is_future:
+            return {"value": curr_val, "change": None, "trend": "future"}
         if prev_val == 0:
             return {"value": curr_val, "change": None, "trend": "new"}
         chg = round((curr_val - prev_val) / prev_val * 100, 1)
@@ -369,6 +371,9 @@ async def performance_comparison(
             "change": chg,
             "trend":  "up" if chg > 0 else "down" if chg < 0 else "flat",
         }
+
+    # A period that hasn't started yet shouldn't show misleading "-100%" deltas
+    is_future_period = curr_start > date.today()
 
     curr_kpis = await period_kpis(curr_start, curr_end)
     prev_kpis = await period_kpis(prev_start, prev_end) if prev_start else {}
@@ -385,8 +390,8 @@ async def performance_comparison(
     for k in kpi_keys:
         comparison[k] = {
             "current":  curr_kpis.get(k, 0),
-            "yoy":      delta(curr_kpis.get(k, 0), prev_kpis.get(k, 0)) if prev_kpis else None,
-            "mom":      delta(curr_kpis.get(k, 0), mom_kpis.get(k, 0))  if mom_kpis  else None,
+            "yoy":      delta(curr_kpis.get(k, 0), prev_kpis.get(k, 0), is_future_period) if prev_kpis else None,
+            "mom":      delta(curr_kpis.get(k, 0), mom_kpis.get(k, 0), is_future_period)  if mom_kpis  else None,
         }
 
     return {
@@ -398,6 +403,7 @@ async def performance_comparison(
         "fy_start":   parsed.get("fy_start"),
         "region":     region,
         "team_size":  len(team),
+        "is_future":  is_future_period,
         "kpis":       comparison,
         "raw": {
             "current":  curr_kpis,
