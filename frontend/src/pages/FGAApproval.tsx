@@ -260,8 +260,10 @@ export default function FGAApproval() {
   const [freezing, setFreezing] = useState(false)
   const [freezeMsg, setFreezeMsg] = useState('')
 
-  const isBUHead  = user?.role === 'bu_head'
-  const isManager = ['manager','bu_head'].includes(user?.role ?? '')
+  // business_head == bu_head == practice_head (lean RBAC)
+  const BU_LEVEL  = ['bu_head','business_head','practice_head','ceo','super_admin']
+  const isBUHead  = BU_LEVEL.includes(user?.role ?? '')
+  const isManager = ['manager', ...BU_LEVEL].includes(user?.role ?? '')
 
   const { data: pending = [], isLoading, refetch } = useQuery({
     queryKey: ['fga-pending', period],
