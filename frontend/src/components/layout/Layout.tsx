@@ -1,10 +1,13 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 
+// Field roles only — can submit DSR
+const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
+
 const NAV_CORE = [
   { to: '/',              icon: '⚡', label: 'Dashboard',    exact: true },
-  { to: '/dsr',           icon: '✏️', label: 'Submit DSR'              },
-  { to: '/dsr/history',   icon: '📋', label: 'My DSR Log'              },
+  { to: '/dsr',           icon: '✏️', label: 'Submit DSR',   fieldOnly: true },
+  { to: '/dsr/history',   icon: '📋', label: 'My DSR Log',   fieldOnly: true },
   { to: '/meetings',      icon: '🤝', label: 'Meetings'                },
   { to: '/leads',         icon: '🎯', label: 'Leads'                   },
   { to: '/pipeline',      icon: '📊', label: 'Pipeline'                },
@@ -20,6 +23,7 @@ const NAV_MANAGER = [
 ]
 const NAV_FGA     = { to: '/fga-approval',  icon: '🏆', label: 'FGA Approval' }
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
+const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
 
 // ── fluidGo compact logo for sidebar header ──────────────────────────────────
 function SidebarLogo() {
@@ -89,20 +93,24 @@ export default function Layout() {
   const canSeeTeam    = ['manager','bu_head','inside_sales','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const canSeeRevenue = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const canSeeFGA     = ['manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
-  const canSeeScoring = ['bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
-    || ['admin','super_admin','practice_head'].includes(user?.org_role_key ?? '')
+  const canSeeScoring = ['bu_head','business_head','practice_head','ceo','super_admin'].includes(user?.role ?? '')
 
-  // Remove gamification from core if user is manager+ (they see it in Management section)
-  const coreNav = canSeeTeam
-    ? NAV_CORE.filter(n => n.to !== '/gamification')
-    : NAV_CORE
+  const isFieldRole = FIELD_ROLES.includes(user?.role ?? '')
+
+  // Remove DSR items for non-field roles; remove gamification from core if manager+
+  const coreNav = NAV_CORE.filter(n => {
+    if ((n as any).fieldOnly && !isFieldRole) return false
+    if (n.to === '/gamification' && canSeeTeam) return false
+    return true
+  })
 
   const initials = user?.name?.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() ?? '?'
 
   const ROLE_LABELS: Record<string, string> = {
     rep: 'Sales Rep', inside_sales: 'Inside Sales', pre_sales: 'Pre-Sales',
     manager: 'Manager', bu_head: 'BU Head', business_head: 'Business Head',
-    hr: 'HR', finance: 'Finance', ceo: 'CEO', super_admin: 'Super Admin',
+    practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', ceo: 'CEO',
+    super_admin: 'Super Admin',
   }
 
   // Org label — role-aware, region-aware, never hardcoded
@@ -152,6 +160,13 @@ export default function Layout() {
             <>
               <NavSection label="Admin" />
               <SideLink {...NAV_SCORING} />
+              {user?.role === 'super_admin' && <SideLink {...NAV_HEALTH} />}
+            </>
+          )}
+          {!canSeeScoring && user?.role === 'super_admin' && (
+            <>
+              <NavSection label="Admin" />
+              <SideLink {...NAV_HEALTH} />
             </>
           )}
         </nav>

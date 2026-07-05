@@ -23,16 +23,21 @@ class User(Base):
 
 # ── Role hierarchy ────────────────────────────────────────────────────────────
 ROLE_HIERARCHY: dict[str, dict] = {
-    "rep":           {"level": 10, "scope": "own"},
-    "inside_sales":  {"level": 10, "scope": "own"},
-    "pre_sales":     {"level": 10, "scope": "own"},
-    "manager":       {"level": 20, "scope": "team"},
-    "bu_head":       {"level": 30, "scope": "bu"},
-    "business_head": {"level": 40, "scope": "business"},
-    "hr":            {"level": 25, "scope": "hr"},
-    "finance":       {"level": 25, "scope": "finance"},
-    "ceo":           {"level": 50, "scope": "all"},
-    "super_admin":   {"level": 99, "scope": "all"},
+    # Field roles — own data only
+    "rep":            {"level": 10, "scope": "own"},
+    "inside_sales":   {"level": 10, "scope": "own"},
+    "pre_sales":      {"level": 10, "scope": "own"},
+    # Management roles
+    "manager":        {"level": 20, "scope": "team"},
+    "hr":             {"level": 25, "scope": "hr"},
+    "finance":        {"level": 25, "scope": "finance"},
+    "bu_head":        {"level": 30, "scope": "bu"},         # legacy — maps to business scope
+    # business_head == practice_head (same level, same scope)
+    "business_head":  {"level": 40, "scope": "business"},
+    "practice_head":  {"level": 40, "scope": "business"},   # alias for business_head
+    # Org-wide roles
+    "ceo":            {"level": 50, "scope": "all"},
+    "super_admin":    {"level": 99, "scope": "all"},
 }
 def role_level(role: str) -> int: return ROLE_HIERARCHY.get(role, {}).get("level", 0)
 def can_manage_targets(role: str) -> bool: return role_level(role) >= 20

@@ -3,6 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
 
+// Simple math captcha — prevents automated login attempts
+function generateCaptcha() {
+  const a = Math.floor(Math.random() * 9) + 1
+  const b = Math.floor(Math.random() * 9) + 1
+  return { question: `${a} + ${b} = ?`, answer: a + b }
+}
+
 // ── fluidGo logo component (SVG inline for crisp rendering at all sizes) ──
 function FluidGoLogo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
   // Stripe icon proportions
@@ -45,21 +52,41 @@ function FluidGoLogo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showForgot, setShowForgot] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [forgotSent, setForgotSent] = useState(false)
+  const [captcha] = useState(generateCaptcha)
+  const [captchaVal, setCaptchaVal] = useState('')
   const { setAuth } = useAuthStore()
   const navigate = useNavigate()
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
+    // Captcha validation
+    if (parseInt(captchaVal) !== captcha.answer) {
+      setError('Captcha incorrect — please try again.')
+      setCaptchaVal('')
+      return
+    }
     setLoading(true); setError('')
     try {
       const res = await api.post('/auth/login', { email, password })
       setAuth(res.data.user, res.data.access_token, res.data.refresh_token)
       navigate('/')
-    } catch {
-      setError('Invalid email or password. Please try again.')
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail
+      setError(msg ?? 'Invalid email or password. Please try again.')
     } finally { setLoading(false) }
+  }
+
+  async function handleForgot(e: React.FormEvent) {
+    e.preventDefault()
+    // In production this would call /api/auth/forgot-password
+    // For now show a message to contact IT support
+    setForgotSent(true)
   }
 
   return (
@@ -158,7 +185,7 @@ export default function Login() {
               </p>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-5">
+            <form onSubmit={handleLogin} className="space-y-4">
 
               {/* Email field */}
               <div>
@@ -174,53 +201,97 @@ export default function Login() {
                     background: 'rgba(255,255,255,0.08)',
                     border: '1.5px solid rgba(255,255,255,0.13)',
                     color: '#fff',
-                    letterSpacing: '0.01em'
                   }}
-                  onFocus={e => {
-                    e.target.style.borderColor = '#F0115E'
-                    e.target.style.background = 'rgba(240,17,94,0.06)'
-                  }}
-                  onBlur={e => {
-                    e.target.style.borderColor = 'rgba(255,255,255,0.13)'
-                    e.target.style.background = 'rgba(255,255,255,0.08)'
-                  }}
+                  onFocus={e => { e.target.style.borderColor = '#F0115E'; e.target.style.background = 'rgba(240,17,94,0.06)' }}
+                  onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.13)'; e.target.style.background = 'rgba(255,255,255,0.08)' }}
                 />
               </div>
 
-              {/* Password field */}
+              {/* Password field with show/hide eye */}
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider mb-2"
                   style={{ color: 'rgba(255,255,255,0.45)' }}>
                   Password
                 </label>
-                <input type="password" required autoComplete="current-password"
-                  placeholder="••••••••"
-                  value={password} onChange={e => setPassword(e.target.value)}
-                  className="w-full rounded-xl px-4 py-3.5 text-sm outline-none transition-all"
+                <div className="relative">
+                  <input type={showPw ? 'text' : 'password'} required autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password} onChange={e => setPassword(e.target.value)}
+                    className="w-full rounded-xl px-4 py-3.5 pr-12 text-sm outline-none transition-all"
+                    style={{
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1.5px solid rgba(255,255,255,0.13)',
+                      color: '#fff',
+                    }}
+                    onFocus={e => { e.target.style.borderColor = '#F0115E'; e.target.style.background = 'rgba(240,17,94,0.06)' }}
+                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.13)'; e.target.style.background = 'rgba(255,255,255,0.08)' }}
+                  />
+                  <button type="button" tabIndex={-1} onClick={() => setShowPw(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-lg opacity-50 hover:opacity-80 transition-opacity"
+                    style={{ color: 'white' }}>
+                    {showPw ? '🙈' : '👁️'}
+                  </button>
+                </div>
+                <div className="flex justify-end mt-1.5">
+                  <button type="button" onClick={() => setShowForgot(v => !v)}
+                    className="text-[11px] hover:underline transition-colors"
+                    style={{ color: 'rgba(255,255,255,0.40)' }}>
+                    Forgot password?
+                  </button>
+                </div>
+              </div>
+
+              {/* Forgot password panel */}
+              {showForgot && (
+                <div className="rounded-xl p-4 space-y-3"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                  {!forgotSent ? (
+                    <>
+                      <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                        Enter your work email and contact IT Support to reset your password.
+                      </p>
+                      <input type="email" placeholder="your@email.com"
+                        value={forgotEmail} onChange={e => setForgotEmail(e.target.value)}
+                        className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                        style={{ background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff' }}
+                      />
+                      <button type="button" onClick={handleForgot}
+                        className="text-xs font-bold px-3 py-1.5 rounded-lg"
+                        style={{ background: 'rgba(240,17,94,0.30)', color: '#F0115E' }}>
+                        Request Reset
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-xs text-emerald-400">
+                      ✅ Request noted. Please contact <strong>itsupport.blr@wepsol.com</strong> with your registered email to reset your password.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Captcha */}
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider mb-2"
+                  style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  Security Check: {captcha.question}
+                </label>
+                <input type="number" required placeholder="Answer"
+                  value={captchaVal} onChange={e => setCaptchaVal(e.target.value)}
+                  className="w-full rounded-xl px-4 py-3 text-sm outline-none transition-all"
                   style={{
                     background: 'rgba(255,255,255,0.08)',
                     border: '1.5px solid rgba(255,255,255,0.13)',
                     color: '#fff',
                   }}
-                  onFocus={e => {
-                    e.target.style.borderColor = '#F0115E'
-                    e.target.style.background = 'rgba(240,17,94,0.06)'
-                  }}
-                  onBlur={e => {
-                    e.target.style.borderColor = 'rgba(255,255,255,0.13)'
-                    e.target.style.background = 'rgba(255,255,255,0.08)'
-                  }}
+                  onFocus={e => { e.target.style.borderColor = '#F0115E'; e.target.style.background = 'rgba(240,17,94,0.06)' }}
+                  onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.13)'; e.target.style.background = 'rgba(255,255,255,0.08)' }}
                 />
               </div>
 
               {/* Error */}
               {error && (
                 <div className="flex items-center gap-2 text-sm px-4 py-3 rounded-xl"
-                  style={{
-                    background: 'rgba(220,38,38,0.12)',
-                    color: '#FCA5A5',
-                    border: '1px solid rgba(220,38,38,0.22)'
-                  }}>
+                  style={{ background: 'rgba(220,38,38,0.12)', color: '#FCA5A5', border: '1px solid rgba(220,38,38,0.22)' }}>
                   <span className="shrink-0">⚠️</span> {error}
                 </div>
               )}
@@ -229,11 +300,8 @@ export default function Login() {
               <button type="submit" disabled={loading}
                 className="w-full font-bold text-sm text-white py-4 rounded-xl transition-all disabled:opacity-50"
                 style={{
-                  background: loading
-                    ? 'rgba(240,17,94,0.5)'
-                    : 'linear-gradient(135deg, #F0115E 0%, #C2005A 100%)',
+                  background: loading ? 'rgba(240,17,94,0.5)' : 'linear-gradient(135deg, #F0115E 0%, #C2005A 100%)',
                   boxShadow: loading ? 'none' : '0 6px 20px rgba(240,17,94,0.40)',
-                  letterSpacing: '0.03em'
                 }}>
                 {loading ? (
                   <span className="flex items-center justify-center gap-2.5">

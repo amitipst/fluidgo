@@ -17,6 +17,7 @@ import Opportunities from '@/pages/Opportunities'
 import RevenueIntelligence from '@/pages/RevenueIntelligence'
 import RegionalPerformance from '@/pages/RegionalPerformance'
 import ScoringAdmin from '@/pages/ScoringAdmin'
+import SystemHealth from '@/pages/SystemHealth'
 import FGAApproval from '@/pages/FGAApproval'
 import Gamification from '@/pages/Gamification'
 import ErrorBoundary from '@/components/ErrorBoundary'
@@ -78,8 +79,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               } />
               {/* Admin */}
               <Route path="scoring-admin" element={
-                <ProtectedRoute roles={['bu_head','business_head','ceo','super_admin']}>
+                <ProtectedRoute roles={['bu_head','business_head','practice_head','ceo','super_admin']}>
                   <ScoringAdmin />
+                </ProtectedRoute>
+              } />
+              <Route path="system-health" element={
+                <ProtectedRoute roles={['super_admin']}>
+                  <SystemHealth />
                 </ProtectedRoute>
               } />
             </Route>

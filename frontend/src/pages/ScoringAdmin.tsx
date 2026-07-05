@@ -5,7 +5,8 @@ import { useAuthStore } from '@/store/authStore'
 
 interface Param { id?: string; name: string; weight_pct: number; metric_source: string; calc_type: string; sort_order: number }
 
-const ADMIN_ORG_ROLES = ['admin', 'super_admin', 'practice_head']
+// Roles that can access Scoring Admin
+const SCORING_ROLES = ['bu_head', 'business_head', 'practice_head', 'ceo', 'super_admin']
 
 export default function ScoringAdmin() {
   const { user } = useAuthStore()
@@ -14,7 +15,7 @@ export default function ScoringAdmin() {
   const [params, setParams] = useState<Param[]>([])
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
-  const authorized = ADMIN_ORG_ROLES.includes(user?.org_role_key ?? '')
+  const authorized = SCORING_ROLES.includes(user?.role ?? '')
 
   const { data: templates = [] } = useQuery({
     queryKey: ['scoring-templates'],
@@ -31,7 +32,7 @@ export default function ScoringAdmin() {
     return (
       <div className="p-4 md:p-6 max-w-4xl mx-auto">
         <div className="card text-center text-wep-muted py-12">
-          🔒 Scoring Admin is only available to Admin, Super Admin, or Practice Head roles.
+          🔒 Scoring Admin is available to BU Head, Business Head, Practice Head, CEO, and Super Admin.
         </div>
       </div>
     )

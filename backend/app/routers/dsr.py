@@ -13,6 +13,10 @@ from app.services.audit_service import audit
 
 router = APIRouter()
 
+# Roles permitted to submit a DSR (field + direct management only)
+DSR_ALLOWED_ROLES = {
+    "rep", "inside_sales", "pre_sales", "manager"
+}
 PRESALES_ROLES = {"pre_sales", "presales"}
 
 class SelfScoreIn(BaseModel):
@@ -79,7 +83,17 @@ async def submit_dsr(
     user: User = Depends(get_current_user)
 ):
     """Upsert DSR — one row per user per date.
+    Only field roles (rep, inside_sales, pre_sales, manager) can submit DSR.
+    Business heads, CEOs, HR, Finance do not submit DSRs.
     LOCKED once manager approves — rep cannot edit after that."""
+
+    # Role guard — business_head and above do not submit DSRs
+    if user.role not in DSR_ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{user.role}' does not submit DSRs. Only field roles (rep, inside_sales, pre_sales, manager) can submit."
+        )
+
     dsr_type = "presales" if user.role in PRESALES_ROLES else "sales"
 
     result = await db.execute(

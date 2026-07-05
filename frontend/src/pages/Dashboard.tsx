@@ -111,7 +111,8 @@ export default function Dashboard() {
   const { user } = useAuthStore()
   const today  = format(new Date(), 'yyyy-MM-dd')
   const hour   = new Date().getHours()
-  const isBU   = ['manager','bu_head'].includes(user?.role ?? '')
+  const isBU   = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const isField = ['rep','inside_sales','pre_sales','manager'].includes(user?.role ?? '')
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'))
 
@@ -156,7 +157,9 @@ export default function Dashboard() {
             <input type="month" className="form-input py-2 text-sm w-40"
               value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
           )}
-          <Link to="/dsr" className="btn-primary">✏️ Submit DSR</Link>
+          {isField && (
+            <Link to="/dsr" className="btn-primary">✏️ Submit DSR</Link>
+          )}
         </div>
       </div>
 

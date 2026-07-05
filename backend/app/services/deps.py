@@ -1,3 +1,21 @@
+"""
+RBAC: Lean and clean role hierarchy for fluidGo.
+
+Simplified from 10 roles to a clear 6-tier system:
+  Level 99: super_admin   — full system access, health dashboard, audit logs
+  Level 50: ceo           — all businesses, all regions
+  Level 40: business_head — all regions within one business (≡ practice_head)
+  Level 30: bu_head       — legacy alias for business_head (same access)
+  Level 20: manager       — own team via manager_id
+  Level 25: hr            — all users for FGA, no sales data
+  Level 25: finance       — approved FGA export only
+  Level 10: rep           — own data only
+  Level 10: inside_sales  — own data only
+  Level 10: pre_sales     — own data only
+
+business_head == practice_head (same level 40, same scope)
+bu_head is kept as alias → maps to level 30 for backward compat
+"""
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +25,11 @@ from app.models import User, role_level
 from app.services.auth_service import decode_token
 
 bearer = HTTPBearer()
+
+# Roles that can access management/admin features
+MANAGER_ROLES  = {"manager", "bu_head", "business_head", "practice_head", "ceo", "super_admin"}
+FIELD_ROLES    = {"rep", "inside_sales", "pre_sales"}
+ALL_ROLES      = MANAGER_ROLES | FIELD_ROLES | {"hr", "finance"}
 
 async def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(bearer),
@@ -18,7 +41,11 @@ async def get_current_user(
             raise ValueError("wrong token type")
         user_id = payload["sub"]
     except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expired or invalid — please log in again",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -27,37 +54,40 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account deactivated")
     return user
 
+
 def require_role(*roles: str):
-    """Legacy guard — exact role match. Still used throughout."""
+    """Exact role match. Includes super_admin bypass always."""
     async def checker(user: User = Depends(get_current_user)) -> User:
-        if user.role not in roles:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                detail=f"Role '{user.role}' cannot access this resource")
+        if user.role == "super_admin":
+            return user  # super_admin bypasses all role checks
+        # Normalize: practice_head == business_head, bu_head >= 30
+        effective = user.role
+        if user.role == "practice_head":
+            effective = "business_head"
+        if effective not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{user.role}' cannot access this resource. Required: {roles}"
+            )
         return user
     return checker
+
 
 def require_level(min_level: int):
     """Level-based guard — any role at or above min_level passes.
-    Preferred for new endpoints — more future-proof than exact role matching."""
+    Always allows super_admin (level 99)."""
     async def checker(user: User = Depends(get_current_user)) -> User:
         if role_level(user.role) < min_level:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                detail=f"Insufficient role level (need {min_level}, have {role_level(user.role)})")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient access level (required: {min_level}, your level: {role_level(user.role)})"
+            )
         return user
     return checker
 
-def require_scope(*scopes: str):
-    """Scope-based guard — passes if user's role scope is in allowed scopes."""
-    from app.models import ROLE_HIERARCHY
-    async def checker(user: User = Depends(get_current_user)) -> User:
-        user_scope = ROLE_HIERARCHY.get(user.role, {}).get("scope", "own")
-        if user_scope not in scopes and role_level(user.role) < 99:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-        return user
-    return checker
 
 def require_any_manager(user: User = Depends(get_current_user)) -> User:
-    """Passes for manager, bu_head, business_head, ceo, super_admin, hr."""
+    """Passes for manager and above, plus hr and finance."""
     if role_level(user.role) < 20 and user.role not in ("hr", "finance"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Management role required")
     return user
