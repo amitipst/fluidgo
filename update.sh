@@ -25,6 +25,11 @@ docker cp backend/admin_users.py app-backend-1:/app/admin_users.py 2>/dev/null |
 docker compose -f docker-compose.prod.yml exec -T backend python admin_users.py
 
 echo ""
+echo "=== [4b/7] Backfilling any NULL region users ==="
+docker cp backend/backfill_region.py app-backend-1:/app/backfill_region.py 2>/dev/null || true
+docker compose -f docker-compose.prod.yml exec -T backend python backfill_region.py
+
+echo ""
 echo "=== [5/7] Rebuilding images ==="
 docker compose -f docker-compose.prod.yml build backend frontend
 
