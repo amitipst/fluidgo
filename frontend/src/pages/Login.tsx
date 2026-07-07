@@ -50,6 +50,39 @@ function FluidGoLogo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
   )
 }
 
+// ── Ascent illustration — original on-brand graphic (not a stock photo), echoes
+// the ascending-bars motif from the fluidGo mark itself. Inline SVG so it can
+// never be corrupted like a standalone .svg file on this machine. ──
+function AscentIllustration() {
+  return (
+    <svg viewBox="0 0 400 170" className="w-full h-auto" aria-hidden="true">
+      <defs>
+        <linearGradient id="peakA" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#92278E" stopOpacity="0.55" />
+          <stop offset="100%" stopColor="#92278E" stopOpacity="0.15" />
+        </linearGradient>
+        <linearGradient id="peakB" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#F0115E" stopOpacity="0.9" />
+          <stop offset="100%" stopColor="#F0115E" stopOpacity="0.35" />
+        </linearGradient>
+      </defs>
+      <path d="M0 170 L90 55 L165 140 L230 60 L400 170 Z" fill="url(#peakA)" />
+      <path d="M40 170 L150 40 L260 170 Z" fill="url(#peakB)" />
+      <path d="M60 165 L100 130 L140 105 L150 42" stroke="#0D9488" strokeWidth="3.5"
+        strokeDasharray="1 10" strokeLinecap="round" fill="none" />
+      <circle cx="150" cy="40" r="6" fill="#FFFFFF" />
+      <path d="M150 40 L150 16" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M150 16 L172 23 L150 30 Z" fill="#0D9488" />
+      <g opacity="0.8">
+        <rect x="300" y="120" width="16" height="30" rx="4" fill="#F0115E" />
+        <rect x="322" y="100" width="16" height="50" rx="4" fill="#F0115E" />
+        <rect x="344" y="78"  width="16" height="72" rx="4" fill="#F0115E" />
+        <rect x="366" y="56"  width="16" height="94" rx="4" fill="#92278E" opacity="0.7" />
+      </g>
+    </svg>
+  )
+}
+
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -123,9 +156,7 @@ export default function Login() {
           </h1>
 
           <p className="text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,0.50)' }}>
-            AI-powered daily sales reporting with BANT intelligence,
-            deal health scoring, and real-time performance insights —
-            all private, all on-premise.
+            AI-powered daily sales reporting — private, on-premise, real-time.
           </p>
         </div>
 
@@ -133,10 +164,8 @@ export default function Login() {
         <div className="space-y-3 relative z-10">
           {[
             { dot: '#4AAB29', text: 'Local AI — zero data leaves your servers' },
-            { dot: '#F0115E', text: 'Real-time BANT, rigor & deal health scoring' },
-            { dot: '#92278E', text: 'FGA approval workflow — Manager → HR → VP → Finance' },
-            { dot: '#FF4C01', text: 'Gamification, incentive schemes & leaderboards' },
-            { dot: '#0EA5E9', text: 'Multi-BU · Multi-Role · Secure data isolation' },
+            { dot: '#F0115E', text: 'BANT, rigor & deal health scoring' },
+            { dot: '#0EA5E9', text: 'Multi-BU · Multi-Role · Gamified' },
           ].map(f => (
             <div key={f.text} className="flex items-center gap-3 text-sm"
               style={{ color: 'rgba(255,255,255,0.55)' }}>
@@ -177,6 +206,11 @@ export default function Login() {
           {/* Mobile logo */}
           <div className="flex lg:hidden justify-center mb-10">
             <FluidGoLogo size="md" />
+          </div>
+
+          {/* Hero illustration — above the login card, as requested */}
+          <div className="hidden lg:block mb-6 px-4 opacity-90">
+            <AscentIllustration />
           </div>
 
           {/* Form card */}
