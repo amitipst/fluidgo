@@ -15,6 +15,7 @@ const V3_ROLES = [
   { key: 'manager',       label: '👔 Manager',                level: 20 },
   { key: 'bu_head',       label: '🏢 BU Head',                level: 30 },
   { key: 'business_head', label: '🏭 Business Head',          level: 40 },
+  { key: 'coo',           label: '🎯 COO',                     level: 45 },
   { key: 'hr',            label: '👥 HR',                     level: 25 },
   { key: 'finance',       label: '💰 Finance',                level: 25 },
   { key: 'ceo',           label: '👑 CEO',                    level: 50 },

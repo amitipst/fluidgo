@@ -16,7 +16,7 @@ router = APIRouter()
 # v3 roles — all valid values
 V3_ROLES = Literal[
     "rep", "inside_sales", "pre_sales", "manager",
-    "bu_head", "business_head", "hr", "finance", "ceo", "super_admin"
+    "bu_head", "business_head", "coo", "hr", "finance", "ceo", "super_admin"
 ]
 BUSINESSES = Literal["fluidpro", "fluidprint", "floxtax", "hooks"]
 

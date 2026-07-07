@@ -35,6 +35,9 @@ ROLE_HIERARCHY: dict[str, dict] = {
     # business_head == practice_head (same level, same scope)
     "business_head":  {"level": 40, "scope": "business"},
     "practice_head":  {"level": 40, "scope": "business"},   # alias for business_head
+    # COO — above business_head, sees ALL businesses (fluidPro, fluidPrint, floxtax, hooks),
+    # not scoped to a single `business` field like business_head is.
+    "coo":            {"level": 45, "scope": "all"},
     # Org-wide roles
     "ceo":            {"level": 50, "scope": "all"},
     "super_admin":    {"level": 99, "scope": "all"},
@@ -43,7 +46,7 @@ def role_level(role: str) -> int: return ROLE_HIERARCHY.get(role, {}).get("level
 def can_manage_targets(role: str) -> bool: return role_level(role) >= 20
 def can_see_team(role: str) -> bool: return role_level(role) >= 20 or role in ("hr","finance")
 def can_see_all_bu(role: str) -> bool: return role_level(role) >= 30
-def is_cross_org(role: str) -> bool: return role_level(role) >= 50
+def is_cross_org(role: str) -> bool: return role_level(role) >= 45
 
 # ── Gamification models ───────────────────────────────────────────────────────
 class IncentiveScheme(Base):
