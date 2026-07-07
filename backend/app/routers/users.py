@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -9,6 +9,7 @@ from app.models import User, ROLE_HIERARCHY, role_level
 from app.services.deps import get_current_user, require_level
 from app.services.auth_service import hash_password
 from app.services.permission_service import resolve_visible_user_ids
+from app.services.audit_service import audit
 
 router = APIRouter()
 
@@ -131,6 +132,8 @@ async def create_user(
 async def update_user(
     user_id: str,
     body: UserUpdate,
+    background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_level(20))
 ):
@@ -147,6 +150,25 @@ async def update_user(
     if body.role and not _can_create_role(actor.role, body.role):
         raise HTTPException(403, f"Cannot assign role '{body.role}' — insufficient level")
 
+    # If reassigning manager, the new manager must be someone the actor can see
+    # and must actually be able to manage (level 20+), so DSR approval chains stay valid.
+    if body.manager_id:
+        new_mgr = (await db.execute(
+            select(User).where(User.id == uuid.UUID(body.manager_id))
+        )).scalar_one_or_none()
+        if not new_mgr:
+            raise HTTPException(404, "New manager not found")
+        if role_level(new_mgr.role) < 20:
+            raise HTTPException(400, f"'{new_mgr.name}' has role '{new_mgr.role}' and cannot be set as a manager")
+        if visible is not None and new_mgr.id not in visible:
+            raise HTTPException(403, "You cannot assign a manager outside your scope")
+
+    # Capture before/after for audit trail (region/BU transfer, manager change, role change)
+    before = {
+        "name": target.name, "role": target.role, "region": getattr(target, "region", None) or target.bu,
+        "business": target.business, "manager_id": str(target.manager_id) if target.manager_id else None,
+    }
+
     if body.name:       target.name = body.name
     if body.role:       target.role = body.role
     if body.region:
@@ -157,6 +179,24 @@ async def update_user(
         target.manager_id = uuid.UUID(body.manager_id) if body.manager_id else None
 
     await db.commit()
+    await db.refresh(target)
+
+    after = {
+        "name": target.name, "role": target.role, "region": getattr(target, "region", None) or target.bu,
+        "business": target.business, "manager_id": str(target.manager_id) if target.manager_id else None,
+    }
+    changed = {k: {"from": before[k], "to": after[k]} for k in before if before[k] != after[k]}
+    if changed:
+        summary_bits = []
+        if "manager_id" in changed: summary_bits.append("manager reassigned")
+        if "region" in changed:     summary_bits.append(f"region/BU transferred to {after['region']}")
+        if "role" in changed:      summary_bits.append(f"role changed to {after['role']}")
+        background_tasks.add_task(
+            audit, db, actor, "UPDATE", "user", str(target.id),
+            f"{target.name}: {', '.join(summary_bits) or 'profile updated'}",
+            diff=changed, request=request,
+        )
+
     return _serialize(target)
 
 @router.patch("/{user_id}/status")

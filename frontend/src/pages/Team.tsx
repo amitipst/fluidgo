@@ -52,6 +52,9 @@ export default function Team() {
   const [showExited, setShowExited] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [formError, setFormError] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ role: '', region: '', business: '', manager_id: '' })
+  const [editError, setEditError] = useState('')
 
   const { data: teamData = [], isLoading } = useQuery({
     queryKey: ['team-analytics', showExited],
@@ -94,6 +97,42 @@ export default function Team() {
       qc.invalidateQueries({ queryKey: ['team-analytics'] })
     }
   })
+
+  const updateUser = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: any }) => api.patch(`/users/${id}`, body),
+    onSuccess: () => {
+      setEditingId(null); setEditError('')
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['team-analytics'] })
+    },
+    onError: (err: any) => setEditError(err?.response?.data?.detail ?? 'Could not update member')
+  })
+
+  function startEdit(u: any) {
+    setEditingId(u.id)
+    setEditError('')
+    setEditForm({
+      role: u.role,
+      region: u.region || 'India - West',
+      business: u.business || 'fluidpro',
+      manager_id: u.manager_id || ''
+    })
+  }
+
+  function saveEdit(id: string) {
+    updateUser.mutate({
+      id,
+      body: {
+        role: editForm.role,
+        region: editForm.region,
+        business: editForm.business,
+        manager_id: editForm.manager_id || null
+      }
+    })
+  }
+
+  // Anyone with role_level >= 20 (manager and above) can be assigned as a manager
+  const potentialManagers = allUsers.filter((u: any) => u.role_level >= 20)
 
   const submittedToday = new Set(todayDSRs.map((d: any) => d.user_id))
 
@@ -206,22 +245,90 @@ export default function Team() {
 
           <div className="space-y-2">
             {allUsers.map((u: any) => (
-              <div key={u.id} className="flex items-center justify-between border-b border-wep-border/50 py-2 text-sm">
-                <div>
-                  <span className={`font-medium ${u.is_active ? 'text-wep-navy' : 'text-wep-muted line-through'}`}>{u.name}</span>
-                  <span className="text-wep-muted ml-2 text-xs">{u.email} · {u.role.replace('_',' ')}</span>
-                  {!u.is_active && <span className="ml-2 text-[10px] font-bold uppercase text-red-500">Exited</span>}
+              <div key={u.id} className="border-b border-wep-border/50 py-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className={`font-medium ${u.is_active ? 'text-wep-navy' : 'text-wep-muted line-through'}`}>{u.name}</span>
+                    <span className="text-wep-muted ml-2 text-xs">
+                      {u.email} · {u.role.replace('_',' ')} · {u.region || u.bu}
+                      {u.manager_id && (() => {
+                        const mgr = allUsers.find((m: any) => m.id === u.manager_id)
+                        return mgr ? ` · reports to ${mgr.name}` : ''
+                      })()}
+                    </span>
+                    {!u.is_active && <span className="ml-2 text-[10px] font-bold uppercase text-red-500">Exited</span>}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    {u.is_active && (
+                      <button
+                        onClick={() => editingId === u.id ? setEditingId(null) : startEdit(u)}
+                        className="text-xs font-semibold px-3 py-1 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60"
+                      >
+                        {editingId === u.id ? 'Cancel' : '✏️ Edit'}
+                      </button>
+                    )}
+                    <button
+                      disabled={setStatus.isPending || u.id === user?.id}
+                      onClick={() => setStatus.mutate({ id: u.id, is_active: !u.is_active })}
+                      className={`text-xs font-semibold px-3 py-1 rounded-lg ${
+                        u.is_active ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-teal-50 text-teal-600 hover:bg-teal-100'
+                      } disabled:opacity-40`}
+                      title={u.id === user?.id ? "You can't deactivate your own account" : undefined}
+                    >
+                      {u.is_active ? 'Deactivate' : 'Reactivate'}
+                    </button>
+                  </div>
                 </div>
-                <button
-                  disabled={setStatus.isPending || u.id === user?.id}
-                  onClick={() => setStatus.mutate({ id: u.id, is_active: !u.is_active })}
-                  className={`text-xs font-semibold px-3 py-1 rounded-lg ${
-                    u.is_active ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-teal-50 text-teal-600 hover:bg-teal-100'
-                  } disabled:opacity-40`}
-                  title={u.id === user?.id ? "You can't deactivate your own account" : undefined}
-                >
-                  {u.is_active ? 'Deactivate' : 'Reactivate'}
-                </button>
+
+                {editingId === u.id && (
+                  <div className="mt-3 mb-1 bg-wep-surface rounded-xl p-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                      <label className="form-label block mb-1 text-[10px]">Role</label>
+                      <select className="form-input" value={editForm.role}
+                        onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))}>
+                        <option value={u.role}>{u.role.replace('_',' ')} (current)</option>
+                        {(assignableRoles.length ? assignableRoles : V3_ROLES)
+                          .filter((r: any) => r.key !== u.role)
+                          .map((r: any) => (<option key={r.key} value={r.key}>{r.label}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label block mb-1 text-[10px]">Region / BU</label>
+                      <select className="form-input" value={editForm.region}
+                        onChange={e => setEditForm(f => ({ ...f, region: e.target.value }))}>
+                        {REGIONS.map(r => (<option key={r.key} value={r.key}>{r.label}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label block mb-1 text-[10px]">Reports to (Manager)</label>
+                      <select className="form-input" value={editForm.manager_id}
+                        onChange={e => setEditForm(f => ({ ...f, manager_id: e.target.value }))}>
+                        <option value="">— No manager —</option>
+                        {potentialManagers.filter((m: any) => m.id !== u.id).map((m: any) => (
+                          <option key={m.id} value={m.id}>{m.name} ({m.role.replace('_',' ')})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label block mb-1 text-[10px]">Business</label>
+                      <select className="form-input" value={editForm.business}
+                        onChange={e => setEditForm(f => ({ ...f, business: e.target.value }))}>
+                        {BUSINESSES.map(b => (<option key={b.key} value={b.key}>{b.label}</option>))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-4 flex items-center gap-3">
+                      <button
+                        onClick={() => saveEdit(u.id)}
+                        disabled={updateUser.isPending}
+                        className="btn-primary text-xs"
+                      >
+                        {updateUser.isPending ? '⏳ Saving...' : '💾 Save Changes'}
+                      </button>
+                      <button onClick={() => setEditingId(null)} className="btn-outline text-xs">Cancel</button>
+                      {editError && <p className="text-red-500 text-xs">{editError}</p>}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
