@@ -25,8 +25,9 @@ export default defineConfig({
         runtimeCaching: [
           { urlPattern: /\/api\/dsr/, handler: 'NetworkFirst',
             options: { cacheName: 'dsr-cache', expiration: { maxAgeSeconds: 86400 } } },
-          { urlPattern: /\/api\/analytics/, handler: 'StaleWhileRevalidate',
-            options: { cacheName: 'analytics-cache' } },
+          { urlPattern: /\/api\/analytics/, handler: 'NetworkFirst',
+            options: { cacheName: 'analytics-cache', expiration: { maxAgeSeconds: 3600 },
+                       networkTimeoutSeconds: 8 } },
           { urlPattern: /\/api\/meetings/, handler: 'NetworkFirst',
             options: { cacheName: 'meetings-cache' } }
         ]
