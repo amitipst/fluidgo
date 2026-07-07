@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
@@ -53,19 +53,34 @@ function KPICard({ label, value, sub, accentColor, icon, loading }: {
 }
 
 // ── AI Panel ──────────────────────────────────────────────────────────────────
-function AIPanel({ userId }: { userId: string }) {
-  const [content, setContent] = useState('')
-  const [loading, setLoading] = useState(false)
+function timeAgo(iso: string | null): string {
+  if (!iso) return ''
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.round(hrs / 24)}d ago`
+}
 
-  async function runAI() {
-    setLoading(true); setContent('')
-    try {
-      const res = await api.get(`/ai/dashboard/${userId}`)
-      setContent(res.data.content)
-    } catch {
-      setContent('⚠️ AI unavailable — ensure Ollama is running with phi3:mini pulled.\n\nRun: docker compose exec ollama ollama pull phi3:mini')
-    } finally { setLoading(false) }
-  }
+function AIPanel({ userId }: { userId: string }) {
+  const qc = useQueryClient()
+
+  const { data } = useQuery({
+    queryKey: ['ai-insight', userId],
+    queryFn: () => api.get(`/ai/dashboard/${userId}`).then(r => r.data),
+    // Cache reads are instant, but poll while a generation is in flight so
+    // the UI updates itself the moment it's ready — no manual refresh needed.
+    refetchInterval: (q) => (q.state.data?.status === 'pending' ? 4000 : false),
+  })
+
+  const regenerate = useMutation({
+    mutationFn: () => api.post(`/ai/dashboard/${userId}/regenerate`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-insight', userId] }),
+  })
+
+  const status = data?.status
+  const isPending = status === 'pending' || regenerate.isPending
 
   return (
     <div className="ai-panel mb-6" style={{ background: 'linear-gradient(135deg, #1A0B2E 0%, #3D1A6E 100%)' }}>
@@ -78,16 +93,21 @@ function AIPanel({ userId }: { userId: string }) {
             AI · Ollama Local
           </span>
           <span className="font-display font-bold text-white text-sm">Performance Intelligence</span>
+          {status === 'ready' && data?.generated_at && (
+            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              · Generated {timeAgo(data.generated_at)}
+            </span>
+          )}
         </div>
-        <button onClick={runAI} disabled={loading}
+        <button onClick={() => regenerate.mutate()} disabled={isPending}
           className="text-xs font-semibold transition-colors disabled:opacity-40"
-          style={{ color: loading ? 'rgba(255,255,255,0.4)' : '#F5921E' }}>
-          {loading ? '⏳ Analysing…' : '✨ Run Analysis'}
+          style={{ color: isPending ? 'rgba(255,255,255,0.4)' : '#F5921E' }}>
+          {isPending ? '⏳ Analysing…' : status === 'ready' ? '🔄 Regenerate' : '✨ Run Analysis'}
         </button>
       </div>
 
       {/* Content */}
-      {loading && (
+      {isPending && (
         <div className="flex items-center gap-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
           <span className="flex gap-1">
             {[0,1,2].map(i => (
@@ -95,20 +115,26 @@ function AIPanel({ userId }: { userId: string }) {
                 style={{ animationDelay: `${i*0.15}s` }} />
             ))}
           </span>
-          Querying local Ollama LLM — this takes 10–30 seconds…
+          Generating in the background — this can take up to a couple of minutes on
+          local hardware. Feel free to keep working; this updates itself when ready.
         </div>
       )}
-      {!content && !loading && (
+      {!isPending && status === 'failed' && (
+        <p className="text-sm" style={{ color: 'rgba(255,150,150,0.8)' }}>
+          ⚠️ Last attempt didn't complete. Click "Run Analysis" to try again.
+        </p>
+      )}
+      {!isPending && !status && (
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.35)' }}>
           Click "Run Analysis" to get BANT insights, rigor assessment and coaching recommendations
           generated locally by your Ollama model. No data leaves this server.
         </p>
       )}
-      {content && (
+      {!isPending && status === 'ready' && data?.content && (
         <div className="text-sm leading-relaxed rounded-xl p-4"
           style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.85)' }}
           dangerouslySetInnerHTML={{
-            __html: content
+            __html: data.content
               .replace(/\*\*(.*?)\*\*/g, '<strong style="color:#fff">$1</strong>')
               .replace(/^#{1,3}\s(.+)$/gm, '<div style="color:#F5921E;font-weight:700;margin-top:12px;margin-bottom:4px">$1</div>')
               .replace(/\n/g, '<br/>')
@@ -117,6 +143,7 @@ function AIPanel({ userId }: { userId: string }) {
     </div>
   )
 }
+
 
 // ── Quick-link tile ───────────────────────────────────────────────────────────
 function QuickTile({ to, icon, label, desc }: { to: string; icon: string; label: string; desc: string }) {

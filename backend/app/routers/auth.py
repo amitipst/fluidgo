@@ -64,6 +64,27 @@ async def login(
         request=request
     )
 
+    # Pre-warm the AI dashboard insight so it's likely ready by the time the
+    # user actually looks at it — never blocks this response either way.
+    # Only for field roles (the analysis is based on DSR/meeting activity,
+    # which BU-head-and-above roles don't generate, so it'd be near-empty
+    # for them). Skips regeneration if a reasonably fresh one already exists.
+    if user.role in ("rep", "inside_sales", "pre_sales", "manager"):
+        from app.routers.ai import generate_dashboard_insight
+        from app.models import AIInsight
+        from datetime import datetime, timedelta
+        cutoff = datetime.utcnow() - timedelta(hours=6)
+        recent = (await db.execute(
+            select(AIInsight).where(
+                AIInsight.entity_type == "dashboard",
+                AIInsight.entity_id == user.id,
+                AIInsight.status == "ready",
+                AIInsight.generated_at > cutoff,
+            )
+        )).scalar_one_or_none()
+        if not recent:
+            background_tasks.add_task(generate_dashboard_insight, str(user.id))
+
     return {
         "access_token":  create_access_token(str(user.id), user.role),
         "refresh_token": create_refresh_token(str(user.id)),

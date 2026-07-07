@@ -72,36 +72,43 @@ async def analyse_stream(body: AnalyseRequest, user: User = Depends(get_current_
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
-@router.get("/dashboard/{user_id}")
-async def dashboard_insights(user_id: str, db: AsyncSession = Depends(get_db),
-                              user: User = Depends(get_current_user)):
-    """Generate structured dashboard insight context from DB and call Ollama."""
-    result = await db.execute(
-        select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(user_id))
-        .order_by(DSRDaily.date.desc()).limit(20)
-    )
-    dsrs = result.scalars().all()
-    meet_result = await db.execute(
-        select(Meeting).where(Meeting.user_id == uuid.UUID(user_id))
-        .order_by(Meeting.date.desc()).limit(10)
-    )
-    meetings = meet_result.scalars().all()
+async def generate_dashboard_insight(user_id: str):
+    """Runs in the background — never blocks an HTTP request. Builds the
+    context, calls Ollama (which can legitimately take 30s-4min on this
+    CPU-only host), and writes the result to ai_insights. Uses its own DB
+    session since this runs after the triggering request has already
+    returned (login) or independently (regenerate)."""
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        uid = uuid.UUID(user_id)
+        try:
+            result = await db.execute(
+                select(DSRDaily).where(DSRDaily.user_id == uid)
+                .order_by(DSRDaily.date.desc()).limit(20)
+            )
+            dsrs = result.scalars().all()
+            meet_result = await db.execute(
+                select(Meeting).where(Meeting.user_id == uid)
+                .order_by(Meeting.date.desc()).limit(10)
+            )
+            meetings = meet_result.scalars().all()
 
-    total_calls = sum(d.calls for d in dsrs)
-    total_followups = sum(d.followups for d in dsrs)
-    total_visits = sum(d.visits for d in dsrs)
-    total_leads = sum(d.new_leads for d in dsrs)
-    avg_rigor = sum(calculate_rigor_score(d) for d in dsrs if d.status == "working") / max(len([d for d in dsrs if d.status == "working"]), 1)
+            total_calls = sum(d.calls for d in dsrs)
+            total_followups = sum(d.followups for d in dsrs)
+            total_visits = sum(d.visits for d in dsrs)
+            total_leads = sum(d.new_leads for d in dsrs)
+            working = [d for d in dsrs if d.status == "working"]
+            avg_rigor = sum(calculate_rigor_score(d) for d in working) / max(len(working), 1)
 
-    meeting_lines = []
-    for m in meetings:
-        bs = bant_score(m)
-        meeting_lines.append(
-            f"- {m.company} ({m.meeting_type}, {m.date}): BANT {bs['bant_filled']}/4, "
-            f"Intent={bs['intent']}, Closure={bs['closure_pct']}%, Gaps={','.join(bs['gaps']) or 'None'}"
-        )
+            meeting_lines = []
+            for m in meetings:
+                bs = bant_score(m)
+                meeting_lines.append(
+                    f"- {m.company} ({m.meeting_type}, {m.date}): BANT {bs['bant_filled']}/4, "
+                    f"Intent={bs['intent']}, Closure={bs['closure_pct']}%, Gaps={','.join(bs['gaps']) or 'None'}"
+                )
 
-    context = f"""Sales Rep Activity (last {len(dsrs)} working days):
+            context = f"""Sales Rep Activity (last {len(dsrs)} working days):
 Total Calls: {total_calls} | Visits: {total_visits} | Follow-ups: {total_followups} | New Leads: {total_leads}
 Average Rigor Score: {avg_rigor:.0f}/100
 
@@ -114,5 +121,78 @@ Analyse this FluidPro field sales rep's performance. Give:
 3. Critical gaps in lead generation or pipeline
 4. One honest coaching observation"""
 
-    content = await analyse(context, prompt_type="daily_insight")
-    return {"content": content, "cached": False}
+            content = await analyse(context, prompt_type="daily_insight")
+            failed = content.startswith("⚠️")  # analyse()'s own fallback prefix
+        except Exception as e:
+            content, failed = str(e), True
+
+        existing = (await db.execute(
+            select(AIInsight).where(
+                AIInsight.entity_type == "dashboard",
+                AIInsight.entity_id == uid,
+            )
+        )).scalar_one_or_none()
+
+        if existing:
+            existing.status = "failed" if failed else "ready"
+            existing.content = content
+            existing.error_detail = content if failed else None
+            existing.generated_at = datetime.utcnow()
+        else:
+            db.add(AIInsight(
+                entity_type="dashboard", entity_id=uid, insight_type="daily_insight",
+                status="failed" if failed else "ready",
+                content=content, error_detail=content if failed else None,
+                generated_at=datetime.utcnow(),
+            ))
+        await db.commit()
+
+
+@router.get("/dashboard/{user_id}")
+async def dashboard_insights(user_id: str, background_tasks: BackgroundTasks,
+                              db: AsyncSession = Depends(get_db),
+                              user: User = Depends(get_current_user)):
+    """Reads the CACHED insight — never generates synchronously, so this
+    always responds instantly regardless of how slow the model is."""
+    uid = uuid.UUID(user_id)
+    existing = (await db.execute(
+        select(AIInsight).where(
+            AIInsight.entity_type == "dashboard",
+            AIInsight.entity_id == uid,
+        )
+    )).scalar_one_or_none()
+
+    if not existing:
+        # Never generated before — kick it off now and tell the frontend to poll.
+        background_tasks.add_task(generate_dashboard_insight, user_id)
+        return {"status": "pending", "content": None, "generated_at": None}
+
+    return {
+        "status": existing.status,
+        "content": existing.content,
+        "generated_at": existing.generated_at.isoformat() if existing.generated_at else None,
+    }
+
+
+@router.post("/dashboard/{user_id}/regenerate")
+async def regenerate_dashboard_insight(user_id: str, background_tasks: BackgroundTasks,
+                                        db: AsyncSession = Depends(get_db),
+                                        user: User = Depends(get_current_user)):
+    """Manual 'Run Analysis' — marks pending immediately (so the UI can show
+    a spinner right away) and kicks off generation in the background."""
+    uid = uuid.UUID(user_id)
+    existing = (await db.execute(
+        select(AIInsight).where(
+            AIInsight.entity_type == "dashboard",
+            AIInsight.entity_id == uid,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        existing.status = "pending"
+    else:
+        db.add(AIInsight(entity_type="dashboard", entity_id=uid,
+                          insight_type="daily_insight", status="pending"))
+    await db.commit()
+
+    background_tasks.add_task(generate_dashboard_insight, user_id)
+    return {"status": "pending"}

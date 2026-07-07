@@ -284,5 +284,10 @@ class AIInsight(Base):
     entity_type:  Mapped[str]       = mapped_column(String(30))
     entity_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     insight_type: Mapped[str]       = mapped_column(String(30))
-    content:      Mapped[str]       = mapped_column(Text)
+    content:      Mapped[str]       = mapped_column(Text, nullable=True)
+    # pending | ready | failed — supports background generation so nothing
+    # ever blocks on a synchronous LLM call. Existing rows default to 'ready'
+    # since they were written the old synchronous way and already have content.
+    status:       Mapped[str]       = mapped_column(String(20), default="ready", server_default="ready")
+    error_detail: Mapped[str]       = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
