@@ -137,6 +137,11 @@ export default function Team() {
   // Anyone with role_level >= 20 (manager and above) can be assigned as a manager
   const potentialManagers = allUsers.filter((u: any) => u.role_level >= 20)
 
+  // Own level, used to hide (not just block) Edit/Deactivate for equal-or-higher accounts —
+  // matches the backend rule in update_user / set_user_status exactly.
+  const myLevel = V3_ROLES.find(r => r.key === user?.role)?.level ?? 0
+  const canManageTarget = (u: any) => u.id === user?.id || u.role_level < myLevel
+
   const submittedToday = new Set(todayDSRs.map((d: any) => d.user_id))
 
   async function runTeamAI() {
@@ -262,7 +267,7 @@ export default function Team() {
                     {!u.is_active && <span className="ml-2 text-[10px] font-bold uppercase text-red-500">Exited</span>}
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    {u.is_active && (
+                    {u.is_active && canManageTarget(u) && (
                       <button
                         onClick={() => editingId === u.id ? setEditingId(null) : startEdit(u)}
                         className="text-xs font-semibold px-3 py-1 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60"
@@ -270,16 +275,22 @@ export default function Team() {
                         {editingId === u.id ? 'Cancel' : '✏️ Edit'}
                       </button>
                     )}
-                    <button
-                      disabled={setStatus.isPending || u.id === user?.id}
-                      onClick={() => setStatus.mutate({ id: u.id, is_active: !u.is_active })}
-                      className={`text-xs font-semibold px-3 py-1 rounded-lg ${
-                        u.is_active ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-teal-50 text-teal-600 hover:bg-teal-100'
-                      } disabled:opacity-40`}
-                      title={u.id === user?.id ? "You can't deactivate your own account" : undefined}
-                    >
-                      {u.is_active ? 'Deactivate' : 'Reactivate'}
-                    </button>
+                    {canManageTarget(u) ? (
+                      <button
+                        disabled={setStatus.isPending || u.id === user?.id}
+                        onClick={() => setStatus.mutate({ id: u.id, is_active: !u.is_active })}
+                        className={`text-xs font-semibold px-3 py-1 rounded-lg ${
+                          u.is_active ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-teal-50 text-teal-600 hover:bg-teal-100'
+                        } disabled:opacity-40`}
+                        title={u.id === user?.id ? "You can't deactivate your own account" : undefined}
+                      >
+                        {u.is_active ? 'Deactivate' : 'Reactivate'}
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-wep-muted italic px-2 py-1" title="This account is at or above your role level">
+                        🔒 protected
+                      </span>
+                    )}
                   </div>
                 </div>
 

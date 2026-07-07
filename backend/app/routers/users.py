@@ -146,6 +146,18 @@ async def update_user(
     if visible is not None and target.id not in visible:
         raise HTTPException(403, "You cannot modify this user")
 
+    # Enforce hierarchy against the target's CURRENT role — not just the new role
+    # being assigned. Without this, an actor could leave `role` untouched and still
+    # edit region/business/manager_id on an account that outranks them, or demote a
+    # superior by changing their role to something low enough that _can_create_role
+    # would pass. super_admin is exempt (matches require_role's bypass elsewhere);
+    # everyone else — including another super_admin — cannot touch an equal-or-higher
+    # account. Self-edits are still allowed (e.g. updating your own region).
+    if actor.role != "super_admin" and actor.id != target.id:
+        if role_level(actor.role) <= role_level(target.role):
+            raise HTTPException(403,
+                f"Cannot modify a '{target.role}' account — it is at or above your own role level.")
+
     # Enforce hierarchy if changing role
     if body.role and not _can_create_role(actor.role, body.role):
         raise HTTPException(403, f"Cannot assign role '{body.role}' — insufficient level")
@@ -203,6 +215,8 @@ async def update_user(
 async def set_user_status(
     user_id: str,
     body: UserStatusUpdate,
+    background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: User = Depends(require_level(20))
 ):
@@ -211,11 +225,19 @@ async def set_user_status(
     target = (await db.execute(select(User).where(User.id == uuid.UUID(user_id)))).scalar_one_or_none()
     if not target:
         raise HTTPException(404, "User not found")
-    # Enforce hierarchy — can't deactivate someone at same or higher level
+    # Enforce hierarchy — can't deactivate someone at same or higher level.
+    # No super_admin bypass here on purpose: this is the one action even a
+    # super_admin cannot perform on a fellow super_admin — deliberately requires
+    # a direct script (same pattern as promote_coo.py) if that's ever truly needed.
     if role_level(actor.role) <= role_level(target.role) and actor.id != target.id:
         raise HTTPException(403, f"Cannot change status of a '{target.role}' account")
     target.is_active = body.is_active
     await db.commit()
+    background_tasks.add_task(
+        audit, db, actor, "DEACTIVATE" if not body.is_active else "REACTIVATE", "user",
+        str(target.id), f"{target.name} ({target.role}) {'deactivated' if not body.is_active else 'reactivated'}",
+        request=request,
+    )
     return _serialize(target)
 
 @router.get("/roles")
