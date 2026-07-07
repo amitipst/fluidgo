@@ -46,8 +46,12 @@ services:
       OLLAMA_MAX_QUEUE: "8"
     # mem_limit (plain Compose, enforced via cgroups) — NOT deploy.resources.limits,
     # which is silently ignored outside Docker Swarm and was why this had no real cap.
-    mem_limit: 2200m
-    memswap_limit: 2200m
+    # 4g on the t3.large (8GB, ~6.2GB free) host — phi3:mini weights alone are ~2.2GB,
+    # so the previous 2200m cap left zero room for the context buffer during actual
+    # generation and the cgroup OOM-killed llama-server mid-request every time
+    # (confirmed via dmesg: anon-rss hit ~2.13GB right against the 2.148GiB ceiling).
+    mem_limit: 4g
+    memswap_limit: 4g
     healthcheck:
       test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 30s
