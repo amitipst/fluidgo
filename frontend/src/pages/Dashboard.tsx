@@ -8,11 +8,14 @@ import { getQuoteOfDay } from '@/lib/quotes'
 
 // ── Motivational background motif — ascending bars / momentum, on-brand,
 // rendered translucent so it reads as texture, not content. Pure SVG (no
-// external image), so there's nothing that can 404 or need hosting. ──
+// external image), so there's nothing that can 404 or need hosting.
+// IMPORTANT: no `absolute` positioning here — this must render as a normal,
+// self-contained block that fills whatever fixed-size wrapper places it,
+// never reaching past its own box regardless of ancestor size. ──
 function MomentumMotif() {
   return (
-    <svg viewBox="0 0 400 160" className="absolute right-0 top-0 h-full w-auto pointer-events-none select-none"
-      style={{ opacity: 0.14 }} preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+    <svg viewBox="0 0 400 160" className="w-full h-full pointer-events-none select-none"
+      style={{ opacity: 0.14 }} preserveAspectRatio="xMaxYMid meet" aria-hidden="true">
       <rect x="20"  y="100" width="28" height="60" rx="6" fill="#92278E" />
       <rect x="60"  y="75"  width="28" height="85" rx="6" fill="#92278E" />
       <rect x="100" y="55"  width="28" height="105" rx="6" fill="#F0115E" />
