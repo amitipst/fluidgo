@@ -29,17 +29,16 @@ async def analyse(context: str, model: str = None, prompt_type: str = "daily_ins
     m = model or settings.OLLAMA_MODEL
     prompt = build_prompt(context, prompt_type)
     try:
-        # 90s was too tight: CPU-only phi3:mini generating up to num_predict=600
-        # tokens can legitimately take well past 90s, especially on longer prompts
-        # (confirmed via logs: request ran 1m30s before httpx's own timeout fired
-        # and aborted the connection mid-generation — Ollama then reported that
-        # abort as a 500, and `str(e)` on the resulting ReadTimeout is empty,
-        # which is why the error message looked blank). 180s gives real headroom.
-        async with httpx.AsyncClient(timeout=180) as client:
+        # 90s was too tight originally. 180s still timed out on the real
+        # dashboard prompt — num_predict=600 asks too much of CPU-only
+        # phi3:mini on a 2-vCPU host. Reduced to 350 tokens (still enough
+        # for a structured 4-part answer) AND kept a generous 240s ceiling
+        # to absorb normal generation-time variance under load.
+        async with httpx.AsyncClient(timeout=240) as client:
             resp = await client.post(
                 f"{settings.OLLAMA_URL}/api/generate",
                 json={"model": m, "prompt": prompt, "stream": False,
-                      "options": {"temperature": 0.3, "num_predict": 600}}
+                      "options": {"temperature": 0.3, "num_predict": 350}}
             )
             resp.raise_for_status()
             return resp.json().get("response", "No response from model.")
@@ -51,11 +50,11 @@ async def stream_analyse(context: str, model: str = None, prompt_type: str = "da
     m = model or settings.OLLAMA_MODEL
     prompt = build_prompt(context, prompt_type)
     import json
-    async with httpx.AsyncClient(timeout=180) as client:
+    async with httpx.AsyncClient(timeout=240) as client:
         async with client.stream(
             "POST", f"{settings.OLLAMA_URL}/api/generate",
             json={"model": m, "prompt": prompt, "stream": True,
-                  "options": {"temperature": 0.3, "num_predict": 600}}
+                  "options": {"temperature": 0.3, "num_predict": 350}}
         ) as resp:
             async for line in resp.aiter_lines():
                 if line:
