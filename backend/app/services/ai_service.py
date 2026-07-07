@@ -29,7 +29,13 @@ async def analyse(context: str, model: str = None, prompt_type: str = "daily_ins
     m = model or settings.OLLAMA_MODEL
     prompt = build_prompt(context, prompt_type)
     try:
-        async with httpx.AsyncClient(timeout=90) as client:
+        # 90s was too tight: CPU-only phi3:mini generating up to num_predict=600
+        # tokens can legitimately take well past 90s, especially on longer prompts
+        # (confirmed via logs: request ran 1m30s before httpx's own timeout fired
+        # and aborted the connection mid-generation — Ollama then reported that
+        # abort as a 500, and `str(e)` on the resulting ReadTimeout is empty,
+        # which is why the error message looked blank). 180s gives real headroom.
+        async with httpx.AsyncClient(timeout=180) as client:
             resp = await client.post(
                 f"{settings.OLLAMA_URL}/api/generate",
                 json={"model": m, "prompt": prompt, "stream": False,
@@ -38,13 +44,14 @@ async def analyse(context: str, model: str = None, prompt_type: str = "daily_ins
             resp.raise_for_status()
             return resp.json().get("response", "No response from model.")
     except Exception as e:
-        return f"⚠️ AI analysis unavailable: {str(e)}\n\nEnsure Ollama is running and the model is pulled."
+        detail = str(e) or f"{type(e).__name__} (no message — likely a timeout waiting for the model to finish generating)"
+        return f"⚠️ AI analysis unavailable: {detail}\n\nEnsure Ollama is running and the model is pulled."
 
 async def stream_analyse(context: str, model: str = None, prompt_type: str = "daily_insight"):
     m = model or settings.OLLAMA_MODEL
     prompt = build_prompt(context, prompt_type)
     import json
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=180) as client:
         async with client.stream(
             "POST", f"{settings.OLLAMA_URL}/api/generate",
             json={"model": m, "prompt": prompt, "stream": True,
