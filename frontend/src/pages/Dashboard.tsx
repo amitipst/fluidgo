@@ -4,6 +4,26 @@ import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
 import { format } from 'date-fns'
 import { Link } from 'react-router-dom'
+import { getQuoteOfDay } from '@/lib/quotes'
+
+// ── Motivational background motif — ascending bars / momentum, on-brand,
+// rendered translucent so it reads as texture, not content. Pure SVG (no
+// external image), so there's nothing that can 404 or need hosting. ──
+function MomentumMotif() {
+  return (
+    <svg viewBox="0 0 400 160" className="absolute right-0 top-0 h-full w-auto pointer-events-none select-none"
+      style={{ opacity: 0.06 }} preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+      <rect x="20"  y="100" width="28" height="60" rx="6" fill="#92278E" />
+      <rect x="60"  y="75"  width="28" height="85" rx="6" fill="#92278E" />
+      <rect x="100" y="55"  width="28" height="105" rx="6" fill="#F0115E" />
+      <rect x="140" y="30"  width="28" height="130" rx="6" fill="#F0115E" />
+      <rect x="180" y="5"   width="28" height="155" rx="6" fill="#F0115E" />
+      <path d="M20 95 L60 70 L100 50 L140 25 L180 0" stroke="#0D9488" strokeWidth="5"
+        fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="180" cy="0" r="9" fill="#0D9488" />
+    </svg>
+  )
+}
 
 // ── KPI Stat Card ─────────────────────────────────────────────────────────────
 function KPICard({ label, value, sub, accentColor, icon, loading }: {
@@ -115,6 +135,7 @@ export default function Dashboard() {
   const isField = ['rep','inside_sales','pre_sales','manager'].includes(user?.role ?? '')
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'))
+  const [quote] = useState(getQuoteOfDay)
 
   const { data: dash, isLoading } = useQuery({
     queryKey: ['dashboard', user?.id, selectedMonth],
@@ -135,8 +156,9 @@ export default function Dashboard() {
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
 
       {/* ── Page header ── */}
-      <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
-        <div>
+      <div className="relative flex items-start justify-between mb-6 gap-4 flex-wrap overflow-hidden rounded-2xl px-1 py-1">
+        <MomentumMotif />
+        <div className="relative z-10">
           <div className="font-display font-black text-wep-navy text-2xl leading-tight">
             {greeting}, {user?.name?.split(' ')[0]} 👋
           </div>
@@ -151,8 +173,11 @@ export default function Dashboard() {
               </span>
             )}
           </div>
+          <p className="text-xs italic text-wep-muted mt-2 max-w-md">
+            "{quote.text}" <span className="not-italic font-semibold">— {quote.author}</span>
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="relative z-10 flex items-center gap-2">
           {isBU && (
             <input type="month" className="form-input py-2 text-sm w-40"
               value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
+import { getQuoteOfDay } from '@/lib/quotes'
 
 // Simple math captcha — prevents automated login attempts
 function generateCaptcha() {
@@ -60,6 +61,7 @@ export default function Login() {
   const [forgotSent, setForgotSent] = useState(false)
   const [captcha] = useState(generateCaptcha)
   const [captchaVal, setCaptchaVal] = useState('')
+  const [quote] = useState(getQuoteOfDay)
   const { setAuth } = useAuthStore()
   const navigate = useNavigate()
 
@@ -142,6 +144,16 @@ export default function Login() {
               <span>{f.text}</span>
             </div>
           ))}
+        </div>
+
+        {/* Quote of the day — same for everyone, changes daily */}
+        <div className="relative z-10 border-l-2 pl-4 py-1" style={{ borderColor: '#F0115E' }}>
+          <p className="text-sm italic leading-relaxed" style={{ color: 'rgba(255,255,255,0.75)' }}>
+            "{quote.text}"
+          </p>
+          <p className="text-[11px] font-semibold uppercase tracking-wider mt-2" style={{ color: '#F0115E' }}>
+            — {quote.author}
+          </p>
         </div>
 
         {/* Footer */}
