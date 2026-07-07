@@ -159,41 +159,41 @@ export default function Dashboard() {
 
       {/* ── Page header ── */}
       <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
-        <div className="relative overflow-hidden rounded-2xl pr-4">
-          {/* Motif is scoped to THIS block only — sized and positioned so it
-              can never reach the date-picker/button column on the right,
-              regardless of viewport width. */}
-          <div className="absolute -right-2 top-0 w-40 h-20 pointer-events-none">
+        <div>
+          <div className="font-display font-black text-wep-navy text-2xl leading-tight">
+            {greeting}, {user?.name?.split(' ')[0]} 👋
+          </div>
+          <div className="text-wep-muted text-sm mt-1 flex items-center gap-2 flex-wrap">
+            <span>{format(new Date(), 'EEEE, d MMMM yyyy')}</span>
+            <span className="text-wep-border-strong">·</span>
+            <span>{user?.bu} BU · {user?.business ?? 'fluidPro'}</span>
+            {isBU && dash?.pending_today > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold"
+                style={{ background: '#FEF2F2', color: '#DC2626' }}>
+                🔴 {dash.pending_today} DSR pending today
+              </span>
+            )}
+          </div>
+          <p className="text-xs italic text-wep-muted mt-2 max-w-md">
+            "{quote.text}" <span className="not-italic font-semibold">— {quote.author}</span>
+          </p>
+        </div>
+        {/* Motif + controls grouped together, in NORMAL flow (not absolute) —
+            this cannot overlap the text block no matter how long the quote or
+            greeting gets, because it's a separate flex sibling, not layered on top. */}
+        <div className="flex items-start gap-4 shrink-0">
+          <div className="hidden md:block w-28 h-14 opacity-90 pointer-events-none">
             <MomentumMotif />
           </div>
-          <div className="relative z-10">
-            <div className="font-display font-black text-wep-navy text-2xl leading-tight">
-              {greeting}, {user?.name?.split(' ')[0]} 👋
-            </div>
-            <div className="text-wep-muted text-sm mt-1 flex items-center gap-2 flex-wrap">
-              <span>{format(new Date(), 'EEEE, d MMMM yyyy')}</span>
-              <span className="text-wep-border-strong">·</span>
-              <span>{user?.bu} BU · {user?.business ?? 'fluidPro'}</span>
-              {isBU && dash?.pending_today > 0 && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold"
-                  style={{ background: '#FEF2F2', color: '#DC2626' }}>
-                  🔴 {dash.pending_today} DSR pending today
-                </span>
-              )}
-            </div>
-            <p className="text-xs italic text-wep-muted mt-2 max-w-md">
-              "{quote.text}" <span className="not-italic font-semibold">— {quote.author}</span>
-            </p>
+          <div className="flex items-center gap-2">
+            {isBU && (
+              <input type="month" className="form-input py-2 text-sm w-40"
+                value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+            )}
+            {isField && (
+              <Link to="/dsr" className="btn-primary">✏️ Submit DSR</Link>
+            )}
           </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {isBU && (
-            <input type="month" className="form-input py-2 text-sm w-40"
-              value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
-          )}
-          {isField && (
-            <Link to="/dsr" className="btn-primary">✏️ Submit DSR</Link>
-          )}
         </div>
       </div>
 
