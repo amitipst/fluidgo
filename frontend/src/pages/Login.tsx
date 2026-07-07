@@ -108,7 +108,7 @@ export default function Login() {
         <div className="relative z-10">
           {/* WEPSol brand line */}
           <div className="flex items-center gap-2 mb-8">
-            <img src="/fluidgo-icon.svg" alt="" className="w-5 h-5 opacity-50" />
+            <img src="/icon-192.png" alt="" className="w-5 h-5 opacity-50 rounded" />
             <span className="text-[11px] font-semibold uppercase tracking-[0.18em]"
               style={{ color: '#F0115E' }}>
               WEP Solutions · Enterprise Platform
@@ -158,7 +158,7 @@ export default function Login() {
 
         {/* Footer */}
         <div className="flex items-center gap-3 relative z-10">
-          <img src="/fluidgo-icon.svg" alt="WEP Solutions" className="h-5 opacity-30" />
+          <img src="/icon-192.png" alt="WEP Solutions" className="h-5 w-5 opacity-30 rounded" />
           <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
             WEP Solutions Ltd · Internal Confidential · All rights reserved 2026
           </p>
