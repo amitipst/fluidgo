@@ -124,6 +124,14 @@ class DSRDaily(Base):
     approved_by:      Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=True)
     approved_at:      Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
     manager_comment:  Mapped[str]        = mapped_column(String(500), nullable=True)
+    # ── Post-window edit requests ──────────────────────────────────────────────
+    # Self-edit window is 24h from submitted_at. After that (or once approved),
+    # a rep can request an exception with a reason; a manager must explicitly
+    # grant it (sets edit_granted_until) before editing reopens. Nothing changes
+    # after the window without this logged, manager-approved trail.
+    edit_request_reason: Mapped[str]      = mapped_column(String(500), nullable=True)
+    edit_requested_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    edit_granted_until:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class SelfScore(Base):
     __tablename__ = "self_scores"

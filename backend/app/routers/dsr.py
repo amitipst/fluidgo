@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
@@ -12,6 +12,10 @@ from app.services.rigor_service import calculate_rigor_score, rigor_label
 from app.services.audit_service import audit
 
 router = APIRouter()
+
+# Self-edit window — see design note on DSRDaily.edit_granted_until.
+SELF_EDIT_WINDOW = timedelta(hours=24)
+GRANTED_EDIT_WINDOW = timedelta(hours=24)  # duration of a manager-granted exception
 
 # Roles permitted to submit a DSR (field + direct management only)
 DSR_ALLOWED_ROLES = {
@@ -57,6 +61,28 @@ class ApprovalIn(BaseModel):
     action:  Literal["approve", "reject"]
     comment: Optional[str] = None
 
+class EditRequestIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+class GrantEditIn(BaseModel):
+    comment: Optional[str] = None
+
+def _edit_lock_state(dsr: DSRDaily) -> dict:
+    """Returns why (if at all) a DSR is locked from self-editing right now."""
+    now = datetime.utcnow()
+    if dsr.edit_granted_until and now < dsr.edit_granted_until:
+        return {"locked": False, "reason": None}
+    if dsr.approval_status == "approved":
+        return {"locked": True, "reason": "approved",
+                "message": "Approved by your manager and cannot be edited. "
+                           "Use 'Request Edit' if a correction is genuinely needed."}
+    window_ends = dsr.submitted_at + SELF_EDIT_WINDOW
+    if now < window_ends:
+        return {"locked": False, "reason": None, "self_edit_ends_at": window_ends.isoformat()}
+    return {"locked": True, "reason": "window_closed",
+            "message": "The 24-hour self-edit window has closed. "
+                       "Use 'Request Edit' to ask your manager for an exception."}
+
 def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None) -> dict:
     d = {c.name: getattr(dsr, c.name) for c in dsr.__table__.columns}
     d["rigor_score"]     = rigor
@@ -64,7 +90,11 @@ def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None) -> dict:
     d["id"]              = str(d["id"])
     d["user_id"]         = str(d["user_id"])
     d["approved_by"]     = str(d["approved_by"]) if d.get("approved_by") else None
-    d["is_locked"]       = d.get("approval_status") == "approved"
+    lock = _edit_lock_state(dsr)
+    d["is_locked"]       = lock["locked"]
+    d["lock_reason"]     = lock.get("reason")
+    d["lock_message"]    = lock.get("message")
+    d["self_edit_ends_at"] = lock.get("self_edit_ends_at")
     if self_score:
         d["self_scores"] = {
             c.name: getattr(self_score, c.name)
@@ -102,13 +132,12 @@ async def submit_dsr(
     )
     dsr = result.scalar_one_or_none()
 
-    # Block editing if approved
-    if dsr and dsr.approval_status == "approved":
-        raise HTTPException(
-            status_code=400,
-            detail=f"DSR for {body.date} has been approved by your manager and cannot be edited. "
-                   f"Contact your manager to reject it if changes are needed."
-        )
+    # Block editing if approved, or if the 24h self-edit window has closed
+    # (unless a manager has explicitly granted a temporary exception).
+    if dsr:
+        lock = _edit_lock_state(dsr)
+        if lock["locked"]:
+            raise HTTPException(status_code=400, detail=lock["message"])
 
     is_update = bool(dsr)
     payload   = body.model_dump(exclude={"self_scores"})
@@ -305,3 +334,98 @@ async def approve_dsr(
         "comment":         body.comment,
         "message":         f"DSR {body.action}d successfully"
     }
+
+# ── Request a post-window edit exception ──────────────────────────────────────
+@router.post("/{dsr_id}/request-edit")
+async def request_edit(
+    dsr_id: str,
+    body: EditRequestIn,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Rep asks for a locked (approved or window-closed) DSR to be reopened.
+    Does NOT unlock anything by itself — just logs the request for the
+    manager to see and act on via /grant-edit."""
+    dsr = (await db.execute(
+        select(DSRDaily).where(DSRDaily.id == uuid.UUID(dsr_id))
+    )).scalar_one_or_none()
+    if not dsr:
+        raise HTTPException(404, "DSR not found")
+    if dsr.user_id != user.id:
+        raise HTTPException(403, "You can only request edits on your own DSRs")
+    if not _edit_lock_state(dsr)["locked"]:
+        raise HTTPException(400, "This DSR is still editable — no request needed")
+
+    dsr.edit_request_reason = body.reason
+    dsr.edit_requested_at   = datetime.utcnow()
+    await db.commit()
+    background_tasks.add_task(
+        audit, db, user, "EDIT_REQUESTED", "dsr", dsr_id,
+        f"Edit requested for {dsr.date}: {body.reason}", request=request
+    )
+    return {"message": "Edit request sent to your manager.", "reason": body.reason}
+
+# ── Manager sees pending edit requests for their team ─────────────────────────
+@router.get("/team/edit-requests")
+async def get_edit_requests(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_level(20))
+):
+    from app.services.permission_service import resolve_visible_user_ids
+    visible = await resolve_visible_user_ids(db, user)
+    q = select(DSRDaily).where(DSRDaily.edit_requested_at.isnot(None))
+    if visible is not None:
+        q = q.where(DSRDaily.user_id.in_(visible))
+    q = q.order_by(desc(DSRDaily.edit_requested_at))
+    dsrs = (await db.execute(q)).scalars().all()
+
+    results = []
+    for dsr in dsrs:
+        # Already-granted-and-still-open requests don't need re-surfacing
+        if dsr.edit_granted_until and datetime.utcnow() < dsr.edit_granted_until:
+            continue
+        rep = (await db.execute(select(User).where(User.id == dsr.user_id))).scalar_one_or_none()
+        results.append({
+            "dsr_id": str(dsr.id), "date": dsr.date.isoformat(),
+            "rep_name": rep.name if rep else "Unknown",
+            "rep_email": rep.email if rep else "",
+            "reason": dsr.edit_request_reason,
+            "requested_at": dsr.edit_requested_at.isoformat(),
+        })
+    return results
+
+# ── Manager grants a temporary reopen ──────────────────────────────────────────
+@router.post("/{dsr_id}/grant-edit")
+async def grant_edit(
+    dsr_id: str,
+    body: GrantEditIn,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_level(20))
+):
+    """Manager explicitly reopens a locked DSR for 24h. Every grant is
+    audited with who/when/why — nothing changes on a past DSR silently."""
+    from app.services.permission_service import resolve_visible_user_ids
+    dsr = (await db.execute(
+        select(DSRDaily).where(DSRDaily.id == uuid.UUID(dsr_id))
+    )).scalar_one_or_none()
+    if not dsr:
+        raise HTTPException(404, "DSR not found")
+    visible = await resolve_visible_user_ids(db, user)
+    if visible is not None and dsr.user_id not in visible:
+        raise HTTPException(403, "You cannot grant edits outside your team")
+
+    dsr.edit_granted_until  = datetime.utcnow() + GRANTED_EDIT_WINDOW
+    dsr.edit_request_reason = None
+    dsr.edit_requested_at   = None
+    await db.commit()
+    background_tasks.add_task(
+        audit, db, user, "EDIT_GRANTED", "dsr", dsr_id,
+        f"Edit reopened for {dsr.date} until {dsr.edit_granted_until.isoformat()}"
+        f"{': ' + body.comment if body.comment else ''}", request=request
+    )
+    return {"message": "Edit window reopened for 24 hours.",
+            "edit_granted_until": dsr.edit_granted_until.isoformat()}

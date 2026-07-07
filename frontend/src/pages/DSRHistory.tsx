@@ -25,12 +25,16 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // ── DSR Row Card ──────────────────────────────────────────────────────────────
-function DSRCard({ dsr, canApprove, onApprove }: {
+function DSRCard({ dsr, canApprove, onApprove, showRequestEdit, onRequestEdit, onGrant }: {
   dsr: any; canApprove?: boolean; onApprove?: (id: string, action: string, comment?: string) => void
+  showRequestEdit?: boolean; onRequestEdit?: (id: string, reason: string) => void
+  onGrant?: (id: string) => void
 }) {
   const [showDetail, setShowDetail] = useState(false)
   const [comment, setComment] = useState('')
-  const isLocked = dsr.approval_status === 'approved'
+  const [showEditRequest, setShowEditRequest] = useState(false)
+  const [editReason, setEditReason] = useState('')
+  const isLocked = dsr.is_locked ?? dsr.approval_status === 'approved'
 
   return (
     <div className={`card border-l-4 transition-all ${
@@ -46,7 +50,9 @@ function DSRCard({ dsr, canApprove, onApprove }: {
             </span>
             <StatusBadge status={dsr.approval_status} />
             {isLocked && (
-              <span className="text-[10px] text-wep-muted">🔒 Locked</span>
+              <span className="text-[10px] text-wep-muted" title={dsr.lock_message}>
+                🔒 {dsr.lock_reason === 'approved' ? 'Locked (approved)' : 'Edit window closed'}
+              </span>
             )}
           </div>
           {/* KPI summary */}
@@ -111,6 +117,43 @@ function DSRCard({ dsr, canApprove, onApprove }: {
               placeholder="Comment (optional)"
               value={comment} onChange={e => setComment(e.target.value)} />
           </>
+        )}
+
+        {/* Rep: request an exception once locked */}
+        {showRequestEdit && isLocked && !dsr.edit_requested_at && onRequestEdit && (
+          !showEditRequest ? (
+            <button onClick={() => setShowEditRequest(true)}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
+              ✏️ Request Edit
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+              <input className="form-input py-1 text-xs flex-1"
+                placeholder="Why does this need to be reopened?"
+                value={editReason} onChange={e => setEditReason(e.target.value)} />
+              <button
+                disabled={editReason.trim().length < 5}
+                onClick={() => { onRequestEdit(dsr.id, editReason); setShowEditRequest(false); setEditReason('') }}
+                className="text-xs font-bold px-3 py-1.5 rounded-lg text-white disabled:opacity-40"
+                style={{ background: '#92278E' }}>
+                Send
+              </button>
+            </div>
+          )
+        )}
+        {dsr.edit_requested_at && (
+          <span className="text-[11px] text-wep-muted italic">
+            ⏳ Edit requested — waiting on your manager
+          </span>
+        )}
+
+        {/* Manager: grant a pending request */}
+        {canApprove && dsr.edit_requested_at && onGrant && (
+          <button onClick={() => onGrant(dsr.id)}
+            className="text-xs font-bold px-3 py-1.5 rounded-lg text-white"
+            style={{ background: '#0D9488' }}>
+            🔓 Grant 24h Edit
+          </button>
         )}
       </div>
 
@@ -190,6 +233,14 @@ export default function DSRHistory() {
     enabled:  viewMode === 'team' && isManager,
   })
 
+  // Pending edit requests — separate from approvals, since a locked DSR
+  // (approved or window-closed) never shows up in team/pending.
+  const { data: editRequests = [] } = useQuery({
+    queryKey: ['dsr-edit-requests'],
+    queryFn:  () => api.get('/dsr/team/edit-requests').then(r => r.data),
+    enabled:  viewMode === 'team' && isManager,
+  })
+
   const approveMutation = useMutation({
     mutationFn: ({ id, action, comment }: { id: string; action: string; comment?: string }) =>
       api.post(`/dsr/${id}/approve`, { action, comment }),
@@ -198,6 +249,23 @@ export default function DSRHistory() {
       qc.invalidateQueries({ queryKey: ['dsr-history'] })
     },
     onError: (e: any) => alert(e?.response?.data?.detail ?? 'Action failed')
+  })
+
+  const requestEditMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post(`/dsr/${id}/request-edit`, { reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dsr-history'] }),
+    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not send request')
+  })
+
+  const grantEditMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/dsr/${id}/grant-edit`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dsr-team-pending'] })
+      qc.invalidateQueries({ queryKey: ['dsr-history'] })
+      qc.invalidateQueries({ queryKey: ['dsr-edit-requests'] })
+    },
+    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not grant edit')
   })
 
   const displayed = viewMode === 'mine' ? myHistory : teamPending
@@ -273,6 +341,31 @@ export default function DSRHistory() {
         </div>
       )}
 
+      {/* Pending edit requests — needs a manager decision, separate from approvals */}
+      {viewMode === 'team' && editRequests.length > 0 && (
+        <div className="card mb-5 border-l-4 border-l-purple-400">
+          <div className="font-bold text-sm text-wep-text mb-2">
+            🔓 {editRequests.length} pending edit request{editRequests.length > 1 ? 's' : ''}
+          </div>
+          <div className="space-y-2">
+            {editRequests.map((r: any) => (
+              <div key={r.dsr_id} className="flex items-center justify-between gap-3 text-sm flex-wrap">
+                <div>
+                  <span className="font-semibold">{r.rep_name}</span>
+                  <span className="text-wep-muted"> — {format(new Date(r.date), 'd MMM')}: </span>
+                  <span className="italic">"{r.reason}"</span>
+                </div>
+                <button onClick={() => grantEditMutation.mutate(r.dsr_id)}
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg text-white shrink-0"
+                  style={{ background: '#0D9488' }}>
+                  Grant 24h
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* DSR List */}
       {isLoading ? (
         <div className="space-y-3">{[1,2,3].map(i=><div key={i} className="skeleton h-24 rounded-2xl"/>)}</div>
@@ -307,6 +400,9 @@ export default function DSRHistory() {
                 canApprove={viewMode === 'team' && isManager}
                 onApprove={(id, action, comment) =>
                   approveMutation.mutate({ id, action, comment })}
+                showRequestEdit={viewMode === 'mine'}
+                onRequestEdit={(id, reason) => requestEditMutation.mutate({ id, reason })}
+                onGrant={(id) => grantEditMutation.mutate(id)}
               />
             </div>
           ))}
