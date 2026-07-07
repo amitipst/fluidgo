@@ -8,7 +8,7 @@ cd /opt/fluidgo/app
 echo "=== [0/8] Backing up today's UAT database (safety net) ==="
 mkdir -p /opt/fluidgo/backups
 BACKUP_FILE="/opt/fluidgo/backups/backup_$(date +%Y%m%d_%H%M%S).sql"
-docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U fluidgo fluidgo > "$BACKUP_FILE"
+docker compose -f docker-compose.prod.yml exec -T db pg_dump -U fluidgo fluidgo > "$BACKUP_FILE"
 echo "Backup saved: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
 
 echo ""
