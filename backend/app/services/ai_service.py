@@ -38,6 +38,11 @@ async def analyse(context: str, model: str = None, prompt_type: str = "daily_ins
             resp = await client.post(
                 f"{settings.OLLAMA_URL}/api/generate",
                 json={"model": m, "prompt": prompt, "stream": False,
+                      # Ollama unloads the model after 5min idle by default. Since
+                      # "Run Analysis" is clicked sporadically, most requests were
+                      # paying a cold-start reload cost on top of generation time,
+                      # pushing some past even a 240s timeout. Keep it warm for 30min.
+                      "keep_alive": "30m",
                       "options": {"temperature": 0.3, "num_predict": 350}}
             )
             resp.raise_for_status()
@@ -54,6 +59,7 @@ async def stream_analyse(context: str, model: str = None, prompt_type: str = "da
         async with client.stream(
             "POST", f"{settings.OLLAMA_URL}/api/generate",
             json={"model": m, "prompt": prompt, "stream": True,
+                  "keep_alive": "30m",
                   "options": {"temperature": 0.3, "num_predict": 350}}
         ) as resp:
             async for line in resp.aiter_lines():
