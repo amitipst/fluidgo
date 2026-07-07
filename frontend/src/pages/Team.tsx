@@ -53,7 +53,9 @@ export default function Team() {
   const [form, setForm] = useState(emptyForm)
   const [formError, setFormError] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({ role: '', region: '', business: '', manager_id: '' })
+  const [editForm, setEditForm] = useState<{ role: string; region: string; business: string; manager_id: string }>({
+    role: '', region: '', business: '', manager_id: ''
+  })
   const [editError, setEditError] = useState('')
 
   const { data: teamData = [], isLoading } = useQuery({
