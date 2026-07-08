@@ -24,7 +24,13 @@ from app.database import get_db
 from app.models import User, role_level
 from app.services.auth_service import decode_token
 
-bearer = HTTPBearer()
+# auto_error=False so a MISSING Authorization header reaches our own handler
+# below (returning a clean 401 the frontend refresh-interceptor recognises)
+# instead of HTTPBearer raising its own 403 "Not authenticated" — which the
+# interceptor treats as a permissions error and does NOT refresh/retry on.
+# That 403-vs-401 mismatch was the "not authenticated" pipeline save error:
+# an expired access token → no refresh → raw error surfaced to the user.
+bearer = HTTPBearer(auto_error=False)
 
 # Roles that can access management/admin features
 MANAGER_ROLES  = {"manager", "bu_head", "business_head", "practice_head", "ceo", "super_admin"}
@@ -35,6 +41,14 @@ async def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db)
 ) -> User:
+    # With auto_error=False, a missing header arrives as None — return our own
+    # 401 (not HTTPBearer's 403) so the frontend refreshes the token and retries.
+    if creds is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated — please log in again",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
     try:
         payload = decode_token(creds.credentials)
         if payload.get("type") != "access":
