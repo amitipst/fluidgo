@@ -83,6 +83,21 @@ async def login(
             )
         )).scalar_one_or_none()
         if not recent:
+            # Mark a pending row up front so if the user opens the dashboard
+            # before generation finishes, it shows the spinner and polls the
+            # existing job instead of kicking off a duplicate generation.
+            existing = (await db.execute(
+                select(AIInsight).where(
+                    AIInsight.entity_type == "dashboard",
+                    AIInsight.entity_id == user.id,
+                )
+            )).scalar_one_or_none()
+            if existing:
+                existing.status = "pending"
+            else:
+                db.add(AIInsight(entity_type="dashboard", entity_id=user.id,
+                                  insight_type="daily_insight", status="pending"))
+            await db.commit()
             background_tasks.add_task(generate_dashboard_insight, str(user.id))
 
     return {

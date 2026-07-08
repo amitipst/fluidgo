@@ -29,21 +29,19 @@ async def analyse(context: str, model: str = None, prompt_type: str = "daily_ins
     m = model or settings.OLLAMA_MODEL
     prompt = build_prompt(context, prompt_type)
     try:
-        # 90s was too tight originally. 180s still timed out on the real
-        # dashboard prompt — num_predict=600 asks too much of CPU-only
-        # phi3:mini on a 2-vCPU host. Reduced to 350 tokens (still enough
-        # for a structured 4-part answer) AND kept a generous 240s ceiling
-        # to absorb normal generation-time variance under load.
-        async with httpx.AsyncClient(timeout=240) as client:
+        # Measured reality: phi3:mini on this 2-vCPU host generates ~2 tokens/sec,
+        # so 350 tokens = ~176s. Since generation is now fully background (never
+        # tied to an HTTP request or login), we can afford a generous ceiling.
+        # 250 tokens keeps the typical run near ~125s while still giving a full
+        # 4-part answer; 360s ceiling absorbs cold-start reload + variance.
+        async with httpx.AsyncClient(timeout=360) as client:
             resp = await client.post(
                 f"{settings.OLLAMA_URL}/api/generate",
                 json={"model": m, "prompt": prompt, "stream": False,
-                      # Ollama unloads the model after 5min idle by default. Since
-                      # "Run Analysis" is clicked sporadically, most requests were
-                      # paying a cold-start reload cost on top of generation time,
-                      # pushing some past even a 240s timeout. Keep it warm for 30min.
-                      "keep_alive": "30m",
-                      "options": {"temperature": 0.3, "num_predict": 350}}
+                      # Ollama unloads the model after 5min idle by default. Keep
+                      # it warm for 2h so back-to-back generations skip the reload.
+                      "keep_alive": "2h",
+                      "options": {"temperature": 0.3, "num_predict": 250}}
             )
             resp.raise_for_status()
             return resp.json().get("response", "No response from model.")

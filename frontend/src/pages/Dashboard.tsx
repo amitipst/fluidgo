@@ -115,8 +115,9 @@ function AIPanel({ userId }: { userId: string }) {
                 style={{ animationDelay: `${i*0.15}s` }} />
             ))}
           </span>
-          Generating in the background — this can take up to a couple of minutes on
-          local hardware. Feel free to keep working; this updates itself when ready.
+          Generating on the local model — this takes about 2-3 minutes on this
+          hardware. You can keep working; it saves automatically and appears here
+          when ready (no need to wait on this screen).
         </div>
       )}
       {!isPending && status === 'failed' && (
