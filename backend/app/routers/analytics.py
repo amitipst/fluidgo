@@ -15,18 +15,71 @@ from app.services.scoring_engine import _period_bounds
 router = APIRouter()
 
 @router.get("/rep/{user_id}")
-async def rep_analytics(user_id: str, db: AsyncSession = Depends(get_db),
+async def rep_analytics(user_id: str, scope: str = "auto",
+                        db: AsyncSession = Depends(get_db),
                         user: User = Depends(get_current_user)):
-    """Returns per-day DSR rows for a single rep, with rigor scores.
-    BU Head / Manager can query any rep_id; a Rep can only query their own."""
-    if user.role not in ("manager", "bu_head") and str(user.id) != user_id:
+    """Returns per-day DSR rows with rigor scores.
+    - Rep: their own rows.
+    - Manager/BH viewing their own id with scope=auto: if they have no DSRs of
+      their own (they don't log DSRs), automatically returns their TEAM's daily
+      rows aggregated by date, so the Analytics charts aren't empty for them.
+    - scope=self forces own-only; scope=team forces team aggregate."""
+    from app.models import role_level
+    is_manager = role_level(user.role) >= 20
+    if not is_manager and str(user.id) != user_id:
         from fastapi import HTTPException
         raise HTTPException(403, "You can only view your own analytics")
-    result = await db.execute(
-        select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(user_id))
-        .order_by(DSRDaily.date.asc())
+
+    async def own_rows(uid):
+        res = await db.execute(
+            select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(uid))
+            .order_by(DSRDaily.date.asc())
+        )
+        return res.scalars().all()
+
+    dsrs = await own_rows(user_id)
+
+    # Manager viewing self with no personal DSRs → fall back to team aggregate
+    want_team = scope == "team" or (
+        scope == "auto" and is_manager and str(user.id) == user_id and len(dsrs) == 0
     )
-    dsrs = result.scalars().all()
+    if want_team:
+        from app.services.permission_service import resolve_visible_user_ids
+        visible = await resolve_visible_user_ids(db, user)
+        q = select(DSRDaily).order_by(DSRDaily.date.asc())
+        if visible is not None:
+            q = q.where(DSRDaily.user_id.in_(visible))
+        team_dsrs = (await db.execute(q)).scalars().all()
+        # Aggregate by date so the chart has one point per day (team totals)
+        by_date: dict = {}
+        for d in team_dsrs:
+            key = d.date
+            agg = by_date.setdefault(key, {
+                "date": d.date, "status": "working",
+                "calls": 0, "visits": 0, "followups": 0, "new_leads": 0, "proposals": 0,
+                "_rigor_sum": 0, "_rigor_n": 0,
+            })
+            agg["calls"]     += d.calls
+            agg["visits"]    += d.visits
+            agg["followups"] += d.followups
+            agg["new_leads"] += d.new_leads
+            agg["proposals"] += d.proposals
+            if d.status == "working":
+                agg["_rigor_sum"] += calculate_rigor_score(d)
+                agg["_rigor_n"]   += 1
+        out = []
+        for key in sorted(by_date.keys()):
+            a = by_date[key]
+            rigor = round(a["_rigor_sum"] / a["_rigor_n"]) if a["_rigor_n"] else 0
+            out.append({
+                "date": a["date"], "status": a["status"],
+                "calls": a["calls"], "visits": a["visits"], "followups": a["followups"],
+                "new_leads": a["new_leads"], "proposals": a["proposals"],
+                "rigor_score": rigor, "rigor_label": rigor_label(rigor),
+                "is_team_aggregate": True,
+            })
+        return out
+
     return [
         {**{c.name: getattr(d, c.name) for c in d.__table__.columns},
          "rigor_score": calculate_rigor_score(d),

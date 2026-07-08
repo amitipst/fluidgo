@@ -21,6 +21,7 @@ export default function Analytics() {
   })
 
   const working = records.filter((d: any) => d.status === 'working')
+  const isTeamView = records.length > 0 && records[0]?.is_team_aggregate === true
 
   const totals = working.reduce((a: any, d: any) => ({
     calls: a.calls + d.calls,
@@ -45,7 +46,9 @@ export default function Analytics() {
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="mb-6">
         <h1 className="font-display font-bold text-xl text-wep-navy">📈 Analytics</h1>
-        <p className="text-wep-muted text-sm">{working.length} working days tracked</p>
+        <p className="text-wep-muted text-sm">
+          {isTeamView ? "Team-wide daily activity · " : ''}{working.length} working days tracked
+        </p>
       </div>
 
       {/* KPI row */}
