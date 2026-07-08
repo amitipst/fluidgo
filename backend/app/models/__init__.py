@@ -167,6 +167,11 @@ class Meeting(Base):
     ai_intent_score:  Mapped[str]       = mapped_column(String(20), nullable=True)
     ai_closure_pct:   Mapped[int]       = mapped_column(SmallInteger, nullable=True)
     ai_recommendation:Mapped[str]       = mapped_column(Text, nullable=True)
+    # ── Funnel conversion (meeting → lead) ────────────────────────────────────
+    # status: logged → converted. converted_to_lead_id lets the UI show
+    # "✓ Converted" instead of offering Convert again, and traces the funnel.
+    status:               Mapped[str]       = mapped_column(String(20), default="logged", server_default="logged")
+    converted_to_lead_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class Lead(Base):
@@ -181,7 +186,11 @@ class Lead(Base):
     next_action:      Mapped[str]       = mapped_column(Text, nullable=True)
     next_action_date: Mapped[datetime]  = mapped_column(Date, nullable=True)
     ai_lead_score:    Mapped[int]       = mapped_column(SmallInteger, nullable=True)
+    # status: new → qualified → converted (converted = promoted to a pipeline deal)
     status:           Mapped[str]       = mapped_column(String(30), default="new")
+    # ── Funnel provenance ─────────────────────────────────────────────────────
+    source_meeting_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # meeting this lead came from
+    converted_to_deal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # deal this lead became
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class PipelineDeal(Base):
@@ -222,6 +231,8 @@ class PipelineDeal(Base):
     next_followup_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
     ai_deal_health:   Mapped[int]       = mapped_column(SmallInteger, nullable=True)
     ai_deal_health_label: Mapped[str]   = mapped_column(String(30), nullable=True)
+    # ── Funnel provenance ─────────────────────────────────────────────────────
+    source_lead_id:   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # lead this deal came from
 
 class OrgRole(Base):
     """Additive org-hierarchy layer. Independent of `users.role` (rep|inside_sales|
