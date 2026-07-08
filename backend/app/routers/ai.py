@@ -196,3 +196,102 @@ async def regenerate_dashboard_insight(user_id: str, background_tasks: Backgroun
 
     background_tasks.add_task(generate_dashboard_insight, user_id)
     return {"status": "pending"}
+
+
+# ── Team analysis — same background pattern as the personal dashboard ─────────
+async def generate_team_insight(manager_id: str):
+    """Background team analysis for a manager, keyed by their user_id with
+    entity_type='team'. Builds context from their visible team's DSR activity."""
+    from app.database import AsyncSessionLocal
+    from app.services.permission_service import resolve_visible_user_ids
+    from app.services.rigor_service import calculate_rigor_score
+    from datetime import date
+    async with AsyncSessionLocal() as db:
+        mid = uuid.UUID(manager_id)
+        try:
+            manager = (await db.execute(select(User).where(User.id == mid))).scalar_one_or_none()
+            visible = await resolve_visible_user_ids(db, manager) if manager else None
+            q = select(User).where(User.is_active == True,
+                                   User.role.in_(["rep", "inside_sales", "pre_sales", "manager"]))
+            if visible is not None:
+                q = q.where(User.id.in_(visible))
+            team = (await db.execute(q)).scalars().all()
+
+            lines = []
+            for u in team:
+                dsrs = (await db.execute(
+                    select(DSRDaily).where(DSRDaily.user_id == u.id)
+                    .order_by(DSRDaily.date.desc()).limit(20)
+                )).scalars().all()
+                working = [d for d in dsrs if d.status == "working"]
+                rigor = sum(calculate_rigor_score(d) for d in working) / max(len(working), 1)
+                lines.append(
+                    f"{u.name} ({u.role}): Rigor={rigor:.0f}, "
+                    f"Calls={sum(d.calls for d in dsrs)}, Visits={sum(d.visits for d in dsrs)}, "
+                    f"Leads={sum(d.new_leads for d in dsrs)}, Proposals={sum(d.proposals for d in dsrs)}, "
+                    f"WorkingDays={len(working)}"
+                )
+
+            context = (
+                f"Team Performance (last 20 working days):\n" + "\n".join(lines) +
+                "\n\nProvide: 1) Team pulse (overall health), 2) Strong performers, "
+                "3) Who needs attention and why, 4) One concrete coaching recommendation."
+            )
+            content = await analyse(context, prompt_type="team_analysis")
+            failed = content.startswith("⚠️")
+        except Exception as e:
+            content, failed = str(e), True
+
+        existing = (await db.execute(
+            select(AIInsight).where(
+                AIInsight.entity_type == "team", AIInsight.entity_id == mid,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            existing.status = "failed" if failed else "ready"
+            existing.content = content
+            existing.error_detail = content if failed else None
+            existing.generated_at = datetime.utcnow()
+        else:
+            db.add(AIInsight(entity_type="team", entity_id=mid, insight_type="team_analysis",
+                             status="failed" if failed else "ready",
+                             content=content, error_detail=content if failed else None,
+                             generated_at=datetime.utcnow()))
+        await db.commit()
+
+
+@router.get("/team/{manager_id}")
+async def team_insight(manager_id: str, background_tasks: BackgroundTasks,
+                        db: AsyncSession = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    """Reads the cached team insight instantly; kicks off generation if none exists."""
+    mid = uuid.UUID(manager_id)
+    existing = (await db.execute(
+        select(AIInsight).where(AIInsight.entity_type == "team", AIInsight.entity_id == mid)
+    )).scalar_one_or_none()
+    if not existing:
+        background_tasks.add_task(generate_team_insight, manager_id)
+        return {"status": "pending", "content": None, "generated_at": None}
+    return {
+        "status": existing.status,
+        "content": existing.content,
+        "generated_at": existing.generated_at.isoformat() if existing.generated_at else None,
+    }
+
+
+@router.post("/team/{manager_id}/regenerate")
+async def regenerate_team_insight(manager_id: str, background_tasks: BackgroundTasks,
+                                   db: AsyncSession = Depends(get_db),
+                                   user: User = Depends(get_current_user)):
+    mid = uuid.UUID(manager_id)
+    existing = (await db.execute(
+        select(AIInsight).where(AIInsight.entity_type == "team", AIInsight.entity_id == mid)
+    )).scalar_one_or_none()
+    if existing:
+        existing.status = "pending"
+    else:
+        db.add(AIInsight(entity_type="team", entity_id=mid,
+                          insight_type="team_analysis", status="pending"))
+    await db.commit()
+    background_tasks.add_task(generate_team_insight, manager_id)
+    return {"status": "pending"}

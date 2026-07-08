@@ -46,8 +46,6 @@ export default function Team() {
   const { user } = useAuthStore()
   const qc = useQueryClient()
   const today = format(new Date(), 'yyyy-MM-dd')
-  const [aiContent, setAiContent] = useState('')
-  const [aiLoading, setAiLoading] = useState(false)
   const canManageUsers = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const [showManage, setShowManage] = useState(false)
   const [showExited, setShowExited] = useState(false)
@@ -74,6 +72,20 @@ export default function Team() {
     queryFn: () => api.get('/users').then(r => r.data),
     enabled: canManageUsers && showManage
   })
+
+  // Team AI insight — background + poll, same reliable pattern as the dashboard
+  const { data: teamAI } = useQuery({
+    queryKey: ['team-ai', user?.id],
+    queryFn: () => api.get(`/ai/team/${user?.id}`).then(r => r.data),
+    enabled: !!user?.id,
+    refetchInterval: (q) => (q.state.data?.status === 'pending' ? 4000 : false),
+  })
+  const regenerateTeamAI = useMutation({
+    mutationFn: () => api.post(`/ai/team/${user?.id}/regenerate`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-ai', user?.id] }),
+  })
+  const aiStatus = teamAI?.status
+  const aiPending = aiStatus === 'pending' || regenerateTeamAI.isPending
 
   // Get roles assignable by current actor
   const { data: assignableRoles = [] } = useQuery({
@@ -144,21 +156,6 @@ export default function Team() {
 
   const submittedToday = new Set(todayDSRs.map((d: any) => d.user_id))
 
-  async function runTeamAI() {
-    setAiLoading(true); setAiContent('')
-    const context = `West BU Team Performance:\n${teamData.map((m: any) =>
-      `${m.name} (${m.role}): Rigor=${m.avg_rigor}, Calls=${m.total_calls}, Visits=${m.total_visits}, Leads=${m.total_leads}, Proposals=${m.total_proposals}, Days=${m.working_days}`
-    ).join('\n')}\n\nSubmitted DSR today: ${todayDSRs.length}/${teamData.length} reps.\n\nProvide team performance summary, top/bottom performers, coaching priorities, and BU-level action items.`
-    try {
-      const res = await api.post('/ai/analyse', { entity_type: 'team', context })
-      setAiContent(res.data.content)
-    } catch {
-      setAiContent('⚠️ AI analysis unavailable. Ensure Ollama is running.')
-    } finally {
-      setAiLoading(false)
-    }
-  }
-
   const viewTitle = user?.role === 'bu_head'
     ? `🏢 BU Head — ${user?.bu} BU`
     : user?.role === 'inside_sales'
@@ -180,8 +177,8 @@ export default function Team() {
               {showManage ? 'Close' : '👤 Manage Team'}
             </button>
           )}
-          <button onClick={runTeamAI} disabled={aiLoading} className="btn-primary">
-            {aiLoading ? '⏳ Analysing...' : '✨ AI Team Analysis'}
+          <button onClick={() => regenerateTeamAI.mutate()} disabled={aiPending} className="btn-primary">
+            {aiPending ? '⏳ Analysing...' : aiStatus === 'ready' ? '🔄 Regenerate Analysis' : '✨ AI Team Analysis'}
           </button>
         </div>
       </div>
@@ -376,24 +373,34 @@ export default function Team() {
       </div>
 
       {/* AI panel */}
-      {(aiContent || aiLoading) && (
+      {(aiStatus || aiPending) && (
         <div className="ai-panel mb-6">
           <div className="flex items-center gap-2 mb-3">
             <span className="inline-flex items-center gap-1.5 bg-wep-electric/20 border border-wep-electric/30 text-wep-electric text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-wep-electric animate-pulse inline-block"/>AI Team Intelligence
             </span>
+            {aiStatus === 'ready' && teamAI?.generated_at && (
+              <span className="text-[11px] text-white/35">
+                · Generated {Math.max(1, Math.round((Date.now() - new Date(teamAI.generated_at).getTime())/60000))}m ago
+              </span>
+            )}
           </div>
-          {aiLoading ? (
+          {aiPending ? (
             <div className="flex items-center gap-2 text-white/60 text-sm">
               <span className="flex gap-1">{[0,1,2].map(i=>(
                 <span key={i} className="w-1.5 h-1.5 rounded-full bg-wep-electric animate-bounce" style={{animationDelay:`${i*0.15}s`}}/>
               ))}</span>
-              Querying local LLM...
+              Generating team analysis on the local model — takes about 2-3 minutes.
+              It saves automatically and appears here when ready; no need to wait.
             </div>
-          ) : (
+          ) : aiStatus === 'failed' ? (
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-red-300">
+              ⚠️ Last attempt didn't complete. Click "Regenerate Analysis" to try again.
+            </div>
+          ) : aiStatus === 'ready' && teamAI?.content ? (
             <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white/85 leading-relaxed whitespace-pre-wrap"
-              dangerouslySetInnerHTML={{__html: aiContent.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br/>')}}/>
-          )}
+              dangerouslySetInnerHTML={{__html: teamAI.content.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br/>')}}/>
+          ) : null}
         </div>
       )}
 
