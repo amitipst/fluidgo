@@ -23,6 +23,13 @@ class TokenResponse(BaseModel):
 class RefreshRequest(BaseModel):
     refresh_token: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
 def _user_dict(user: User) -> dict:
     return {
         "id": str(user.id), "name": user.name, "email": user.email,
@@ -146,3 +153,94 @@ async def logout(
     from fastapi.security import HTTPBearer
     # Best-effort: try to log the logout, don't fail if token is already gone
     return {"message": "Logged out successfully. Clear your local tokens."}
+
+
+# ── Password reset (email link) ───────────────────────────────────────────────
+import hashlib, secrets
+from datetime import datetime, timedelta
+
+def _hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+@router.post("/forgot-password")
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Sends a reset link IF the email belongs to an active account. Always
+    returns the same response regardless — we never reveal whether an email
+    is registered (prevents account enumeration)."""
+    from app.models import PasswordResetToken
+    from app.services.email_service import send_password_reset
+    from app.config import settings
+
+    email = body.email.lower().strip()
+    user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+
+    # Only actually generate+send for active users, but respond identically either way.
+    if user and user.is_active:
+        raw_token = secrets.token_urlsafe(32)
+        ttl = settings.RESET_TOKEN_TTL_MINUTES
+        db.add(PasswordResetToken(
+            user_id=user.id,
+            token_hash=_hash_token(raw_token),
+            expires_at=datetime.utcnow() + timedelta(minutes=ttl),
+        ))
+        await db.commit()
+        reset_link = f"{settings.APP_BASE_URL}/reset-password?token={raw_token}"
+        background_tasks.add_task(send_password_reset, user.email, user.name, reset_link, ttl)
+        background_tasks.add_task(
+            audit, db, user, "PASSWORD_RESET_REQUESTED", "auth", None,
+            f"Reset requested for {email}", request=request
+        )
+
+    return {"message": "If that email is registered, a reset link has been sent. "
+                       "Please check your inbox (and spam)."}
+
+@router.post("/reset-password")
+async def reset_password(
+    body: ResetPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Consumes a valid, unused, unexpired token and sets the new password."""
+    from app.models import PasswordResetToken
+
+    if len(body.new_password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+
+    token_hash = _hash_token(body.token)
+    prt = (await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )).scalar_one_or_none()
+
+    if not prt or prt.used_at is not None or prt.expires_at < datetime.utcnow():
+        raise HTTPException(400, "This reset link is invalid or has expired. "
+                                 "Please request a new one.")
+
+    user = (await db.execute(select(User).where(User.id == prt.user_id))).scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(400, "Account not found or inactive.")
+
+    user.password_hash = hash_password(body.new_password)
+    prt.used_at = datetime.utcnow()
+    # Invalidate any other outstanding tokens for this user
+    others = (await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+        )
+    )).scalars().all()
+    for o in others:
+        if o.id != prt.id:
+            o.used_at = datetime.utcnow()
+    await db.commit()
+
+    background_tasks.add_task(
+        audit, db, user, "PASSWORD_RESET_COMPLETED", "auth", None,
+        f"Password reset for {user.email}", request=request
+    )
+    return {"message": "Your password has been reset. You can now sign in."}

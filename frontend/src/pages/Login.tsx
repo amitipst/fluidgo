@@ -119,9 +119,15 @@ export default function Login() {
 
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault()
-    // In production this would call /api/auth/forgot-password
-    // For now show a message to contact IT support
-    setForgotSent(true)
+    setError('')
+    try {
+      await api.post('/auth/forgot-password', { email: forgotEmail || email })
+      setForgotSent(true)   // always succeeds (server never reveals if email exists)
+    } catch {
+      // Even on a network error, show the same neutral confirmation —
+      // never leak whether the address is registered.
+      setForgotSent(true)
+    }
   }
 
   return (
@@ -294,9 +300,9 @@ export default function Login() {
                   {!forgotSent ? (
                     <>
                       <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                        Enter your work email and contact IT Support to reset your password.
+                        Enter your registered work email. We'll send you a secure link to reset your password.
                       </p>
-                      <input type="email" placeholder="your@email.com"
+                      <input type="email" placeholder="your@wepsol.com"
                         value={forgotEmail} onChange={e => setForgotEmail(e.target.value)}
                         className="w-full rounded-lg px-3 py-2 text-sm outline-none"
                         style={{ background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff' }}
@@ -304,12 +310,12 @@ export default function Login() {
                       <button type="button" onClick={handleForgot}
                         className="text-xs font-bold px-3 py-1.5 rounded-lg"
                         style={{ background: 'rgba(240,17,94,0.30)', color: '#F0115E' }}>
-                        Request Reset
+                        Send Reset Link
                       </button>
                     </>
                   ) : (
                     <p className="text-xs text-emerald-400">
-                      ✅ Request noted. Please contact <strong>itsupport.blr@wepsol.com</strong> with your registered email to reset your password.
+                      ✅ If that email is registered, a reset link is on its way. Please check your inbox (and spam). The link expires in 30 minutes.
                     </p>
                   )}
                 </div>

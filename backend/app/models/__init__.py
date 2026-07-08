@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, Integer, Numeric, Text, Date, SmallInteger
+from sqlalchemy import String, Boolean, DateTime, Integer, Numeric, Text, Date, SmallInteger, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.models.audit import AuditLog  # noqa: F401 — ensure table is registered
@@ -302,3 +302,16 @@ class AIInsight(Base):
     status:       Mapped[str]       = mapped_column(String(20), default="ready", server_default="ready")
     error_detail: Mapped[str]       = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class PasswordResetToken(Base):
+    """Single-use, time-limited password reset tokens. We store only a SHA-256
+    HASH of the token, never the token itself — so a DB leak can't be used to
+    reset anyone's password. The raw token goes only into the emailed link."""
+    __tablename__ = "password_reset_tokens"
+    id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str]       = mapped_column(String(64), unique=True, nullable=False, index=True)
+    expires_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at:    Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
