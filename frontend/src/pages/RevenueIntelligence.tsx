@@ -146,16 +146,24 @@ function TargetEditor({ period }: { period: string }) {
           placeholder="0"
         />
         {isDirty ? (
-          <button
-            disabled={saving === key}
-            onClick={() => {
-              setSaving(key)
-              setTarget.mutate({ user_id: m.user_id, amount: parseFloat(val) || 0, target_type: type })
-            }}
-            className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white"
-            style={{ background: type === 'revenue' ? '#F0115E' : '#0D9488' }}>
-            {saving === key ? '…' : 'Set'}
-          </button>
+          <>
+            <button
+              disabled={saving === key}
+              onClick={() => {
+                setSaving(key)
+                setTarget.mutate({ user_id: m.user_id, amount: parseFloat(val) || 0, target_type: type })
+              }}
+              className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white"
+              style={{ background: type === 'revenue' ? '#F0115E' : '#0D9488' }}>
+              {saving === key ? '…' : 'Set'}
+            </button>
+            <button
+              onClick={() => setEditing(s => { const n = { ...s }; delete n[key]; return n })}
+              className="text-xs font-semibold px-2 py-1.5 rounded-lg text-wep-muted hover:bg-wep-border/40"
+              title="Discard change">
+              ✕
+            </button>
+          </>
         ) : saved[key] ? (
           <span className="text-xs text-emerald-600 font-bold">✅</span>
         ) : (
