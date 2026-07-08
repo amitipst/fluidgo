@@ -81,7 +81,15 @@ export default function Leads() {
             {sourceFilter !== 'All' || statusFilter !== 'All' ? ' (filtered)' : ''}
           </p>
         </div>
-        <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
+        <button onClick={() => {
+          if (showAdd) {
+            // Closing the form → clear any half-filled fields so a reopen is fresh
+            setForm({ date: today, company: '', contact_name: '', requirement: '',
+                      source: 'Call', next_action: '', next_action_date: '' })
+            setAddErr('')
+          }
+          setShowAdd(v => !v)
+        }} className="btn-primary">
           {showAdd ? '✕ Cancel' : '➕ Add Lead'}
         </button>
       </div>

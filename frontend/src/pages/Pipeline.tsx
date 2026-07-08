@@ -115,7 +115,13 @@ export default function Pipeline() {
             {filtered.length} of {(deals as any[]).length} deals
           </p>
         </div>
-        <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
+        <button onClick={() => {
+          if (showAdd) {
+            setForm({ company:'', stage:'cold', deal_value:'', closure_eta:'', todays_update:'', next_step:'' })
+            setAddErr('')
+          }
+          setShowAdd(v => !v)
+        }} className="btn-primary">
           {showAdd ? '✕ Cancel' : '➕ Add Deal'}
         </button>
       </div>

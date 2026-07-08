@@ -109,7 +109,10 @@ export default function Meetings() {
               ))}
             </div>
           )}
-          <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
+          <button onClick={() => {
+            if (showAdd) { setForm(emptyForm); setAddErr('') }
+            setShowAdd(v => !v)
+          }} className="btn-primary">
             {showAdd ? '✕ Cancel' : '➕ Log Meeting'}
           </button>
         </div>
