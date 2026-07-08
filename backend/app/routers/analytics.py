@@ -450,10 +450,10 @@ async def performance_comparison(
 async def get_team_targets(
     period: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_role("manager", "bu_head", "business_head", "ceo", "super_admin"))
+    user: User = Depends(require_role("manager", "business_head", "coo", "ceo", "super_admin"))
 ):
-    """Returns all team members with their revenue targets for a period.
-    Used by the Target Editor UI — business_head sees all, manager sees own team."""
+    """Returns all team members with BOTH their revenue and order-booking
+    targets for a period. Used by the Target Editor UI."""
     from app.services.permission_service import resolve_visible_user_ids
     today = date.today()
     p = period or f"{today.year}-{today.month:02d}"
@@ -467,26 +467,30 @@ async def get_team_targets(
         q = q.where(User.id.in_(visible_ids))
     team = (await db.execute(q)).scalars().all()
 
-    targets = {
-        str(t.user_id): float(t.target_amount)
-        for t in (await db.execute(
-            select(RevenueTarget).where(
-                RevenueTarget.user_id.in_([u.id for u in team]),
-                RevenueTarget.period == p
-            )
-        )).scalars().all()
-    }
+    # Build {user_id: {revenue: x, order_booking: y}}
+    targets: dict = {}
+    for t in (await db.execute(
+        select(RevenueTarget).where(
+            RevenueTarget.user_id.in_([u.id for u in team]),
+            RevenueTarget.period == p
+        )
+    )).scalars().all():
+        uid = str(t.user_id)
+        targets.setdefault(uid, {})
+        targets[uid][t.target_type] = float(t.target_amount)
 
     return {
         "period": p,
         "members": [
             {
-                "user_id":   str(u.id),
-                "name":      u.name,
-                "email":     u.email,
-                "role":      u.role,
-                "region":    getattr(u, "region", None) or u.bu,
-                "target":    targets.get(str(u.id), 0),
+                "user_id":       str(u.id),
+                "name":          u.name,
+                "email":         u.email,
+                "role":          u.role,
+                "region":        getattr(u, "region", None) or u.bu,
+                "target":        targets.get(str(u.id), {}).get("revenue", 0),        # revenue (back-compat key)
+                "revenue":       targets.get(str(u.id), {}).get("revenue", 0),
+                "order_booking": targets.get(str(u.id), {}).get("order_booking", 0),
             }
             for u in sorted(team, key=lambda x: (x.region or "", x.name))
         ]

@@ -93,6 +93,7 @@ function KpiCard({ k, data, mode }: { k: string; data: any; mode: Mode }) {
 // ── Target editor ─────────────────────────────────────────────────────────────
 function TargetEditor({ period }: { period: string }) {
   const qc = useQueryClient()
+  // edits keyed by `${user_id}:${type}`
   const [editing, setEditing] = useState<Record<string, string>>({})
   const [saving,  setSaving]  = useState<string | null>(null)
   const [saved,   setSaved]   = useState<Record<string, boolean>>({})
@@ -103,19 +104,20 @@ function TargetEditor({ period }: { period: string }) {
   })
 
   const setTarget = useMutation({
-    mutationFn: ({ user_id, amount }: { user_id: string; amount: number }) =>
+    mutationFn: ({ user_id, amount, target_type }: { user_id: string; amount: number; target_type: string }) =>
       api.post('/analytics/revenue/targets', {
-        user_id, period, target_amount: amount
+        user_id, period, target_amount: amount, target_type
       }),
     onSuccess: (_r, vars) => {
-      setSaved(s => ({ ...s, [vars.user_id]: true }))
+      const key = `${vars.user_id}:${vars.target_type}`
+      setSaved(s => ({ ...s, [key]: true }))
       setSaving(null)
-      setTimeout(() => setSaved(s => ({ ...s, [vars.user_id]: false })), 2000)
+      setTimeout(() => setSaved(s => ({ ...s, [key]: false })), 2000)
       qc.invalidateQueries({ queryKey: ['team-targets'] })
       qc.invalidateQueries({ queryKey: ['revenue-analytics'] })
       qc.invalidateQueries({ queryKey: ['performance'] })
     },
-    onError: () => setSaving(null),
+    onError: (e: any) => { setSaving(null); alert(e?.response?.data?.detail ?? 'Could not save target') },
   })
 
   if (isLoading) return <div className="skeleton h-32 rounded-2xl" />
@@ -128,12 +130,51 @@ function TargetEditor({ period }: { period: string }) {
     return acc
   }, {})
 
+  // One editable target input (revenue or order_booking) for a member
+  function TargetInput({ m, type, current }: { m: any; type: 'revenue' | 'order_booking'; current: number }) {
+    const key = `${m.user_id}:${type}`
+    const val = editing[key] ?? String(current || '')
+    const isDirty = val !== String(current || '')
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-wep-muted">₹</span>
+        <input
+          type="number" min="0" step="50000"
+          className="form-input py-1.5 text-sm w-28 text-right"
+          value={val}
+          onChange={e => setEditing(s => ({ ...s, [key]: e.target.value }))}
+          placeholder="0"
+        />
+        {isDirty ? (
+          <button
+            disabled={saving === key}
+            onClick={() => {
+              setSaving(key)
+              setTarget.mutate({ user_id: m.user_id, amount: parseFloat(val) || 0, target_type: type })
+            }}
+            className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white"
+            style={{ background: type === 'revenue' ? '#F0115E' : '#0D9488' }}>
+            {saving === key ? '…' : 'Set'}
+          </button>
+        ) : saved[key] ? (
+          <span className="text-xs text-emerald-600 font-bold">✅</span>
+        ) : (
+          <span className="text-[11px] text-wep-muted w-14 text-right">{current > 0 ? inr(current) : '—'}</span>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="card mt-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-wep-text">🎯 Revenue Targets — {period}</h3>
+        <h3 className="font-bold text-wep-text">🎯 Targets — {period}</h3>
         <span className="text-xs text-wep-muted">{members.length} team members</span>
       </div>
+      <p className="text-xs text-wep-muted mb-4">
+        Set <span className="font-semibold" style={{ color: '#F0115E' }}>Revenue</span> and{' '}
+        <span className="font-semibold" style={{ color: '#0D9488' }}>Order Booking</span> targets separately for each member.
+      </p>
 
       {Object.entries(regionGroups).map(([region, reps]: [string, any]) => (
         <div key={region} className="mb-5 last:mb-0">
@@ -141,47 +182,25 @@ function TargetEditor({ period }: { period: string }) {
             🗺️ {region}
           </div>
           <div className="space-y-2">
-            {reps.map((m: any) => {
-              const val = editing[m.user_id] ?? String(m.target || '')
-              const isDirty = val !== String(m.target || '')
-              return (
-                <div key={m.user_id}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-wep-border bg-wep-surface/50">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-wep-text truncate">{m.name}</div>
-                    <div className="text-[10px] text-wep-muted">{m.role} · {m.email}</div>
+            {reps.map((m: any) => (
+              <div key={m.user_id}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-wep-border bg-wep-surface/50 flex-wrap">
+                <div className="flex-1 min-w-[140px]">
+                  <div className="text-sm font-semibold text-wep-text truncate">{m.name}</div>
+                  <div className="text-[10px] text-wep-muted">{m.role} · {m.email}</div>
+                </div>
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <div className="flex items-center gap-2 justify-end">
+                    <span className="text-[10px] font-bold uppercase tracking-wide w-16 text-right" style={{ color: '#F0115E' }}>Revenue</span>
+                    <TargetInput m={m} type="revenue" current={m.revenue} />
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs text-wep-muted">₹</span>
-                    <input
-                      type="number" min="0" step="50000"
-                      className="form-input py-1.5 text-sm w-28 text-right"
-                      value={val}
-                      onChange={e => setEditing(s => ({ ...s, [m.user_id]: e.target.value }))}
-                      placeholder="0"
-                    />
-                    {isDirty && (
-                      <button
-                        disabled={saving === m.user_id}
-                        onClick={() => {
-                          setSaving(m.user_id)
-                          setTarget.mutate({ user_id: m.user_id, amount: parseFloat(val) || 0 })
-                        }}
-                        className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white"
-                        style={{ background: '#F0115E' }}>
-                        {saving === m.user_id ? '…' : 'Set'}
-                      </button>
-                    )}
-                    {saved[m.user_id] && (
-                      <span className="text-xs text-emerald-600 font-bold">✅</span>
-                    )}
-                    {!isDirty && m.target > 0 && (
-                      <span className="text-xs text-wep-muted">{inr(m.target)}</span>
-                    )}
+                  <div className="flex items-center gap-2 justify-end">
+                    <span className="text-[10px] font-bold uppercase tracking-wide w-16 text-right" style={{ color: '#0D9488' }}>Order Bk.</span>
+                    <TargetInput m={m} type="order_booking" current={m.order_booking} />
                   </div>
                 </div>
-              )
-            })}
+              </div>
+            ))}
           </div>
         </div>
       ))}
@@ -199,7 +218,7 @@ export default function RevenueIntelligence() {
   const [fyYear, setFyYear] = useState(now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear()-1)
   const [showTargets, setShowTargets] = useState(false)
 
-  const canEditTargets = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const canEditTargets = ['business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
 
   // Build period string per mode
   const periodParam = () => {

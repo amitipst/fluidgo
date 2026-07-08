@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { format } from 'date-fns'
 import api from '@/hooks/useApi'
+import { useAuthStore } from '@/store/authStore'
 
 const MEETING_TYPES = ['F2F', 'Virtual', 'Call']
 const today = format(new Date(), 'yyyy-MM-dd')
@@ -45,15 +46,19 @@ function BANTBar({ m }: { m: any }) {
 
 export default function Meetings() {
   const qc = useQueryClient()
+  const { user } = useAuthStore()
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('All')
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [addErr, setAddErr] = useState('')
+  const [scope, setScope] = useState<'mine' | 'team'>('mine')
+
+  const isManager = ['manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
 
   const { data: meetings = [], isLoading } = useQuery({
-    queryKey: ['meetings'],
-    queryFn: () => api.get('/meetings').then(r => r.data),
+    queryKey: ['meetings', scope],
+    queryFn: () => api.get(`/meetings?scope=${scope}`).then(r => r.data),
   })
 
   const addMeeting = useMutation({
@@ -86,11 +91,28 @@ export default function Meetings() {
       <div className="page-header">
         <div>
           <h1 className="page-title">🤝 Meeting Intelligence</h1>
-          <p className="page-sub">{total} meetings · {hot} hot · {opp} opportunities</p>
+          <p className="page-sub">
+            {scope === 'team' ? "Team's meetings · " : ''}{total} meetings · {hot} hot · {opp} opportunities
+          </p>
         </div>
-        <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
-          {showAdd ? '✕ Cancel' : '➕ Log Meeting'}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isManager && (
+            <div className="flex rounded-xl overflow-hidden border border-wep-border">
+              {[{ v:'mine', label:'Mine' }, { v:'team', label:'Team' }].map(o => (
+                <button key={o.v} onClick={() => setScope(o.v as any)}
+                  className={`px-3 py-2 text-sm font-medium transition-colors ${
+                    scope === o.v ? 'text-white' : 'text-wep-muted bg-white hover:text-wep-text'
+                  }`}
+                  style={scope === o.v ? { background: 'linear-gradient(135deg,#F0115E,#C2005A)' } : {}}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
+            {showAdd ? '✕ Cancel' : '➕ Log Meeting'}
+          </button>
+        </div>
       </div>
 
       {/* Add form */}
@@ -204,6 +226,9 @@ export default function Meetings() {
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-wep-text">{m.company}</div>
                     <div className="text-xs text-wep-muted mt-0.5">
+                      {scope === 'team' && m.rep_name && (
+                        <span className="font-semibold text-brand-pink">👤 {m.rep_name} · </span>
+                      )}
                       {m.date} · {m.meeting_type}
                       {m.contact_name && ` · ${m.contact_name}`}
                     </div>
