@@ -39,15 +39,37 @@ async def create_meeting(body: MeetingIn, db: AsyncSession = Depends(get_db),
     return {**body.model_dump(), "id": str(m.id), "bant": bs}
 
 @router.get("")
-async def list_meetings(db: AsyncSession = Depends(get_db),
-                        user: User = Depends(get_current_user)):
-    result = await db.execute(
-        select(Meeting).where(Meeting.user_id == user.id).order_by(Meeting.date.desc())
-    )
+async def list_meetings(
+    scope: Literal["mine", "team"] = "mine",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """scope=mine → only the caller's own meetings (default).
+    scope=team → all meetings across the caller's visible users (managers+).
+    Field roles always get their own regardless of scope."""
+    from app.models import role_level
+    if scope == "team" and role_level(user.role) >= 20:
+        from app.services.permission_service import resolve_visible_user_ids
+        visible = await resolve_visible_user_ids(db, user)
+        q = select(Meeting).order_by(Meeting.date.desc())
+        if visible is not None:
+            q = q.where(Meeting.user_id.in_(visible))
+    else:
+        q = select(Meeting).where(Meeting.user_id == user.id).order_by(Meeting.date.desc())
+    result = await db.execute(q)
     meetings = result.scalars().all()
     out = []
+    # Resolve rep names once for team view
+    name_map = {}
+    if scope == "team":
+        user_ids = {m.user_id for m in meetings}
+        if user_ids:
+            reps = (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+            name_map = {u.id: u.name for u in reps}
     for m in meetings:
         d = {c.name: getattr(m, c.name) for c in m.__table__.columns}
         d["bant"] = bant_score(m)
+        if scope == "team":
+            d["rep_name"] = name_map.get(m.user_id, "Unknown")
         out.append(d)
     return out

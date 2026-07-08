@@ -278,11 +278,14 @@ class ScoringResult(Base):
     vp_reviewed_at:        Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
 
 class RevenueTarget(Base):
-    """Config-driven targets — no hardcoded target values anywhere in code."""
+    """Config-driven targets — no hardcoded target values anywhere in code.
+    target_type distinguishes revenue vs order-booking targets, both set on
+    the same screen by business_head / coo / ceo."""
     __tablename__ = "revenue_targets"
     id:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)  # FK users.id
     period:        Mapped[str]       = mapped_column(String(20), nullable=False)
+    target_type:   Mapped[str]       = mapped_column(String(20), default="revenue", server_default="revenue")  # revenue | order_booking
     target_amount: Mapped[float]     = mapped_column(Numeric(12, 2), nullable=False)
     created_at:    Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,6 +7,7 @@ from typing import Optional, Literal
 from app.database import get_db
 from app.models import PipelineDeal, User
 from app.services.deps import get_current_user
+from app.services.audit_service import audit
 
 router = APIRouter()
 
@@ -53,14 +54,36 @@ async def list_deals(db: AsyncSession = Depends(get_db), user: User = Depends(ge
     return [{c.name: getattr(d, c.name) for c in d.__table__.columns} for d in result.scalars().all()]
 
 @router.patch("/{deal_id}")
-async def update_deal(deal_id: str, body: DealIn, db: AsyncSession = Depends(get_db),
+async def update_deal(deal_id: str, body: DealIn, request: Request,
+                      background_tasks: BackgroundTasks,
+                      db: AsyncSession = Depends(get_db),
                       user: User = Depends(get_current_user)):
     result = await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))
     deal = result.scalar_one_or_none()
     if not deal:
-        from fastapi import HTTPException
         raise HTTPException(404, "Deal not found")
-    for k, v in body.model_dump(exclude_none=True).items():
+
+    updates = body.model_dump(exclude_none=True)
+    # Capture value/stage changes specifically — these feed revenue forecasting,
+    # so a change to them is worth an explicit audit entry.
+    old_value = float(deal.deal_value) if deal.deal_value is not None else None
+    old_stage = deal.stage
+
+    for k, v in updates.items():
         setattr(deal, k, v)
+    # Any edit counts as activity — keeps "stale deal" logic honest.
+    deal.last_activity_at = datetime.utcnow()
     await db.commit()
+
+    new_value = float(deal.deal_value) if deal.deal_value is not None else None
+    changes = []
+    if "deal_value" in updates and old_value != new_value:
+        changes.append(f"value {old_value or 0:,.0f} → {new_value or 0:,.0f}")
+    if "stage" in updates and old_stage != deal.stage:
+        changes.append(f"stage {old_stage} → {deal.stage}")
+    if changes:
+        background_tasks.add_task(
+            audit, db, user, "UPDATE", "pipeline", deal_id,
+            f"{deal.company}: {', '.join(changes)}", request=request,
+        )
     return {"id": deal_id, "updated": True}

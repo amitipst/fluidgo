@@ -195,16 +195,20 @@ class TargetIn(BaseModel):
     user_id: str
     period: str
     target_amount: float
+    target_type: str = "revenue"   # revenue | order_booking
 
 @router.post("/revenue/targets")
 async def set_revenue_target(body: TargetIn, db: AsyncSession = Depends(get_db),
                              user: User = Depends(require_role(
-                                 "manager", "bu_head", "business_head", "ceo", "super_admin"
+                                 "business_head", "coo", "ceo", "super_admin"
                              ))):
-    """Set/update revenue target for a user.
-    BU Head and above can set targets for anyone in their scope.
-    Manager can only set targets for their direct reports."""
+    """Set/update a revenue OR order-booking target for a user.
+    Restricted to Business Head / COO / CEO (strategic targets are not set
+    at manager level). target_type: 'revenue' | 'order_booking'."""
     from app.services.permission_service import can_user_edit_target
+    if body.target_type not in ("revenue", "order_booking"):
+        from fastapi import HTTPException
+        raise HTTPException(400, "target_type must be 'revenue' or 'order_booking'")
     if not await can_user_edit_target(db, user, body.user_id):
         from fastapi import HTTPException
         raise HTTPException(403, "You cannot set targets for users outside your scope")
@@ -212,7 +216,8 @@ async def set_revenue_target(body: TargetIn, db: AsyncSession = Depends(get_db),
     existing = (await db.execute(
         select(RevenueTarget).where(
             RevenueTarget.user_id == uuid.UUID(body.user_id),
-            RevenueTarget.period == body.period
+            RevenueTarget.period == body.period,
+            RevenueTarget.target_type == body.target_type
         )
     )).scalar_one_or_none()
     if existing:
@@ -221,11 +226,39 @@ async def set_revenue_target(body: TargetIn, db: AsyncSession = Depends(get_db),
         db.add(RevenueTarget(
             user_id=uuid.UUID(body.user_id),
             period=body.period,
+            target_type=body.target_type,
             target_amount=body.target_amount
         ))
     await db.commit()
     return {"user_id": body.user_id, "period": body.period,
+            "target_type": body.target_type,
             "target_amount": body.target_amount, "updated_by": user.email}
+
+@router.get("/revenue/targets")
+async def list_revenue_targets(
+    period: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role(
+        "manager", "business_head", "coo", "ceo", "super_admin", "hr", "finance"
+    ))
+):
+    """List both revenue and order-booking targets for the caller's visible
+    users in a given period (default: current month)."""
+    from app.services.permission_service import resolve_visible_user_ids
+    today = date.today()
+    p = period or f"{today.year}-{today.month:02d}"
+    visible = await resolve_visible_user_ids(db, user)
+    q = select(RevenueTarget).where(RevenueTarget.period == p)
+    if visible is not None:
+        q = q.where(RevenueTarget.user_id.in_(visible))
+    rows = (await db.execute(q)).scalars().all()
+    # Group per user so the UI can show revenue + order_booking side by side
+    out: dict = {}
+    for r in rows:
+        uid = str(r.user_id)
+        out.setdefault(uid, {"user_id": uid, "revenue": None, "order_booking": None})
+        out[uid][r.target_type] = float(r.target_amount)
+    return list(out.values())
 
 
 @router.get("/regional")
