@@ -35,6 +35,10 @@ export default function Pipeline() {
     closure_eta: '', todays_update: '', next_step: '',
   })
   const [addErr, setAddErr] = useState('')
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({
+    company: '', stage: 'cold', deal_value: '', closure_eta: '', todays_update: '', next_step: '',
+  })
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey: ['pipeline'],
@@ -54,6 +58,34 @@ export default function Pipeline() {
     },
     onError: (e: any) => setAddErr(e?.response?.data?.detail ?? 'Failed to save deal')
   })
+
+  const updateDeal = useMutation({
+    mutationFn: (id: string) => api.patch(`/pipeline/${id}`, {
+      company: editForm.company,
+      stage: editForm.stage,
+      deal_value: editForm.deal_value ? parseFloat(editForm.deal_value) : undefined,
+      closure_eta: editForm.closure_eta || undefined,
+      todays_update: editForm.todays_update || undefined,
+      next_step: editForm.next_step || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline'] })
+      setEditId(null)
+    },
+    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Failed to update deal')
+  })
+
+  function startEdit(d: any) {
+    setEditId(d.id)
+    setEditForm({
+      company: d.company ?? '',
+      stage: d.stage ?? 'cold',
+      deal_value: d.deal_value ? String(parseFloat(d.deal_value)) : '',
+      closure_eta: d.closure_eta ?? '',
+      todays_update: d.todays_update ?? '',
+      next_step: d.next_step ?? '',
+    })
+  }
 
   // Filtered
   const filtered = (deals as any[]).filter(d => {
@@ -184,8 +216,54 @@ export default function Pipeline() {
         <div className="space-y-3">
           {filtered.map((d: any) => {
             const cfg = stageCfg[d.stage] ?? { label: d.stage, color: 'text-gray-500 bg-gray-100', dot: '#9CA3AF' }
+            const isEditing = editId === d.id
             return (
               <div key={d.id} className="card hover:border-wep-border-strong transition-all">
+                {isEditing ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label block mb-1">Company</label>
+                      <input className="form-input" value={editForm.company}
+                        onChange={e => setEditForm(f => ({ ...f, company: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="form-label block mb-1">Stage</label>
+                      <select className="form-input" value={editForm.stage}
+                        onChange={e => setEditForm(f => ({ ...f, stage: e.target.value }))}>
+                        {STAGES.filter(s => s !== 'All').map(s => (
+                          <option key={s} value={s}>{stageCfg[s]?.label ?? s}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label block mb-1">Deal Value (₹)</label>
+                      <input type="number" className="form-input" value={editForm.deal_value}
+                        onChange={e => setEditForm(f => ({ ...f, deal_value: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="form-label block mb-1">Expected Closure</label>
+                      <input type="date" className="form-input" value={editForm.closure_eta}
+                        onChange={e => setEditForm(f => ({ ...f, closure_eta: e.target.value }))} />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="form-label block mb-1">Today's Update</label>
+                      <input className="form-input" value={editForm.todays_update}
+                        onChange={e => setEditForm(f => ({ ...f, todays_update: e.target.value }))} />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="form-label block mb-1">Next Step</label>
+                      <input className="form-input" value={editForm.next_step}
+                        onChange={e => setEditForm(f => ({ ...f, next_step: e.target.value }))} />
+                    </div>
+                    <div className="md:col-span-2 flex gap-2">
+                      <button onClick={() => updateDeal.mutate(d.id)} disabled={updateDeal.isPending}
+                        className="btn-primary text-sm py-1.5">
+                        {updateDeal.isPending ? '⏳ Saving…' : '✅ Save'}
+                      </button>
+                      <button onClick={() => setEditId(null)} className="btn-outline text-sm py-1.5">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -212,16 +290,23 @@ export default function Pipeline() {
                       </div>
                     )}
                   </div>
-                  {d.ai_closure_pct != null && (
-                    <div className="text-right shrink-0">
-                      <div className="font-display font-bold text-lg"
-                        style={{ color: d.ai_closure_pct >= 70 ? '#059669' : d.ai_closure_pct >= 40 ? '#D97706' : '#9CA3AF' }}>
-                        {d.ai_closure_pct}%
+                  <div className="flex items-center gap-3 shrink-0">
+                    {d.ai_closure_pct != null && (
+                      <div className="text-right">
+                        <div className="font-display font-bold text-lg"
+                          style={{ color: d.ai_closure_pct >= 70 ? '#059669' : d.ai_closure_pct >= 40 ? '#D97706' : '#9CA3AF' }}>
+                          {d.ai_closure_pct}%
+                        </div>
+                        <div className="text-[10px] text-wep-muted">closure prob.</div>
                       </div>
-                      <div className="text-[10px] text-wep-muted">closure prob.</div>
-                    </div>
-                  )}
+                    )}
+                    <button onClick={() => startEdit(d)}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
+                      ✏️ Edit
+                    </button>
+                  </div>
                 </div>
+                )}
               </div>
             )
           })}
