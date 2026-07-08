@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import api from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
@@ -47,6 +48,7 @@ function BANTBar({ m }: { m: any }) {
 export default function Meetings() {
   const qc = useQueryClient()
   const { user } = useAuthStore()
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('All')
   const [showAdd, setShowAdd] = useState(false)
@@ -69,6 +71,19 @@ export default function Meetings() {
       setForm(emptyForm); setShowAdd(false); setAddErr('')
     },
     onError: (e: any) => setAddErr(e?.response?.data?.detail ?? 'Failed to save meeting'),
+  })
+
+  const convertToLead = useMutation({
+    mutationFn: (meetingId: string) => api.post(`/meetings/${meetingId}/convert-to-lead`, {}),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['meetings'] })
+      qc.invalidateQueries({ queryKey: ['leads'] })
+      // Take the rep straight to Leads so they see the new lead in context
+      if (window.confirm(`${res.data.message}\n\nGo to Leads to continue qualifying it?`)) {
+        navigate('/leads')
+      }
+    },
+    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not convert to lead'),
   })
 
   const filtered = (meetings as any[]).filter(m => {
@@ -251,6 +266,29 @@ export default function Meetings() {
                   </div>
                 </div>
                 <BANTBar m={m} />
+                {/* Convert to Lead — funnel step 1. Only the owner (mine view). */}
+                {scope === 'mine' && (
+                  <div className="mt-3 pt-3 border-t border-wep-border flex items-center justify-between gap-2 flex-wrap">
+                    {m.converted_to_lead_id ? (
+                      <span className="text-xs font-semibold text-teal-600 flex items-center gap-1">
+                        ✓ Converted to Lead
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-wep-muted">
+                        Shows buying signals? Promote this meeting into a qualified lead.
+                      </span>
+                    )}
+                    {!m.converted_to_lead_id && (
+                      <button
+                        onClick={() => convertToLead.mutate(m.id)}
+                        disabled={convertToLead.isPending}
+                        className="text-xs font-bold px-3 py-1.5 rounded-lg text-white disabled:opacity-40"
+                        style={{ background: 'linear-gradient(135deg,#F0115E,#C2005A)' }}>
+                        {convertToLead.isPending ? '⏳ Converting…' : '→ Convert to Lead'}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}

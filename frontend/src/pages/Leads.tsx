@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import api from '@/hooks/useApi'
 
@@ -23,12 +24,14 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   proposal:     { label: 'Proposal',   color: 'bg-purple-50 text-purple-700'},
   closed_won:   { label: '✅ Won',     color: 'bg-green-50 text-green-700'  },
   closed_lost:  { label: '❌ Lost',    color: 'bg-gray-100 text-gray-500'  },
+  converted:    { label: '🎯 In Pipeline', color: 'bg-teal-50 text-teal-700' },
 }
 
 const today = format(new Date(), 'yyyy-MM-dd')
 
 export default function Leads() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState('All')
   const [statusFilter, setStatusFilter] = useState('All')
@@ -56,6 +59,18 @@ export default function Leads() {
       setShowAdd(false); setAddErr('')
     },
     onError: (e: any) => setAddErr(e?.response?.data?.detail ?? 'Failed to save lead')
+  })
+
+  const convertToDeal = useMutation({
+    mutationFn: (leadId: string) => api.post(`/leads/${leadId}/convert-to-deal`, {}),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['leads'] })
+      qc.invalidateQueries({ queryKey: ['pipeline'] })
+      if (window.confirm(`${res.data.message}\n\nGo to Pipeline to add deal value and next steps?`)) {
+        navigate('/pipeline')
+      }
+    },
+    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not convert to deal'),
   })
 
   // Filtered view
@@ -221,6 +236,24 @@ export default function Leads() {
                     </span>
                   )}
                 </div>
+              </div>
+              {/* Provenance + Convert to Deal — funnel step 2 */}
+              <div className="mt-3 pt-3 border-t border-wep-border flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-[11px] text-wep-muted">
+                  {l.source_meeting_id ? '🔗 From a meeting' : ''}
+                  {l.converted_to_deal_id
+                    ? ' · ✓ Promoted to Pipeline'
+                    : l.source_meeting_id ? '' : 'Qualified? Promote this lead into a pipeline deal.'}
+                </span>
+                {!l.converted_to_deal_id && (
+                  <button
+                    onClick={() => convertToDeal.mutate(l.id)}
+                    disabled={convertToDeal.isPending}
+                    className="text-xs font-bold px-3 py-1.5 rounded-lg text-white disabled:opacity-40"
+                    style={{ background: 'linear-gradient(135deg,#0D9488,#0F766E)' }}>
+                    {convertToDeal.isPending ? '⏳ Converting…' : '→ Convert to Deal'}
+                  </button>
+                )}
               </div>
             </div>
           ))}
