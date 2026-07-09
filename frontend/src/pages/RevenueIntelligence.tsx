@@ -177,12 +177,20 @@ function TargetEditor({ period }: { period: string }) {
   return (
     <div className="card mt-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-wep-text">🎯 Targets — {period}</h3>
+        <h3 className="font-bold text-wep-text">
+          🎯 Targets — {period.includes('-Q') ? `${period.split('-Q')[0]} Q${period.split('-Q')[1]} (quarterly)`
+            : /^\d{4}$/.test(period) ? `${period} (full year)`
+            : `${period} (monthly)`}
+        </h3>
         <span className="text-xs text-wep-muted">{members.length} team members</span>
       </div>
       <p className="text-xs text-wep-muted mb-4">
         Set <span className="font-semibold" style={{ color: '#F0115E' }}>Revenue</span> and{' '}
         <span className="font-semibold" style={{ color: '#0D9488' }}>Order Booking</span> targets separately for each member.
+        <br/>
+        <span className="text-[11px]">
+          💡 Switch the <strong>Weekly / Monthly / Quarterly / Yearly</strong> tab above before editing to set targets for that period.
+        </span>
       </p>
 
       {Object.entries(regionGroups).map(([region, reps]: [string, any]) => (
