@@ -193,8 +193,9 @@ export default function Login() {
 
         {/* Footer */}
         <div className="flex flex-col gap-2 relative z-10">
-          <img src="/wepsol-logo.png" alt="wepsol — elevate work"
-            className="h-7 w-auto opacity-70" style={{ maxWidth: 160 }} />
+          <img src="/wepsol-logo.png" alt=""
+            className="h-7 w-auto opacity-70" style={{ maxWidth: 160 }}
+            onError={(e) => { e.currentTarget.style.display = 'none' }} />
           <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
             WEP Solutions Ltd · Internal Confidential · All rights reserved 2026
           </p>
