@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
@@ -67,16 +67,26 @@ class EditRequestIn(BaseModel):
 class GrantEditIn(BaseModel):
     comment: Optional[str] = None
 
+def _aware(dt):
+    """Normalize a datetime to UTC-aware so it can be safely compared.
+    Postgres timestamptz columns come back tz-aware via asyncpg, but some
+    older rows / code paths produce naive datetimes — comparing the two
+    raises TypeError, which is what was 500-ing /dsr/history."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
 def _edit_lock_state(dsr: DSRDaily) -> dict:
     """Returns why (if at all) a DSR is locked from self-editing right now."""
-    now = datetime.utcnow()
-    if dsr.edit_granted_until and now < dsr.edit_granted_until:
+    now = datetime.now(timezone.utc)
+    granted_until = _aware(dsr.edit_granted_until)
+    if granted_until and now < granted_until:
         return {"locked": False, "reason": None}
     if dsr.approval_status == "approved":
         return {"locked": True, "reason": "approved",
                 "message": "Approved by your manager and cannot be edited. "
                            "Use 'Request Edit' if a correction is genuinely needed."}
-    window_ends = dsr.submitted_at + SELF_EDIT_WINDOW
+    window_ends = _aware(dsr.submitted_at) + SELF_EDIT_WINDOW
     if now < window_ends:
         return {"locked": False, "reason": None, "self_edit_ends_at": window_ends.isoformat()}
     return {"locked": True, "reason": "window_closed",
@@ -312,7 +322,7 @@ async def approve_dsr(
     if body.action == "approve":
         dsr.approval_status = "approved"
         dsr.approved_by     = user.id
-        dsr.approved_at     = datetime.utcnow()
+        dsr.approved_at     = datetime.now(timezone.utc)
         dsr.manager_comment = body.comment
         summary = f"DSR approved for {dsr.date}"
     else:  # reject
@@ -359,7 +369,7 @@ async def request_edit(
         raise HTTPException(400, "This DSR is still editable — no request needed")
 
     dsr.edit_request_reason = body.reason
-    dsr.edit_requested_at   = datetime.utcnow()
+    dsr.edit_requested_at   = datetime.now(timezone.utc)
     await db.commit()
     background_tasks.add_task(
         audit, db, user, "EDIT_REQUESTED", "dsr", dsr_id,
@@ -384,7 +394,7 @@ async def get_edit_requests(
     results = []
     for dsr in dsrs:
         # Already-granted-and-still-open requests don't need re-surfacing
-        if dsr.edit_granted_until and datetime.utcnow() < dsr.edit_granted_until:
+        if dsr.edit_granted_until and datetime.now(timezone.utc) < _aware(dsr.edit_granted_until):
             continue
         rep = (await db.execute(select(User).where(User.id == dsr.user_id))).scalar_one_or_none()
         results.append({
@@ -418,7 +428,7 @@ async def grant_edit(
     if visible is not None and dsr.user_id not in visible:
         raise HTTPException(403, "You cannot grant edits outside your team")
 
-    dsr.edit_granted_until  = datetime.utcnow() + GRANTED_EDIT_WINDOW
+    dsr.edit_granted_until  = datetime.now(timezone.utc) + GRANTED_EDIT_WINDOW
     dsr.edit_request_reason = None
     dsr.edit_requested_at   = None
     await db.commit()
