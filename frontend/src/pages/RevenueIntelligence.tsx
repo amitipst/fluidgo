@@ -36,7 +36,8 @@ const KPI_META: Record<string, { label: string; icon: string; fmt: (v:number)=>s
   proposals:      { label:'Proposals',     icon:'📄', fmt: v => v.toString() },
   avg_rigor:      { label:'Avg Rigor',     icon:'⚡', fmt: v => `${v}/100`  },
   revenue:        { label:'Revenue',       icon:'💰', fmt: inr              },
-  target:         { label:'Target',        icon:'🎯', fmt: inr              },
+  target:         { label:'Revenue Target', icon:'🎯', fmt: inr             },
+  order_booking_target: { label:'Order Bk. Target', icon:'📦', fmt: inr     },
   achievement_pct:{ label:'Achievement',   icon:'%',  fmt: v => `${v}%`    },
   deals_won:      { label:'Deals Won',     icon:'🏆', fmt: v => v.toString() },
 }

@@ -228,12 +228,17 @@ async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Dep
             RevenueTarget.period == p
         )
     )).scalars().all()
-    total_target = sum(float(t.target_amount) for t in targets)
+    # Revenue and Order Booking are SEPARATE measures — never sum them together.
+    # The revenue KPIs (achievement, gap, coverage) compare won revenue against
+    # the REVENUE target only. Order-booking target is returned separately.
+    total_target        = sum(float(t.target_amount) for t in targets if t.target_type == "revenue")
+    total_ob_target     = sum(float(t.target_amount) for t in targets if t.target_type == "order_booking")
 
     return {
         "period": p,
         "revenue":                   round(total_revenue, 2),
         "target":                    round(total_target, 2),
+        "order_booking_target":      round(total_ob_target, 2),
         "gap":                       round(total_target - total_revenue, 2),
         "target_achievement_pct":    round((total_revenue / total_target * 100) if total_target else 0, 1),
         "pipeline_coverage_ratio":   round((pipeline_value / total_target) if total_target else 0, 2),
@@ -428,7 +433,10 @@ async def performance_comparison(
         total_proposals = sum(d.proposals for d in dsrs)
         avg_rigor       = calculate_avg_rigor(dsrs)
         total_revenue   = sum(float(d.deal_value or 0) for d in deals)
-        total_target    = sum(float(t.target_amount) for t in targets)
+        # Revenue vs Order Booking are separate — the revenue achievement KPI
+        # must compare against the REVENUE target only, never the sum of both.
+        total_target    = sum(float(t.target_amount) for t in targets if t.target_type == "revenue")
+        total_ob_target = sum(float(t.target_amount) for t in targets if t.target_type == "order_booking")
         dsr_days        = len(dsrs)
         working_days    = len([d for d in dsrs if d.status == "working"])
         return {
@@ -440,6 +448,7 @@ async def performance_comparison(
             "avg_rigor":      round(avg_rigor, 1),
             "revenue":        round(total_revenue, 2),
             "target":         round(total_target, 2),
+            "order_booking_target": round(total_ob_target, 2),
             "achievement_pct": round((total_revenue/total_target*100) if total_target else 0, 1),
             "deals_won":      len(deals),
             "dsr_days":       dsr_days,
@@ -471,7 +480,8 @@ async def performance_comparison(
         mom_kpis = await period_kpis(mom_start, mom_end)
 
     kpi_keys = ["calls", "visits", "followups", "leads", "proposals",
-                "avg_rigor", "revenue", "target", "achievement_pct", "deals_won"]
+                "avg_rigor", "revenue", "target", "order_booking_target",
+                "achievement_pct", "deals_won"]
     comparison = {}
     for k in kpi_keys:
         comparison[k] = {
