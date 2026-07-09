@@ -30,12 +30,18 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
-def _user_dict(user: User) -> dict:
+async def _user_dict(user: User, db: AsyncSession) -> dict:
+    from app.services.permission_service import resolve_direct_report_ids
+    direct_reports = await resolve_direct_report_ids(db, user)
     return {
         "id": str(user.id), "name": user.name, "email": user.email,
         "role": user.role, "bu": user.bu, "business": getattr(user, "business", "fluidpro"),
         "manager_id": str(user.manager_id) if getattr(user, "manager_id", None) else None,
-        "org_role_key": user.org_role_key
+        "org_role_key": user.org_role_key,
+        # Dual-hat support (e.g. a business_head who also personally line-manages
+        # a small team) — lets the frontend show a "My Team" toggle without a
+        # separate 'manager' role. See permission_service.resolve_direct_report_ids.
+        "has_direct_reports": len(direct_reports) > 0,
     }
 
 @router.post("/login", response_model=TokenResponse)
@@ -110,7 +116,7 @@ async def login(
     return {
         "access_token":  create_access_token(str(user.id), user.role),
         "refresh_token": create_refresh_token(str(user.id)),
-        "user": _user_dict(user)
+        "user": await _user_dict(user, db)
     }
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -135,7 +141,7 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
     return {
         "access_token":  create_access_token(str(user.id), user.role),
         "refresh_token": create_refresh_token(str(user.id)),
-        "user": _user_dict(user)
+        "user": await _user_dict(user, db)
     }
 
 @router.post("/logout")

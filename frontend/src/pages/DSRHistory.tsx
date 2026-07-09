@@ -216,6 +216,12 @@ export default function DSRHistory() {
   const today = new Date()
   const [month, setMonth] = useState(format(today, 'yyyy-MM'))
   const [viewMode, setViewMode] = useState<'mine' | 'team'>('mine')
+  // Dual-hat: a business_head/bu_head/ceo who ALSO personally line-manages a
+  // small team (rather than delegating to a separate 'manager' role account)
+  // can narrow "Team Approval" down to just their direct reports. Meaningless
+  // for plain 'manager' role, whose scope is already direct-reports-only.
+  const [teamScope, setTeamScope] = useState<'all' | 'direct'>('all')
+  const canNarrowToDirectTeam = user?.has_direct_reports && user?.role !== 'manager'
 
   const isManager = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
 
@@ -228,8 +234,8 @@ export default function DSRHistory() {
 
   // Team pending approvals
   const { data: teamPending = [], isLoading: teamLoading } = useQuery({
-    queryKey: ['dsr-team-pending', month],
-    queryFn:  () => api.get(`/dsr/team/pending?month=${month}`).then(r => r.data),
+    queryKey: ['dsr-team-pending', month, teamScope],
+    queryFn:  () => api.get(`/dsr/team/pending?month=${month}${teamScope === 'direct' ? '&scope=direct' : ''}`).then(r => r.data),
     enabled:  viewMode === 'team' && isManager,
   })
 
@@ -313,6 +319,27 @@ export default function DSRHistory() {
                       {submitted}
                     </span>
                   )}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Dual-hat: BU Head / business_head who also personally line-manages
+              a small team can narrow down from "whole BU" to just their direct
+              reports, on top of the Mine/Team Approval toggle above. */}
+          {isManager && viewMode === 'team' && canNarrowToDirectTeam && (
+            <div className="flex rounded-xl overflow-hidden border border-wep-border">
+              {[{ val:'all', label:'Whole BU' }, { val:'direct', label:'My Team' }].map(v => (
+                <button key={v.val}
+                  onClick={() => setTeamScope(v.val as any)}
+                  className={`px-3 py-2 text-sm font-medium transition-colors ${
+                    teamScope === v.val
+                      ? 'text-white'
+                      : 'text-wep-muted hover:text-wep-text bg-white'
+                  }`}
+                  style={teamScope === v.val
+                    ? { background: 'linear-gradient(135deg,#0D9488,#0B7A70)' }
+                    : {}}>
+                  {v.label}
                 </button>
               ))}
             </div>

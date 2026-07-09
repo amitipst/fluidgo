@@ -29,6 +29,7 @@ export interface AuthUser {
   business?:    string
   manager_id?:  string | null
   org_role_key?: OrgRoleKey
+  has_direct_reports?: boolean   // dual-hat support — see backend permission_service.py
 }
 
 interface AuthState {

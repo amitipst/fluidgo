@@ -258,5 +258,13 @@ async def list_regions():
     ]
 
 @router.get("/me")
-async def get_me(user: User = Depends(get_current_user)):
-    return _serialize(user)
+async def get_me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.services.permission_service import resolve_direct_report_ids
+    d = _serialize(user)
+    # Dual-hat support: a business_head/bu_head/ceo who ALSO personally line-manages
+    # a team gets this flag so the frontend can show a "My Team" toggle, without
+    # needing a separate 'manager' role. See permission_service.resolve_direct_report_ids.
+    direct_reports = await resolve_direct_report_ids(db, user)
+    d["has_direct_reports"] = len(direct_reports) > 0
+    d["direct_report_count"] = len(direct_reports)
+    return d

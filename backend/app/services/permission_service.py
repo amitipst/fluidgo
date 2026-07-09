@@ -103,6 +103,27 @@ async def resolve_visible_user_ids(
     return [current_user.id]
 
 
+async def resolve_direct_report_ids(db: AsyncSession, current_user: User) -> list:
+    """Returns user IDs that report directly to current_user via manager_id —
+    independent of role. This is what lets someone with a dual hat (e.g. a
+    business_head who also personally line-manages a small sales/pre-sales
+    team, rather than delegating that to a separate 'manager' role account)
+    get a focused "My Team" view on top of whatever their primary role
+    already grants via resolve_visible_user_ids.
+
+    Deliberately has NO role gate and NO fallback-to-region behaviour (unlike
+    the "team" scope branch above) — if you have zero direct reports, you get
+    an empty list, full stop. The caller decides what to do with that (e.g.
+    hide the "My Team" toggle in the UI when this is empty)."""
+    result = await db.execute(
+        select(User.id).where(
+            User.manager_id == current_user.id,
+            User.is_active == True
+        )
+    )
+    return [row[0] for row in result.all()]
+
+
 async def get_region_summary(
     db: AsyncSession,
     current_user: User,

@@ -243,11 +243,16 @@ async def get_my_history(
 @router.get("/team")
 async def get_team_dsr(
     date: date,
+    scope: Optional[str] = None,   # "direct" forces manager_id-only filtering
+                                    # (dual-hat support), regardless of primary role
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_level(20))
 ):
-    from app.services.permission_service import resolve_visible_user_ids
-    visible = await resolve_visible_user_ids(db, user)
+    from app.services.permission_service import resolve_visible_user_ids, resolve_direct_report_ids
+    if scope == "direct":
+        visible = await resolve_direct_report_ids(db, user)
+    else:
+        visible = await resolve_visible_user_ids(db, user)
     q = select(DSRDaily).where(DSRDaily.date == date)
     if visible is not None:
         q = q.where(DSRDaily.user_id.in_(visible))
@@ -258,12 +263,16 @@ async def get_team_dsr(
 @router.get("/team/pending")
 async def get_pending_approvals(
     month: Optional[str] = None,
+    scope: Optional[str] = None,   # "direct" — see /team above
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_level(20))
 ):
     """Returns all submitted (unapproved) DSRs for the manager's team."""
-    from app.services.permission_service import resolve_visible_user_ids
-    visible = await resolve_visible_user_ids(db, user)
+    from app.services.permission_service import resolve_visible_user_ids, resolve_direct_report_ids
+    if scope == "direct":
+        visible = await resolve_direct_report_ids(db, user)
+    else:
+        visible = await resolve_visible_user_ids(db, user)
     q = select(DSRDaily).where(DSRDaily.approval_status == "submitted")
     if visible is not None:
         q = q.where(DSRDaily.user_id.in_(visible))
