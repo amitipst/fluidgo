@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import api from '@/hooks/useApi'
+import { toast } from '@/store/toastStore'
 
 const SOURCES = ['All', 'Call', 'Visit', 'Referral', 'LinkedIn', 'Email']
 const STATUSES = ['All', 'new', 'qualified', 'proposal', 'closed_won', 'closed_lost']
@@ -66,11 +67,9 @@ export default function Leads() {
     onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ['leads'] })
       qc.invalidateQueries({ queryKey: ['pipeline'] })
-      if (window.confirm(`${res.data.message}\n\nGo to Pipeline to add deal value and next steps?`)) {
-        navigate('/pipeline')
-      }
+      toast.success(res.data.message, { label: 'View in Pipeline', onClick: () => navigate('/pipeline') })
     },
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not convert to deal'),
+    onError: (e: any) => toast.error(e?.response?.data?.detail ?? 'Could not convert to deal'),
   })
 
   // Filtered view

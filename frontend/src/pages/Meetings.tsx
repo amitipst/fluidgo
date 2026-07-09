@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import api from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
+import { toast } from '@/store/toastStore'
 
 const MEETING_TYPES = ['F2F', 'Virtual', 'Call']
 const today = format(new Date(), 'yyyy-MM-dd')
@@ -78,12 +79,9 @@ export default function Meetings() {
     onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ['meetings'] })
       qc.invalidateQueries({ queryKey: ['leads'] })
-      // Take the rep straight to Leads so they see the new lead in context
-      if (window.confirm(`${res.data.message}\n\nGo to Leads to continue qualifying it?`)) {
-        navigate('/leads')
-      }
+      toast.success(res.data.message, { label: 'View in Leads', onClick: () => navigate('/leads') })
     },
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not convert to lead'),
+    onError: (e: any) => toast.error(e?.response?.data?.detail ?? 'Could not convert to lead'),
   })
 
   const filtered = (meetings as any[]).filter(m => {

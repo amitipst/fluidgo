@@ -22,6 +22,7 @@ import SystemHealth from '@/pages/SystemHealth'
 import FGAApproval from '@/pages/FGAApproval'
 import Gamification from '@/pages/Gamification'
 import ErrorBoundary from '@/components/ErrorBoundary'
+import Toaster from '@/components/Toaster'
 import './index.css'
 
 const qc = new QueryClient({
@@ -93,6 +94,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             </Route>
           </Routes>
         </BrowserRouter>
+        <Toaster />
       </QueryClientProvider>
     </ErrorBoundary>
   </React.StrictMode>
