@@ -490,9 +490,24 @@ Data model supports all 4 businesses. Phase 1 = fluidPro West BU only. Phase 2 a
 - **Revenue target for FGA** — Danish has no target set for May 2026, so Business Generation (40%) scores 0. Set via `POST /api/analytics/revenue/targets`.
 - **Duplicate scoring_result rows** — if freeze is called multiple times, Danish shows 2 rows. Fixed by scoping to `(user_id, template_id, period)` in the query. Non-blocking.
 - **FGA period default** — FGA Approval page defaults to previous month (correct). Current month scores can only be frozen after month-end.
-- **manager_id not set on existing users** — seeded users have `manager_id = null`. Manager scope falls back to full-BU until manager_id is assigned via Team → Edit.
 - **Ollama cold start** — first AI analysis after container start takes 15–30s on CPU-only mode.
 - **PostCSS warning** — `postcss.config.js` needs `"type": "module"` in `package.json`. Non-blocking.
+
+---
+
+## 🧾 Recent Progress (July 2026 UAT session)
+
+- **Fixed:** `/dsr/history` 500 error — `_edit_lock_state()` in `dsr.py` compared a tz-naive `datetime.utcnow()` against tz-aware `submitted_at`/`edit_granted_until` (Postgres `timestamptz`), raising `TypeError`. Same bug present in approve/reject, request-edit, grant-edit, and `/dsr/team/edit-requests`. All six spots now normalize via a shared `_aware()` helper and `datetime.now(timezone.utc)`. Verified live against Ishaant's account and full smoke suite (40/40).
+- **Fixed:** `smoke_test.py` was silently broken two ways — wrong port in the run command (`:80` instead of `:8000`), and 4 of its 6 test accounts (`manager@fluidpro.in`, `danish@fluidpro.in`, `sanjay.ps@fluidpro.in`, `inside@fluidpro.in`) had been deactivated. Reactivated with passwords reset to the values already documented in this README's Default Credentials table.
+- **Solved — dual-hat role mapping (business_head who also personally line-manages a team):** previously `manager_id`-based "my team" scoping in `permission_service.py` only activated for `role == 'manager'`, so a `business_head`/`bu_head` who directly manages reps (rather than delegating to a separate manager account) had no focused "my team" view — only the full-BU view. Fixed by decoupling "has direct reports" from `role` entirely:
+  - New `resolve_direct_report_ids()` in `permission_service.py` — role-independent, just checks `manager_id`.
+  - `/api/users/me`, `/api/auth/login`, `/api/auth/refresh` now return `has_direct_reports` (and count) on the user object.
+  - `/api/dsr/team` and `/api/dsr/team/pending` accept `?scope=direct` to force manager_id-only filtering, layered on top of whatever the primary role already grants.
+  - DSR History page shows a **"Whole BU" / "My Team"** toggle whenever `has_direct_reports` is true and role isn't plain `manager` (for whom it'd be redundant).
+  - This generalizes to any BU across the 4-business roadmap without new roles or schema changes — any business_head/bu_head who gets direct reports assigned via `manager_id` automatically gets the toggle.
+  - Amit Singh's direct reports set: Ishaant Hangloo, Modassir Tanweer, Sowmya N.
+  - Tracked in Linear: see WEP-41 (Role-Based Governance) sub-issue.
+- **Superseded — manager_id known limitation above:** the "manager_id not set on existing users, falls back to full-BU" limitation is now only a concern for the plain `manager` role's team-scope fallback (region+business match). BU-level dual-hat users get the explicit toggle described above instead of relying on that fallback.
 
 ---
 
