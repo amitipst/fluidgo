@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { format } from 'date-fns'
 import api from '@/hooks/useApi'
+import CloseDealModal from '@/components/CloseDealModal'
 
 const STAGES = ['All', 'cold', 'warm', 'hot', 'closed_won', 'closed_lost', 'dropped']
 const PRACTICES = ['All practices', 'Cloud & Security', 'Microsoft', 'Managed Services',
@@ -14,7 +15,8 @@ const stageCfg: Record<string, { label: string; color: string; dot: string }> = 
   hot:         { label: '🔥 Hot',      color: 'text-red-600 bg-red-50',      dot: '#DC2626' },
   closed_won:  { label: '✅ Won',       color: 'text-green-700 bg-green-50',  dot: '#059669' },
   closed_lost: { label: '❌ Lost',     color: 'text-gray-500 bg-gray-100',   dot: '#9CA3AF' },
-  dropped:     { label: 'Dropped',     color: 'text-gray-400 bg-gray-50',    dot: '#D1D5DB' },
+  on_hold:     { label: '⏸ On Hold',   color: 'text-amber-600 bg-amber-50',  dot: '#D97706' },
+  dropped:     { label: '🚫 Dropped',  color: 'text-gray-400 bg-gray-50',    dot: '#D1D5DB' },
 }
 
 function fmt(v: number) {
@@ -39,6 +41,7 @@ export default function Pipeline() {
   const [editForm, setEditForm] = useState({
     company: '', stage: 'cold', deal_value: '', closure_eta: '', todays_update: '', next_step: '',
   })
+  const [closingDeal, setClosingDeal] = useState<any | null>(null)
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey: ['pipeline'],
@@ -310,6 +313,13 @@ export default function Pipeline() {
                       className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
                       ✏️ Edit
                     </button>
+                    {!['closed_won','closed_lost','on_hold','dropped'].includes(d.stage) && (
+                      <button onClick={() => setClosingDeal(d)}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white hover:opacity-90"
+                        style={{ background: 'linear-gradient(135deg,#92278E,#5B1A6E)' }}>
+                        🏁 Close
+                      </button>
+                    )}
                   </div>
                 </div>
                 )}
@@ -317,6 +327,20 @@ export default function Pipeline() {
             )
           })}
         </div>
+      )}
+
+      {closingDeal && (
+        <CloseDealModal
+          deal={closingDeal}
+          onClose={() => setClosingDeal(null)}
+          onDone={() => {
+            setClosingDeal(null)
+            qc.invalidateQueries({ queryKey: ['pipeline'] })
+            qc.invalidateQueries({ queryKey: ['opportunities'] })
+            qc.invalidateQueries({ queryKey: ['loss-analysis'] })
+            qc.invalidateQueries({ queryKey: ['win-back-alerts'] })
+          }}
+        />
       )}
     </div>
   )
