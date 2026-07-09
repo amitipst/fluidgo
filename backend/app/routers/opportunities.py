@@ -24,6 +24,17 @@ async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] 
     visible = await resolve_visible_user_ids(db, user)
     deals = await opportunity_repo.list_opportunities(db, user_ids=visible, practice=practice,
                                                         oem=oem, risk_level=risk_level)
+    # Compute the rule-based deal-health score up front for any deal missing it,
+    # so the Opportunities cards always show a health indicator (the AI *coaching*
+    # text still only generates on demand via /health — that's the slow part).
+    dirty = False
+    for d in deals:
+        if d.ai_deal_health is None:
+            d.ai_deal_health = calculate_deal_health(d)
+            d.ai_deal_health_label = deal_health_label(d.ai_deal_health)
+            dirty = True
+    if dirty:
+        await db.commit()
     return [_serialize(d) for d in deals]
 
 
