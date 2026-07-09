@@ -6,6 +6,14 @@ import { format } from 'date-fns'
 import { Link } from 'react-router-dom'
 import { getQuoteOfDay } from '@/lib/quotes'
 
+// Compact Indian-format currency (₹2.5Cr / ₹1.5L / ₹5,000)
+function inrShort(n: number): string {
+  if (!n) return '₹0'
+  if (n >= 1e7) return `₹${(n / 1e7).toFixed(2)}Cr`
+  if (n >= 1e5) return `₹${(n / 1e5).toFixed(1)}L`
+  return `₹${Math.round(n).toLocaleString('en-IN')}`
+}
+
 // ── Motivational background motif — ascending bars / momentum, on-brand,
 // rendered translucent so it reads as texture, not content. Pure SVG (no
 // external image), so there's nothing that can 404 or need hosting.
@@ -181,6 +189,14 @@ export default function Dashboard() {
     queryFn: () => api.get(`/dsr?date=${today}`).then(r => r.data),
   })
 
+  // Rep's own revenue target vs achievement (field roles that carry a number)
+  const isRevenueRep = ['rep','inside_sales'].includes(user?.role ?? '')
+  const { data: myRev } = useQuery({
+    queryKey: ['my-revenue', selectedMonth],
+    queryFn: () => api.get(`/analytics/my-revenue?period=${selectedMonth}`).then(r => r.data),
+    enabled: isRevenueRep,
+  })
+
   const rigor = dash?.avg_rigor ?? 0
   const rigorColor = rigor >= 80 ? '#059669' : rigor >= 60 ? '#D97706' : rigor > 0 ? '#DC2626' : '#DDE3EE'
   const rigorLabel = rigor >= 80 ? '🏆 Excellent' : rigor >= 60 ? '✅ Good' : rigor > 0 ? '⚠️ Needs focus' : undefined
@@ -247,6 +263,52 @@ export default function Dashboard() {
 
       {/* ── AI Panel ── */}
       {user?.id && <AIPanel userId={user.id} />}
+
+      {/* ── My Targets (rep visibility into own revenue) ── */}
+      {isRevenueRep && myRev?.has_target && (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div className="font-bold text-wep-navy text-sm">🎯 My Targets — {myRev.period}</div>
+            <div className="text-xs text-wep-muted">
+              {myRev.deals_won} {myRev.deals_won === 1 ? 'deal' : 'deals'} won
+            </div>
+          </div>
+
+          {/* Revenue progress bar */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className="text-wep-muted">Revenue</span>
+              <span className="font-semibold text-wep-text">
+                {inrShort(myRev.revenue_achieved)} <span className="text-wep-muted">/ {inrShort(myRev.revenue_target)}</span>
+              </span>
+            </div>
+            <div className="h-2.5 rounded-full overflow-hidden" style={{ background: '#EDE9F5' }}>
+              <div className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.min(100, myRev.achievement_pct)}%`,
+                  background: myRev.achievement_pct >= 100 ? '#059669'
+                    : myRev.achievement_pct >= 60 ? 'linear-gradient(90deg,#F0115E,#92278E)' : '#F0115E',
+                }} />
+            </div>
+            <div className="flex items-center justify-between text-[11px] mt-1">
+              <span className="font-bold" style={{ color: myRev.achievement_pct >= 100 ? '#059669' : '#F0115E' }}>
+                {myRev.achievement_pct}% achieved
+              </span>
+              {myRev.gap > 0 && (
+                <span className="text-wep-muted">{inrShort(myRev.gap)} to target</span>
+              )}
+            </div>
+          </div>
+
+          {/* Order booking target (if set) */}
+          {myRev.order_booking_target > 0 && (
+            <div className="flex items-center justify-between text-xs pt-2 border-t border-wep-border">
+              <span className="text-wep-muted">📦 Order Booking Target</span>
+              <span className="font-semibold text-wep-text">{inrShort(myRev.order_booking_target)}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Today's DSR (rep only) ── */}
       {!isBU && (

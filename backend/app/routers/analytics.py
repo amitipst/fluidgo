@@ -192,6 +192,52 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
         "pending_today":   pending_today,
     }
 
+@router.get("/my-revenue")
+async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    """The CALLER's own revenue target vs achievement — visible to every role
+    (a rep can see their own numbers). Revenue and Order Booking kept separate.
+    Supports monthly ('2026-07'), quarterly ('2026-Q2') and yearly ('2026')."""
+    today = date.today()
+    p = period or f"{today.year}-{today.month:02d}"
+    start, end = _period_bounds(p)
+
+    # Won revenue in the period (this user only)
+    deals = (await db.execute(
+        select(PipelineDeal).where(PipelineDeal.user_id == user.id)
+    )).scalars().all()
+    won = [d for d in deals if d.stage == "closed_won"
+           and d.closure_eta and start <= d.closure_eta <= end]
+    won_revenue = sum(float(d.deal_value or 0) for d in won)
+
+    # Targets: a target row's period may be monthly even when viewing a quarter,
+    # so sum every target whose period-bounds fall inside the requested window.
+    all_targets = (await db.execute(
+        select(RevenueTarget).where(RevenueTarget.user_id == user.id)
+    )).scalars().all()
+    def in_window(t):
+        try:
+            ts, te = _period_bounds(t.period)
+        except Exception:
+            return False
+        return ts >= start and te <= end
+    scoped = [t for t in all_targets if in_window(t)]
+    revenue_target = sum(float(t.target_amount) for t in scoped if t.target_type == "revenue")
+    ob_target      = sum(float(t.target_amount) for t in scoped if t.target_type == "order_booking")
+
+    achievement_pct = round(won_revenue / revenue_target * 100, 1) if revenue_target else 0.0
+
+    return {
+        "period": p,
+        "revenue_achieved":     round(won_revenue, 2),
+        "revenue_target":       round(revenue_target, 2),
+        "order_booking_target": round(ob_target, 2),
+        "achievement_pct":      achievement_pct,
+        "gap":                  round(max(0.0, revenue_target - won_revenue), 2),
+        "deals_won":            len(won),
+        "has_target":           revenue_target > 0 or ob_target > 0,
+    }
+
 @router.get("/revenue")
 async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
                             user: User = Depends(require_role("manager", "bu_head", "business_head", "ceo", "super_admin", "finance"))):
