@@ -548,3 +548,66 @@ async def get_team_targets(
             for u in sorted(team, key=lambda x: (x.region or "", x.name))
         ]
     }
+
+
+@router.get("/funnel")
+async def funnel_analytics(db: AsyncSession = Depends(get_db),
+                           user: User = Depends(get_current_user)):
+    """Conversion funnel: Meetings → Leads → Deals → Won, with conversion rates.
+    Scoped to the caller's visible users (own for reps, team for managers).
+    This is the business-insight view a Business Head actually wants."""
+    from app.models import Meeting, Lead, role_level
+    from sqlalchemy import func
+
+    # Scope: managers see their team, reps see themselves
+    if role_level(user.role) >= 20:
+        visible = await resolve_visible_user_ids(db, user)
+    else:
+        visible = [user.id]
+
+    def _scoped(q, col):
+        return q.where(col.in_(visible)) if visible is not None else q
+
+    meetings_total = (await db.execute(_scoped(
+        select(func.count(Meeting.id)), Meeting.user_id))).scalar() or 0
+    meetings_converted = (await db.execute(_scoped(
+        select(func.count(Meeting.id)).where(Meeting.converted_to_lead_id.isnot(None)),
+        Meeting.user_id))).scalar() or 0
+    leads_total = (await db.execute(_scoped(
+        select(func.count(Lead.id)), Lead.user_id))).scalar() or 0
+    leads_converted = (await db.execute(_scoped(
+        select(func.count(Lead.id)).where(Lead.converted_to_deal_id.isnot(None)),
+        Lead.user_id))).scalar() or 0
+    deals_total = (await db.execute(_scoped(
+        select(func.count(PipelineDeal.id)), PipelineDeal.user_id))).scalar() or 0
+    deals_won = (await db.execute(_scoped(
+        select(func.count(PipelineDeal.id)).where(PipelineDeal.stage == "closed_won"),
+        PipelineDeal.user_id))).scalar() or 0
+
+    # Value at each pipeline stage (open vs won)
+    open_value = (await db.execute(_scoped(
+        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+            PipelineDeal.stage.notin_(["closed_won", "closed_lost"])),
+        PipelineDeal.user_id))).scalar() or 0
+    won_value = (await db.execute(_scoped(
+        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+            PipelineDeal.stage == "closed_won"),
+        PipelineDeal.user_id))).scalar() or 0
+
+    def pct(n, d): return round(100 * n / d) if d else 0
+
+    return {
+        "is_team": role_level(user.role) >= 20,
+        "stages": [
+            {"label": "Meetings",  "count": meetings_total,   "value": None},
+            {"label": "Leads",     "count": leads_total,      "value": None,
+             "conv_from_prev": pct(leads_total, meetings_total)},
+            {"label": "Deals",     "count": deals_total,      "value": float(open_value),
+             "conv_from_prev": pct(deals_total, leads_total)},
+            {"label": "Won",       "count": deals_won,        "value": float(won_value),
+             "conv_from_prev": pct(deals_won, deals_total)},
+        ],
+        "overall_conversion": pct(deals_won, meetings_total),
+        "open_pipeline_value": float(open_value),
+        "won_value": float(won_value),
+    }

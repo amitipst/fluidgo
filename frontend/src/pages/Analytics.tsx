@@ -12,9 +12,72 @@ function MiniStat({ label, value, color }: { label: string; value: string | numb
   )
 }
 
+function inr(n: number): string {
+  if (n >= 1e7) return `₹${(n / 1e7).toFixed(2)}Cr`
+  if (n >= 1e5) return `₹${(n / 1e5).toFixed(1)}L`
+  return `₹${Math.round(n).toLocaleString('en-IN')}`
+}
+
+const STAGE_COLORS = ['#92278E', '#F0115E', '#0EA5E9', '#0D9488']
+
+function ConversionFunnel() {
+  const { data } = useQuery({
+    queryKey: ['funnel'],
+    queryFn: () => api.get('/analytics/funnel').then(r => r.data),
+  })
+  if (!data) return null
+  const stages = data.stages ?? []
+  const maxCount = Math.max(...stages.map((s: any) => s.count), 1)
+
+  return (
+    <div className="card mb-6">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="font-semibold text-sm text-wep-navy">
+          🎯 {data.is_team ? 'Team' : 'My'} Conversion Funnel
+        </div>
+        <div className="text-xs text-wep-muted">
+          Overall: <strong className="text-wep-navy">{data.overall_conversion}%</strong> meeting→win
+          {data.open_pipeline_value > 0 && <> · Open: <strong className="text-wep-navy">{inr(data.open_pipeline_value)}</strong></>}
+        </div>
+      </div>
+      <div className="space-y-2.5">
+        {stages.map((s: any, i: number) => {
+          const widthPct = Math.max(8, Math.round((s.count / maxCount) * 100))
+          return (
+            <div key={s.label} className="flex items-center gap-3">
+              <div className="w-16 text-xs font-semibold text-wep-muted shrink-0">{s.label}</div>
+              <div className="flex-1 flex items-center gap-2">
+                <div className="h-8 rounded-lg flex items-center px-3 text-white text-sm font-bold transition-all"
+                  style={{ width: `${widthPct}%`, background: STAGE_COLORS[i], minWidth: 44 }}>
+                  {s.count}
+                </div>
+                {s.conv_from_prev != null && (
+                  <span className={`text-[11px] font-semibold ${
+                    s.conv_from_prev >= 50 ? 'text-teal-600' : s.conv_from_prev >= 25 ? 'text-amber-600' : 'text-red-500'
+                  }`}>
+                    {s.conv_from_prev}%
+                  </span>
+                )}
+                {s.value != null && s.value > 0 && (
+                  <span className="text-[11px] text-wep-muted">· {inr(s.value)}</span>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {maxCount === 1 && stages[0]?.count === 0 && (
+        <p className="text-xs text-wep-muted mt-3">
+          Log meetings and convert them to leads/deals to see your conversion funnel come alive.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function Analytics() {
   const { user } = useAuthStore()
-  const { data: records = [], isLoading } = useQuery({
+  const { data: records = [] } = useQuery({
     queryKey: ['analytics', user?.id],
     queryFn: () => api.get(`/analytics/rep/${user?.id}`).then(r => r.data),
     enabled: !!user?.id
@@ -47,11 +110,12 @@ export default function Analytics() {
       <div className="mb-6">
         <h1 className="font-display font-bold text-xl text-wep-navy">📈 Analytics</h1>
         <p className="text-wep-muted text-sm">
-          {isTeamView ? "Team-wide daily activity · " : ''}{working.length} working days tracked
+          {isTeamView ? "Team-wide · " : ''}Funnel conversion & daily activity
         </p>
       </div>
 
-      {/* KPI row */}
+      <ConversionFunnel />
+
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
         <MiniStat label="Calls"      value={totals.calls}     color="text-wep-accent"/>
         <MiniStat label="Visits"     value={totals.visits}    color="text-wep-teal"/>
@@ -61,7 +125,6 @@ export default function Analytics() {
         <MiniStat label="Avg Rigor"  value={`${avgRigor}/100`} color={avgRigor >= 80 ? 'text-wep-teal' : avgRigor >= 60 ? 'text-wep-amber' : 'text-wep-red'}/>
       </div>
 
-      {/* Call + followup bar chart */}
       <div className="card mb-4">
         <div className="font-semibold text-sm text-wep-navy mb-4">📞 Daily Calls & Follow-Ups</div>
         <ResponsiveContainer width="100%" height={180}>
@@ -75,7 +138,6 @@ export default function Analytics() {
         </ResponsiveContainer>
       </div>
 
-      {/* Rigor score trend */}
       <div className="card">
         <div className="font-semibold text-sm text-wep-navy mb-4">⚡ Rigor Score Trend</div>
         <ResponsiveContainer width="100%" height={140}>
