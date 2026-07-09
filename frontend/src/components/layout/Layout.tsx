@@ -1,4 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { APP_VERSION } from '@/version'
 import { useAuthStore } from '@/store/authStore'
 
 // Field roles only — can submit DSR
@@ -194,6 +195,20 @@ export default function Layout() {
             onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.35)')}>
             <span>↩</span> Sign out
           </button>
+
+          {/* Help link + version */}
+          <div className="flex items-center justify-between mt-2 px-3">
+            <NavLink to="/help"
+              className="text-[11px] font-medium transition-colors"
+              style={{ color: 'rgba(255,255,255,0.3)' }}
+              onMouseEnter={e => (e.currentTarget.style.color = '#38BDF8')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.3)')}>
+              ❔ Help & Guide
+            </NavLink>
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.2)' }}>
+              v{APP_VERSION}
+            </span>
+          </div>
         </div>
       </aside>
 
