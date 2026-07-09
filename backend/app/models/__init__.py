@@ -233,6 +233,22 @@ class PipelineDeal(Base):
     ai_deal_health_label: Mapped[str]   = mapped_column(String(30), nullable=True)
     # ── Funnel provenance ─────────────────────────────────────────────────────
     source_lead_id:   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # lead this deal came from
+    # ── Outcome / win-loss analysis ───────────────────────────────────────────
+    # Set when a deal is closed as lost/dropped/on_hold. Category is a fixed
+    # taxonomy (so losses are analysable in aggregate); detail is free text.
+    outcome_category:    Mapped[str]      = mapped_column(String(50), nullable=True)   # e.g. price, competitor, no_decision...
+    outcome_detail:      Mapped[str]      = mapped_column(Text, nullable=True)         # rep's free-text explanation
+    outcome_competitor:  Mapped[str]      = mapped_column(String(120), nullable=True)  # who won, if lost to competitor
+    outcome_recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    outcome_ai_analysis: Mapped[str]      = mapped_column(Text, nullable=True)         # AI post-mortem (what went wrong / how to improve)
+    # ── Contract / win-back ───────────────────────────────────────────────────
+    # For won deals AND deals lost to a competitor on a fixed-term contract:
+    # capture the term so we can resurface the account before the incumbent's
+    # contract expires. reengage_at defaults to 4 months before contract_end.
+    contract_months:  Mapped[int]       = mapped_column(Integer, nullable=True)        # e.g. 12, 24, 36
+    contract_end_date:Mapped[datetime]  = mapped_column(Date, nullable=True)
+    reengage_at:      Mapped[datetime]  = mapped_column(Date, nullable=True)           # when to resurface as an alert
+    reengage_done:    Mapped[bool]      = mapped_column(Boolean, default=False)        # rep dismissed/actioned the alert
 
 class OrgRole(Base):
     """Additive org-hierarchy layer. Independent of `users.role` (rep|inside_sales|
