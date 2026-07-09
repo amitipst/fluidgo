@@ -112,11 +112,19 @@ def _serialize_scheme(s: IncentiveScheme) -> dict:
 @router.get("/schemes")
 async def list_schemes(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
                        user: User = Depends(get_current_user)):
-    """List active schemes for this user's BU."""
+    """List active schemes visible to this user.
+    A scheme is visible if it's in the user's business AND either targets the
+    user's specific BU or is a business-wide scheme (bu='Global'). This is why
+    a rep in 'North' still sees a 'Global'-scoped scheme created by a BU head."""
+    from sqlalchemy import or_
     query = select(IncentiveScheme).where(
-        IncentiveScheme.bu == user.bu,
         IncentiveScheme.business == user.business,
-        IncentiveScheme.status == "active"
+        IncentiveScheme.status == "active",
+        or_(
+            IncentiveScheme.bu == user.bu,
+            IncentiveScheme.bu == "Global",
+            IncentiveScheme.scope == "business",
+        ),
     )
     if period:
         query = query.where(IncentiveScheme.period == period)
@@ -198,12 +206,17 @@ async def leaderboard(period: str, db: AsyncSession = Depends(get_db),
 async def my_progress(period: str, db: AsyncSession = Depends(get_db),
                       user: User = Depends(get_current_user)):
     """Returns this rep's progress against all active schemes in the period."""
+    from sqlalchemy import or_
     schemes = (await db.execute(
         select(IncentiveScheme).where(
-            IncentiveScheme.bu == user.bu,
             IncentiveScheme.business == user.business,
             IncentiveScheme.period == period,
-            IncentiveScheme.status == "active"
+            IncentiveScheme.status == "active",
+            or_(
+                IncentiveScheme.bu == user.bu,
+                IncentiveScheme.bu == "Global",
+                IncentiveScheme.scope == "business",
+            ),
         )
     )).scalars().all()
 
