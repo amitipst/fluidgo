@@ -66,6 +66,19 @@ export default function Opportunities() {
     }).then(r => r.data)
   })
 
+  const { data: lossData } = useQuery({
+    queryKey: ['loss-analysis'],
+    queryFn: () => api.get('/pipeline/loss-analysis').then(r => r.data),
+  })
+  const { data: winBacks = [] } = useQuery({
+    queryKey: ['win-back-alerts'],
+    queryFn: () => api.get('/pipeline/win-back-alerts').then(r => r.data),
+  })
+  const dismissWinBack = useMutation({
+    mutationFn: (id: string) => api.post(`/pipeline/${id}/win-back-done`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['win-back-alerts'] }),
+  })
+
   const [healthError, setHealthError] = useState<Record<string, string>>({})
 
   const checkHealth = useMutation({
@@ -145,6 +158,80 @@ export default function Opportunities() {
           <div className="font-display font-bold text-xl mt-1" style={{ color: '#059669' }}>{inr(wonValue)}</div>
         </div>
       </div>
+
+      {/* Win-back alerts — lost/won contracts nearing expiry, time to re-engage */}
+      {winBacks.length > 0 && (
+        <div className="card mb-6" style={{ borderLeft: '4px solid #F0115E' }}>
+          <div className="font-semibold text-sm text-wep-navy mb-3">
+            🔔 {winBacks.length} Win-Back {winBacks.length === 1 ? 'Alert' : 'Alerts'} — time to re-engage
+          </div>
+          <div className="space-y-2">
+            {winBacks.map((w: any) => (
+              <div key={w.id} className="flex items-center justify-between gap-3 flex-wrap text-sm px-3 py-2.5 rounded-xl"
+                style={{ background: '#FDF2F8' }}>
+                <div>
+                  <span className="font-semibold text-wep-navy">{w.company}</span>
+                  <span className="text-wep-muted">
+                    {' '}· {w.outcome === 'closed_won' ? 'our contract' : `${w.competitor || 'competitor'}'s contract`}
+                    {w.contract_end_date && ` expires ${w.contract_end_date}`}
+                    {w.deal_value > 0 && ` · ${inr(w.deal_value)}`}
+                  </span>
+                </div>
+                <button onClick={() => dismissWinBack.mutate(w.id)}
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg text-white shrink-0"
+                  style={{ background: '#F0115E' }}>
+                  Got it
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Win-loss summary — the learning view */}
+      {lossData && (lossData.counts.lost + lossData.counts.on_hold + lossData.counts.dropped) > 0 && (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div className="font-semibold text-sm text-wep-navy">
+              📉 {lossData.is_team ? 'Team' : 'My'} Win-Loss Analysis
+            </div>
+            <div className="text-xs text-wep-muted">
+              Win rate: <strong className="text-wep-navy">{lossData.win_rate}%</strong>
+              {lossData.lost_value > 0 && <> · Lost value: <strong className="text-red-500">{inr(lossData.lost_value)}</strong></>}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            {[
+              { k: 'won', label: 'Won', color: '#059669' },
+              { k: 'lost', label: 'Lost', color: '#DC2626' },
+              { k: 'on_hold', label: 'On Hold', color: '#D97706' },
+              { k: 'dropped', label: 'Dropped', color: '#6B7280' },
+            ].map(x => (
+              <div key={x.k} className="text-center py-2 rounded-xl" style={{ background: `${x.color}0F` }}>
+                <div className="font-display font-bold text-lg" style={{ color: x.color }}>{lossData.counts[x.k]}</div>
+                <div className="text-[10px] text-wep-muted uppercase tracking-wide">{x.label}</div>
+              </div>
+            ))}
+          </div>
+          {Object.keys(lossData.lost_by_category || {}).length > 0 && (
+            <div className="text-xs">
+              <span className="text-wep-muted">Top loss reasons: </span>
+              {Object.entries(lossData.lost_by_category).slice(0, 4).map(([cat, n]: any, i: number) => (
+                <span key={cat}>
+                  {i > 0 && ' · '}
+                  <strong className="text-wep-text">{cat.replace(/_/g, ' ')}</strong> ({n})
+                </span>
+              ))}
+            </div>
+          )}
+          {lossData.competitors && Object.keys(lossData.competitors).length > 0 && (
+            <div className="text-xs mt-1">
+              <span className="text-wep-muted">Lost to: </span>
+              {Object.keys(lossData.competitors).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="space-y-3">
         {deals.map((d: any) => {
