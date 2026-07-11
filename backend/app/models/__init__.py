@@ -22,17 +22,29 @@ class User(Base):
     created_at:   Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 # ── Role hierarchy ────────────────────────────────────────────────────────────
+# "BU" (Business Unit) means a BUSINESS LINE at WEP — fluidpro | fluidprint |
+# floxtax | hooks (the `business` column). It does NOT mean a geographic
+# region. A "BU Head" therefore heads one entire business line across ALL its
+# regions — that's `business_head` below (scope="business"). A person who
+# heads just one region WITHIN a business (e.g. India - West, with Managers
+# and Reps beneath them) is a `regional_manager` (scope="region") — a
+# distinct, more junior tier, not a synonym for BU Head.
 ROLE_HIERARCHY: dict[str, dict] = {
     # Field roles — own data only
     "rep":            {"level": 10, "scope": "own"},
     "inside_sales":   {"level": 10, "scope": "own"},
     "pre_sales":      {"level": 10, "scope": "own"},
     # Management roles
-    "manager":        {"level": 20, "scope": "team"},
-    "hr":             {"level": 25, "scope": "hr"},
-    "finance":        {"level": 25, "scope": "finance"},
-    "bu_head":        {"level": 30, "scope": "bu"},         # legacy — maps to business scope
-    # business_head == practice_head (same level, same scope)
+    "manager":            {"level": 20, "scope": "team"},
+    "hr":                 {"level": 25, "scope": "hr"},
+    "finance":            {"level": 25, "scope": "finance"},
+    "regional_manager":   {"level": 30, "scope": "region"},   # heads ONE region within ONE business
+    # DEPRECATED — old name for regional_manager, kept only so any existing
+    # data/integrations using this string keep working. Do not assign this
+    # role to new users; use "regional_manager" instead.
+    "bu_head":            {"level": 30, "scope": "region"},
+    # business_head == practice_head (same level, same scope) — heads ONE
+    # business line (fluidpro/fluidprint/floxtax/hooks) across ALL its regions.
     "business_head":  {"level": 40, "scope": "business"},
     "practice_head":  {"level": 40, "scope": "business"},   # alias for business_head
     # COO — above business_head, sees ALL businesses (fluidPro, fluidPrint, floxtax, hooks),
@@ -252,7 +264,7 @@ class PipelineDeal(Base):
 
 class OrgRole(Base):
     """Additive org-hierarchy layer. Independent of `users.role` (rep|inside_sales|
-    manager|bu_head), which stays untouched for existing auth/require_role() checks."""
+    manager|regional_manager|business_head), which stays untouched for existing auth/require_role() checks."""
     __tablename__ = "org_roles"
     role_key:         Mapped[str] = mapped_column(String(30), primary_key=True)
     display_name:     Mapped[str] = mapped_column(String(100), nullable=False)

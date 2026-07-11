@@ -13,10 +13,11 @@ from app.services.audit_service import audit
 
 router = APIRouter()
 
-# v3 roles — all valid values
+# v3 roles — all valid values ("bu_head" kept only for backward compat with
+# any existing data; new assignments should use "regional_manager")
 V3_ROLES = Literal[
     "rep", "inside_sales", "pre_sales", "manager",
-    "bu_head", "business_head", "coo", "hr", "finance", "ceo", "super_admin"
+    "regional_manager", "bu_head", "business_head", "coo", "hr", "finance", "ceo", "super_admin"
 ]
 BUSINESSES = Literal["fluidpro", "fluidprint", "floxtax", "hooks"]
 
@@ -278,9 +279,10 @@ async def list_regions():
 async def get_me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from app.services.permission_service import resolve_direct_report_ids
     d = _serialize(user)
-    # Dual-hat support: a business_head/bu_head/ceo who ALSO personally line-manages
-    # a team gets this flag so the frontend can show a "My Team" toggle, without
-    # needing a separate 'manager' role. See permission_service.resolve_direct_report_ids.
+    # Dual-hat support: a business_head/regional_manager/ceo who ALSO personally
+    # line-manages a team gets this flag so the frontend can show a "My Team"
+    # toggle, without needing a separate 'manager' role. See
+    # permission_service.resolve_direct_report_ids.
     direct_reports = await resolve_direct_report_ids(db, user)
     d["has_direct_reports"] = len(direct_reports) > 0
     d["direct_report_count"] = len(direct_reports)

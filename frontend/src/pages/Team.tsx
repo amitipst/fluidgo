@@ -13,7 +13,7 @@ const V3_ROLES = [
   { key: 'inside_sales',  label: '📞 Inside Sales',           level: 10 },
   { key: 'pre_sales',     label: '🔧 Pre-Sales',              level: 10 },
   { key: 'manager',       label: '👔 Manager',                level: 20 },
-  { key: 'bu_head',       label: '🏢 BU Head',                level: 30 },
+  { key: 'regional_manager', label: '🗺️ Regional Manager',     level: 30 },
   { key: 'business_head', label: '🏭 Business Head',          level: 40 },
   { key: 'coo',           label: '🎯 COO',                     level: 45 },
   { key: 'hr',            label: '👥 HR',                     level: 25 },
@@ -46,7 +46,7 @@ export default function Team() {
   const { user } = useAuthStore()
   const qc = useQueryClient()
   const today = format(new Date(), 'yyyy-MM-dd')
-  const canManageUsers = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const canManageUsers = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const [showManage, setShowManage] = useState(false)
   const [showExited, setShowExited] = useState(false)
   const [form, setForm] = useState(emptyForm)
@@ -156,12 +156,12 @@ export default function Team() {
 
   const submittedToday = new Set(todayDSRs.map((d: any) => d.user_id))
 
-  const viewTitle = user?.role === 'bu_head'
-    ? `🏢 BU Head — ${user?.bu} BU`
+  const viewTitle = (user?.role === 'regional_manager' || user?.role === 'bu_head')
+    ? `🗺️ Regional Manager — ${user?.region || user?.bu}`
     : user?.role === 'inside_sales'
       ? '📞 Inside Sales View'
       : user?.role === 'manager'
-        ? `👥 Manager Dashboard — ${user?.bu} BU`
+        ? `👥 Manager Dashboard — ${user?.region || user?.bu}`
         : '👥 Team Dashboard'
 
   return (

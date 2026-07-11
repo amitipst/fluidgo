@@ -6,7 +6,7 @@ import { useAuthStore } from '@/store/authStore'
 interface Param { id?: string; name: string; weight_pct: number; metric_source: string; calc_type: string; sort_order: number }
 
 // Roles that can access Scoring Admin
-const SCORING_ROLES = ['bu_head', 'business_head', 'practice_head', 'ceo', 'super_admin']
+const SCORING_ROLES = ['regional_manager', 'bu_head', 'business_head', 'practice_head', 'ceo', 'super_admin']
 
 export default function ScoringAdmin() {
   const { user } = useAuthStore()

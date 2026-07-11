@@ -1,11 +1,11 @@
 """Incentive Schemes & Gamification router.
 
 Who can create schemes:
-  manager  → scope='team', within their own BU
-  bu_head  → scope='bu', for their entire BU
-  ceo/super_admin → any BU, any business
+  manager           → scope='team', within their own region
+  regional_manager   → scope='region', for their entire region (formerly mislabeled 'bu_head')
+  ceo/super_admin    → any region, any business
 
-Reps see their own progress. Leaderboard visible to all in the BU.
+Reps see their own progress. Leaderboard visible to all in the region.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel

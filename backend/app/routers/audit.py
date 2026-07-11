@@ -21,8 +21,8 @@ async def list_audit_logs(
     actor: User = Depends(require_level(20))  # manager+
 ):
     """Return audit log entries filtered by the actor's scope.
-    BU Head can see their whole BU. Manager sees their team only."""
-    bu = actor.bu if actor.role in ("manager", "bu_head") else None
+    Business Head sees their whole business. Regional Manager/Manager see their own BU/team only."""
+    bu = actor.bu if actor.role in ("manager", "regional_manager", "bu_head") else None
     # CEO/super_admin see everything (bu=None means no filter)
     if actor.role in ("ceo", "super_admin"):
         bu = None

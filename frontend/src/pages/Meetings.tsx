@@ -57,7 +57,7 @@ export default function Meetings() {
   const [addErr, setAddErr] = useState('')
   const [scope, setScope] = useState<'mine' | 'team'>('mine')
 
-  const isManager = ['manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
+  const isManager = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
 
   const { data: meetings = [], isLoading } = useQuery({
     queryKey: ['meetings', scope],

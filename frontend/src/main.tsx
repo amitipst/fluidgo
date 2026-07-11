@@ -37,7 +37,7 @@ function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?
   return <>{children}</>
 }
 
-const MANAGER_ROLES = ['manager','bu_head','business_head','ceo','super_admin']
+const MANAGER_ROLES = ['manager','regional_manager','bu_head','business_head','ceo','super_admin']
 const MGMT_FINANCE  = [...MANAGER_ROLES, 'hr', 'finance']
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -84,7 +84,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               } />
               {/* Admin */}
               <Route path="scoring-admin" element={
-                <ProtectedRoute roles={['bu_head','business_head','practice_head','ceo','super_admin']}>
+                <ProtectedRoute roles={['regional_manager','bu_head','business_head','practice_head','ceo','super_admin']}>
                   <ScoringAdmin />
                 </ProtectedRoute>
               } />

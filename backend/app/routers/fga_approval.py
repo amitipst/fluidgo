@@ -11,7 +11,10 @@ Lifecycle:
 
 All state transitions are audit-logged in fga_approval_log.
 
-RBAC: business_head == bu_head == practice_head (same scope level).
+RBAC: business_head == practice_head (same scope level, one whole business
+line). regional_manager (formerly mislabeled "bu_head") is a distinct, more
+junior tier — one region within one business — and can freeze/act only for
+their own region, via resolve_visible_user_ids' region scoping.
 super_admin bypasses everything.
 """
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,12 +33,12 @@ from app.repositories import scoring_repo
 router = APIRouter()
 
 # Roles that can trigger freeze / act as BU-level approver
-BU_LEVEL_ROLES = {"bu_head", "business_head", "practice_head", "ceo", "super_admin"}
+BU_LEVEL_ROLES = {"regional_manager", "bu_head", "business_head", "practice_head", "ceo", "super_admin"}
 
 def _require_bu_level(user: User = Depends(get_current_user)) -> User:
     if user.role in BU_LEVEL_ROLES or user.role == "super_admin":
         return user
-    raise HTTPException(403, f"Role '{user.role}' cannot perform this action. Requires BU Head level or above.")
+    raise HTTPException(403, f"Role '{user.role}' cannot perform this action. Requires Regional Manager level or above.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pydantic schemas
@@ -126,9 +129,11 @@ async def freeze_period(body: FreezeRequest, db: AsyncSession = Depends(get_db),
 async def list_pending(period: str, db: AsyncSession = Depends(get_db),
                        user: User = Depends(get_current_user)):
     """Return all scoring results needing action from the current user's role.
-    business_head/bu_head/practice_head see everything in their scope across
-    the FULL pipeline (pending_manager → pending_vp → disputed) so they always
-    have visibility, matching the "BU Head can see everything" requirement."""
+    business_head/practice_head see everything across their whole business;
+    regional_manager sees everything within their own region — both get the
+    FULL pipeline (pending_manager → pending_vp → disputed) so they always
+    have visibility, matching the "BU-level roles see everything in scope"
+    requirement."""
     from app.models import ScoringResult
 
     if user.role == "super_admin":

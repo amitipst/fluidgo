@@ -89,7 +89,7 @@ async def rep_analytics(user_id: str, scope: str = "auto",
 
 @router.get("/team")
 async def team_analytics(include_inactive: bool = False, db: AsyncSession = Depends(get_db),
-                         user: User = Depends(require_role("manager", "bu_head", "business_head", "inside_sales", "ceo", "super_admin"))):
+                         user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "inside_sales", "ceo", "super_admin"))):
     """Team performance matrix — scoped by role/BU automatically.
     Exited reps (is_active=False) excluded by default; include_inactive=true shows them."""
     # Use permission_service for consistent scope resolution across all roles
@@ -150,7 +150,7 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
         yr, mo = today.year, today.month
     month_end = date(yr, mo, monthrange(yr, mo)[1])
 
-    if user.role in ("manager", "bu_head", "business_head", "ceo", "super_admin", "hr"):
+    if user.role in ("manager", "regional_manager", "bu_head", "business_head", "ceo", "super_admin", "hr"):
         # Use permission_service — handles business_head (all regions), manager (team), etc.
         visible_ids = await resolve_visible_user_ids(db, user)
         q = select(User).where(User.is_active == True)
@@ -240,7 +240,7 @@ async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(ge
 
 @router.get("/revenue")
 async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
-                            user: User = Depends(require_role("manager", "bu_head", "business_head", "ceo", "super_admin", "finance"))):
+                            user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "ceo", "super_admin", "finance"))):
     """Revenue Intelligence — scoped by permission_service (works for all roles)."""
     today = date.today()
     p = period or f"{today.year}-{today.month:02d}"
@@ -343,7 +343,7 @@ async def list_revenue_targets(
     period: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role(
-        "manager", "business_head", "coo", "ceo", "super_admin", "hr", "finance"
+        "manager", "regional_manager", "bu_head", "business_head", "coo", "ceo", "super_admin", "hr", "finance"
     ))
 ):
     """List both revenue and order-booking targets for the caller's visible
@@ -561,7 +561,7 @@ async def get_team_targets(
     mode: str = "monthly",          # monthly | quarterly | yearly
     fy: Optional[int] = None,       # required for quarterly/yearly (e.g. 2026 = FY2026-27)
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_role("manager", "business_head", "coo", "ceo", "super_admin"))
+    user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "coo", "ceo", "super_admin"))
 ):
     """Returns all team members with BOTH their revenue and order-booking
     targets. Used by the Target Editor UI.

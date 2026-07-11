@@ -216,14 +216,14 @@ export default function DSRHistory() {
   const today = new Date()
   const [month, setMonth] = useState(format(today, 'yyyy-MM'))
   const [viewMode, setViewMode] = useState<'mine' | 'team'>('mine')
-  // Dual-hat: a business_head/bu_head/ceo who ALSO personally line-manages a
+  // Dual-hat: a business_head/regional_manager/ceo who ALSO personally line-manages a
   // small team (rather than delegating to a separate 'manager' role account)
   // can narrow "Team Approval" down to just their direct reports. Meaningless
   // for plain 'manager' role, whose scope is already direct-reports-only.
   const [teamScope, setTeamScope] = useState<'all' | 'direct'>('all')
   const canNarrowToDirectTeam = user?.has_direct_reports && user?.role !== 'manager'
 
-  const isManager = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const isManager = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
 
   // My DSR history
   const { data: myHistory = [], isLoading: myLoading } = useQuery({

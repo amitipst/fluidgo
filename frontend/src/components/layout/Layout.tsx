@@ -91,10 +91,10 @@ export default function Layout() {
   const { user, clearAuth } = useAuthStore()
   const navigate = useNavigate()
 
-  const canSeeTeam    = ['manager','bu_head','inside_sales','business_head','ceo','super_admin'].includes(user?.role ?? '')
-  const canSeeRevenue = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
-  const canSeeFGA     = ['manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
-  const canSeeScoring = ['bu_head','business_head','practice_head','ceo','super_admin'].includes(user?.role ?? '')
+  const canSeeTeam    = ['manager','regional_manager','bu_head','inside_sales','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const canSeeFGA     = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
+  const canSeeScoring = ['regional_manager','bu_head','business_head','practice_head','ceo','super_admin'].includes(user?.role ?? '')
 
   const isFieldRole = FIELD_ROLES.includes(user?.role ?? '')
 
@@ -109,7 +109,7 @@ export default function Layout() {
 
   const ROLE_LABELS: Record<string, string> = {
     rep: 'Sales Rep', inside_sales: 'Inside Sales', pre_sales: 'Pre-Sales',
-    manager: 'Manager', bu_head: 'BU Head', business_head: 'Business Head',
+    manager: 'Manager', regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
     practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', ceo: 'CEO',
     super_admin: 'Super Admin',
   }

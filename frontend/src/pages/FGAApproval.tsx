@@ -260,8 +260,10 @@ export default function FGAApproval() {
   const [freezing, setFreezing] = useState(false)
   const [freezeMsg, setFreezeMsg] = useState('')
 
-  // business_head == bu_head == practice_head (lean RBAC)
-  const BU_LEVEL  = ['bu_head','business_head','practice_head','ceo','super_admin']
+  // business_head == practice_head (whole business); regional_manager (formerly
+  // mislabeled 'bu_head') is a distinct, region-scoped tier — see BU_LEVEL_ROLES
+  // in the backend fga_approval.py router.
+  const BU_LEVEL  = ['regional_manager','bu_head','business_head','practice_head','ceo','super_admin']
   const isBUHead  = BU_LEVEL.includes(user?.role ?? '')
   const isManager = ['manager', ...BU_LEVEL].includes(user?.role ?? '')
 

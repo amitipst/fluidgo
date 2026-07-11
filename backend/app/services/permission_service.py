@@ -1,13 +1,13 @@
 """Data-scope resolver — v3.1 with region-based org structure.
 
 Org hierarchy for fluidPro:
-  business_head (Amit) → sees ALL regions within fluidPro globally
-  bu_head → sees own BU/region only (e.g. a regional head hired per-BU)
+  business_head (Amit) → sees ALL regions within fluidPro globally (BU = business line)
+  regional_manager → sees own region only (e.g. a regional head hired per-region; "bu_head" is the deprecated old name for this role)
   manager → sees own team (direct reports via manager_id)
   rep / pre_sales → own data only
 
 DUAL ROLE: any of the above can ALSO be personally assigned as someone's
-manager_id — independent of region/bu/business — e.g. a bu_head of West who
+manager_id — independent of region/business — e.g. a regional_manager of West who
 additionally line-manages one rep in North, or a business_head who directly
 manages a small team rather than delegating to a separate manager account.
 resolve_visible_user_ids() unions those personal direct reports into every
@@ -96,10 +96,15 @@ async def resolve_visible_user_ids(
         result = await db.execute(q)
         return await _with_dual_role([row[0] for row in result.all()])
 
-    # BU Head (legacy) — users in same bu + business
-    if scope == "bu":
+    # Regional Manager (region scope="region"; "bu_head" is the deprecated old
+    # name for this same role — see ROLE_HIERARCHY). Heads ONE region within
+    # ONE business — e.g. India - West within fluidPro — with Managers and
+    # Reps beneath them. Deliberately scoped by the canonical `region` column,
+    # NOT the legacy `bu` column (which was just a region-derived string and
+    # is kept only for backward compat elsewhere, never for scope decisions).
+    if scope == "region":
         q = select(User.id).where(
-            User.bu == current_user.bu,
+            User.region == current_user.region,
             User.business == current_user.business,
             User.is_active == True
         )

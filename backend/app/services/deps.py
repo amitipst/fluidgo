@@ -2,19 +2,22 @@
 RBAC: Lean and clean role hierarchy for fluidGo.
 
 Simplified from 10 roles to a clear 6-tier system:
-  Level 99: super_admin   — full system access, health dashboard, audit logs
-  Level 50: ceo           — all businesses, all regions
-  Level 40: business_head — all regions within one business (≡ practice_head)
-  Level 30: bu_head       — legacy alias for business_head (same access)
-  Level 20: manager       — own team via manager_id
-  Level 25: hr            — all users for FGA, no sales data
-  Level 25: finance       — approved FGA export only
-  Level 10: rep           — own data only
-  Level 10: inside_sales  — own data only
-  Level 10: pre_sales     — own data only
+  Level 99: super_admin     — full system access, health dashboard, audit logs
+  Level 50: ceo             — all businesses, all regions
+  Level 40: business_head   — all regions within ONE business line (≡ practice_head)
+  Level 30: regional_manager— ONE region within ONE business ("bu_head" = deprecated old name for this role)
+  Level 20: manager         — own team via manager_id
+  Level 25: hr              — all users for FGA, no sales data
+  Level 25: finance         — approved FGA export only
+  Level 10: rep             — own data only
+  Level 10: inside_sales    — own data only
+  Level 10: pre_sales       — own data only
 
-business_head == practice_head (same level 40, same scope)
-bu_head is kept as alias → maps to level 30 for backward compat
+business_head == practice_head (same level 40, same scope) — a BU Head, where
+"BU" means a business line (fluidpro/fluidprint/floxtax/hooks), not a region.
+regional_manager is a genuinely lower, narrower tier (one region, not the
+whole business) — NOT an alias for business_head. "bu_head" is kept in
+ROLE_HIERARCHY purely for backward compatibility with any existing data.
 """
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -33,7 +36,7 @@ from app.services.auth_service import decode_token
 bearer = HTTPBearer(auto_error=False)
 
 # Roles that can access management/admin features
-MANAGER_ROLES  = {"manager", "bu_head", "business_head", "practice_head", "ceo", "super_admin"}
+MANAGER_ROLES  = {"manager", "regional_manager", "bu_head", "business_head", "practice_head", "ceo", "super_admin"}
 FIELD_ROLES    = {"rep", "inside_sales", "pre_sales"}
 ALL_ROLES      = MANAGER_ROLES | FIELD_ROLES | {"hr", "finance"}
 
@@ -74,7 +77,8 @@ def require_role(*roles: str):
     async def checker(user: User = Depends(get_current_user)) -> User:
         if user.role == "super_admin":
             return user  # super_admin bypasses all role checks
-        # Normalize: practice_head == business_head, bu_head >= 30
+        # Normalize: practice_head == business_head. regional_manager/bu_head
+        # are their own distinct level-30 tier, not normalized to anything.
         effective = user.role
         if user.role == "practice_head":
             effective = "business_head"

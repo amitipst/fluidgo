@@ -3,7 +3,7 @@ import { APP_VERSION, APP_BUILD_DATE } from '@/version'
 
 // Role tiers for showing/hiding sections
 const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
-const MANAGER_ROLES = ['manager', 'bu_head', 'business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
+const MANAGER_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
 
 function Section({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {
   return (

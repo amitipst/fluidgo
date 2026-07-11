@@ -217,7 +217,7 @@ export default function Gamification() {
   const [period, setPeriod] = useState(currentPeriod)
   const [showCreate, setShowCreate] = useState(false)
 
-  const isManager = ['manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const isManager = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const isRep = !isManager
 
   const { data: schemes = [] } = useQuery({
