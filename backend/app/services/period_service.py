@@ -41,6 +41,21 @@ def quarter_bounds(q: int, fy_start_year: int):
     return date(cal_year, start_m, start_d), date(cal_year, end_m, end_d)
 
 
+def months_in_quarter(q: int, fy_start_year: int):
+    """Returns the 3 (year, month) tuples that make up an India FY quarter.
+    Q4 correctly rolls into the next calendar year (Jan-Mar)."""
+    start, end = quarter_bounds(q, fy_start_year)
+    months = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        months.append((y, m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months
+
+
 def current_quarter(d: date) -> int:
     """Returns India FY quarter (1-4) for a date."""
     m = d.month

@@ -225,6 +225,163 @@ function TargetEditor({ period }: { period: string }) {
   )
 }
 
+// ── Quarterly / Yearly grid editor ─────────────────────────────────────────────
+// One screen: Q1-Q4 per member, FY total auto-computed, "Save All" bulk-writes
+// the underlying monthly rows in one call — never a separate quarterly/yearly
+// literal period key, so this can never drift from what Analytics shows.
+function QuarterlyTargetEditor({ fyYear, activeQuarter }: { fyYear: number; activeQuarter?: number }) {
+  const qc = useQueryClient()
+  const [targetType, setTargetType] = useState<'revenue' | 'order_booking'>('revenue')
+  const [edits, setEdits] = useState<Record<string, { q1: string; q2: string; q3: string; q4: string }>>({})
+  const [growthPct, setGrowthPct] = useState(15)
+  const [saved, setSaved] = useState(false)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['team-targets-fy', fyYear],
+    queryFn: () => api.get('/analytics/revenue/team-targets', {
+      params: { mode: 'yearly', fy: fyYear }
+    }).then(r => r.data),
+  })
+
+  const rollover = useMutation({
+    mutationFn: () => api.get('/analytics/revenue/targets/rollover-preview', {
+      params: { fy: fyYear, growth_pct: growthPct, target_type: targetType }
+    }).then(r => r.data),
+    onSuccess: (preview: any) => {
+      const next: typeof edits = {}
+      preview.members.forEach((m: any) => {
+        next[m.user_id] = { q1: String(m.q1), q2: String(m.q2), q3: String(m.q3), q4: String(m.q4) }
+      })
+      setEdits(e => ({ ...e, ...next }))
+    },
+    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not load last FY targets'),
+  })
+
+  const saveAll = useMutation({
+    mutationFn: () => {
+      const rows = Object.entries(edits).map(([user_id, v]) => ({
+        user_id,
+        q1: parseFloat(v.q1) || 0, q2: parseFloat(v.q2) || 0,
+        q3: parseFloat(v.q3) || 0, q4: parseFloat(v.q4) || 0,
+      }))
+      return api.post('/analytics/revenue/targets/quarterly', { fy: fyYear, target_type: targetType, rows })
+    },
+    onSuccess: () => {
+      setSaved(true); setEdits({})
+      setTimeout(() => setSaved(false), 2500)
+      qc.invalidateQueries({ queryKey: ['team-targets-fy'] })
+      qc.invalidateQueries({ queryKey: ['revenue-analytics'] })
+      qc.invalidateQueries({ queryKey: ['performance'] })
+    },
+    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not save targets'),
+  })
+
+  if (isLoading) return <div className="skeleton h-40 rounded-2xl" />
+  const members: any[] = data?.members ?? []
+  const dirtyCount = Object.keys(edits).length
+
+  const cellValue = (m: any, q: 'q1'|'q2'|'q3'|'q4') =>
+    edits[m.user_id]?.[q] ?? String(m[targetType]?.[q] ?? 0)
+
+  const setCell = (m: any, q: 'q1'|'q2'|'q3'|'q4', val: string) =>
+    setEdits(prev => {
+      const base = prev[m.user_id] ?? {
+        q1: String(m[targetType]?.q1 ?? 0), q2: String(m[targetType]?.q2 ?? 0),
+        q3: String(m[targetType]?.q3 ?? 0), q4: String(m[targetType]?.q4 ?? 0),
+      }
+      return { ...prev, [m.user_id]: { ...base, [q]: val } }
+    })
+
+  const rowFyTotal = (m: any) => (['q1','q2','q3','q4'] as const)
+    .reduce((s, q) => s + (parseFloat(cellValue(m, q)) || 0), 0)
+  const grandFyTotal = members.reduce((s, m) => s + rowFyTotal(m), 0)
+
+  return (
+    <div className="card mt-6">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h3 className="font-bold text-wep-text">🎯 {data?.fy_label} — Quarterly Targets</h3>
+        <div className="flex rounded-lg overflow-hidden border border-wep-border text-xs">
+          {(['revenue','order_booking'] as const).map(t => (
+            <button key={t} onClick={() => setTargetType(t)}
+              className={`px-3 py-1.5 font-semibold ${targetType===t ? 'text-white' : 'bg-white text-wep-muted'}`}
+              style={targetType===t ? { background: t==='revenue' ? '#F0115E' : '#0D9488' } : {}}>
+              {t === 'revenue' ? 'Revenue' : 'Order Booking'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap text-xs">
+        <span className="text-wep-muted">🔄 Pre-fill from FY {fyYear-1}-{String(fyYear).slice(2)} with growth</span>
+        <input type="number" className="form-input py-1 w-16 text-center"
+          value={growthPct} onChange={e => setGrowthPct(Number(e.target.value))} />
+        <span className="text-wep-muted">%</span>
+        <button onClick={() => rollover.mutate()} disabled={rollover.isPending} className="btn-outline py-1 px-2.5 text-xs">
+          {rollover.isPending ? 'Loading…' : 'Pre-fill'}
+        </button>
+        {dirtyCount > 0 && (
+          <span className="text-[11px] font-semibold" style={{ color: '#D97706' }}>
+            {dirtyCount} member(s) edited — not yet saved
+          </span>
+        )}
+      </div>
+
+      <div className="overflow-x-auto -mx-1">
+        <table className="w-full text-sm min-w-[640px]">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-wep-muted">
+              <th className="text-left px-1 pb-2">Member</th>
+              <th className="text-right px-1 pb-2">Q1 (Apr–Jun)</th>
+              <th className="text-right px-1 pb-2">Q2 (Jul–Sep)</th>
+              <th className="text-right px-1 pb-2">Q3 (Oct–Dec)</th>
+              <th className="text-right px-1 pb-2">Q4 (Jan–Mar)</th>
+              <th className="text-right px-1 pb-2">FY Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map(m => (
+              <tr key={m.user_id} className="border-t border-wep-border/60">
+                <td className="px-1 py-2">
+                  <div className="font-semibold text-wep-text truncate max-w-[140px]">{m.name}</div>
+                  <div className="text-[10px] text-wep-muted">{m.region}</div>
+                </td>
+                {(['q1','q2','q3','q4'] as const).map((q, i) => (
+                  <td key={q} className="px-1 py-2">
+                    <input type="number" min="0" step="10000"
+                      className="form-input py-1 text-sm text-right w-24"
+                      style={activeQuarter === i+1 ? { borderColor: '#F0115E', borderWidth: 2 } : {}}
+                      value={cellValue(m, q)}
+                      onChange={e => setCell(m, q, e.target.value)} />
+                  </td>
+                ))}
+                <td className="px-1 py-2 text-right font-bold text-wep-text">{inr(rowFyTotal(m))}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-wep-border">
+              <td className="px-1 py-2 font-bold text-wep-text">FY Total (all members)</td>
+              <td colSpan={4}></td>
+              <td className="px-1 py-2 text-right font-black" style={{ color: targetType==='revenue' ? '#F0115E' : '#0D9488' }}>
+                {inr(grandFyTotal)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div className="flex justify-end mt-4">
+        <button disabled={dirtyCount===0 || saveAll.isPending}
+          onClick={() => saveAll.mutate()}
+          className="text-sm font-bold px-4 py-2 rounded-xl text-white disabled:opacity-40"
+          style={{ background: 'linear-gradient(135deg,#F0115E,#C2005A)' }}>
+          {saveAll.isPending ? 'Saving…' : saved ? '✅ Saved' : `Save All${dirtyCount ? ` (${dirtyCount})` : ''}`}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function RevenueIntelligence() {
   const { user } = useAuthStore()
@@ -385,11 +542,9 @@ export default function RevenueIntelligence() {
 
       {/* Target editor */}
       {showTargets && canEditTargets && (
-        <TargetEditor period={
-          mode === 'quarterly' ? `${fyYear}-Q${qtr}`
-          : mode === 'yearly'  ? `${fyYear}`
-          : period
-        } />
+        mode === 'monthly'
+          ? <TargetEditor period={period} />
+          : <QuarterlyTargetEditor fyYear={fyYear} activeQuarter={mode === 'quarterly' ? qtr : undefined} />
       )}
     </div>
   )

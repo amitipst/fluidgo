@@ -558,14 +558,23 @@ async def performance_comparison(
 @router.get("/revenue/team-targets")
 async def get_team_targets(
     period: Optional[str] = None,
+    mode: str = "monthly",          # monthly | quarterly | yearly
+    fy: Optional[int] = None,       # required for quarterly/yearly (e.g. 2026 = FY2026-27)
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("manager", "business_head", "coo", "ceo", "super_admin"))
 ):
     """Returns all team members with BOTH their revenue and order-booking
-    targets for a period. Used by the Target Editor UI."""
+    targets. Used by the Target Editor UI.
+
+    - mode=monthly (default): same as before, exact period match e.g. "2026-07".
+    - mode=quarterly: returns q1..q4 (ACTUAL monthly-summed values, always in
+      sync with what Analytics/Performance shows) plus fy_total, for the given fy.
+    - mode=yearly: same shape as quarterly (full FY grid) so one screen can
+      drive both the single-quarter editor and the FY rollover wizard.
+    """
     from app.services.permission_service import resolve_visible_user_ids
+    from app.services.period_service import months_in_quarter, get_india_fy
     today = date.today()
-    p = period or f"{today.year}-{today.month:02d}"
 
     visible_ids = await resolve_visible_user_ids(db, user)
     q = select(User).where(
@@ -575,12 +584,60 @@ async def get_team_targets(
     if visible_ids is not None:
         q = q.where(User.id.in_(visible_ids))
     team = (await db.execute(q)).scalars().all()
+    team_ids = [u.id for u in team]
 
-    # Build {user_id: {revenue: x, order_booking: y}}
+    if mode in ("quarterly", "yearly"):
+        fy_yr = fy or get_india_fy(today)
+        # Pull every monthly target row for this FY in one query, then bucket
+        # it into quarters in Python — always reflects the true monthly sum,
+        # so the editor can never drift from what Analytics displays.
+        fy_periods = [f"{y}-{m:02d}" for q_ in (1, 2, 3, 4) for (y, m) in months_in_quarter(q_, fy_yr)]
+        rows = (await db.execute(
+            select(RevenueTarget).where(
+                RevenueTarget.user_id.in_(team_ids),
+                RevenueTarget.period.in_(fy_periods)
+            )
+        )).scalars().all()
+        month_to_q = {}
+        for q_ in (1, 2, 3, 4):
+            for (y, m) in months_in_quarter(q_, fy_yr):
+                month_to_q[f"{y}-{m:02d}"] = q_
+
+        # {user_id: {revenue: {1:x,2:x,3:x,4:x}, order_booking: {...}}}
+        buckets: dict = {}
+        for r in rows:
+            uid = str(r.user_id)
+            buckets.setdefault(uid, {"revenue": {1: 0, 2: 0, 3: 0, 4: 0},
+                                      "order_booking": {1: 0, 2: 0, 3: 0, 4: 0}})
+            q_num = month_to_q.get(r.period)
+            if q_num:
+                buckets[uid][r.target_type][q_num] += float(r.target_amount)
+
+        def member_row(u):
+            b = buckets.get(str(u.id), {"revenue": {1: 0, 2: 0, 3: 0, 4: 0},
+                                          "order_booking": {1: 0, 2: 0, 3: 0, 4: 0}})
+            return {
+                "user_id": str(u.id), "name": u.name, "email": u.email,
+                "role": u.role, "region": getattr(u, "region", None) or u.bu,
+                "revenue":       {"q1": b["revenue"][1], "q2": b["revenue"][2],
+                                   "q3": b["revenue"][3], "q4": b["revenue"][4],
+                                   "fy_total": sum(b["revenue"].values())},
+                "order_booking": {"q1": b["order_booking"][1], "q2": b["order_booking"][2],
+                                   "q3": b["order_booking"][3], "q4": b["order_booking"][4],
+                                   "fy_total": sum(b["order_booking"].values())},
+            }
+
+        return {
+            "mode": mode, "fy": fy_yr, "fy_label": f"FY {fy_yr}-{str(fy_yr+1)[2:]}",
+            "members": [member_row(u) for u in sorted(team, key=lambda x: (x.region or "", x.name))]
+        }
+
+    # ── monthly mode (original behaviour, unchanged) ──────────────────────
+    p = period or f"{today.year}-{today.month:02d}"
     targets: dict = {}
     for t in (await db.execute(
         select(RevenueTarget).where(
-            RevenueTarget.user_id.in_([u.id for u in team]),
+            RevenueTarget.user_id.in_(team_ids),
             RevenueTarget.period == p
         )
     )).scalars().all():
@@ -589,6 +646,7 @@ async def get_team_targets(
         targets[uid][t.target_type] = float(t.target_amount)
 
     return {
+        "mode": "monthly",
         "period": p,
         "members": [
             {
@@ -603,6 +661,150 @@ async def get_team_targets(
             }
             for u in sorted(team, key=lambda x: (x.region or "", x.name))
         ]
+    }
+
+
+class QuarterlyTargetRow(BaseModel):
+    user_id: str
+    q1: float = 0
+    q2: float = 0
+    q3: float = 0
+    q4: float = 0
+
+class QuarterlyTargetsBulkIn(BaseModel):
+    fy: int                              # e.g. 2026 for FY 2026-27
+    target_type: str = "revenue"         # revenue | order_booking
+    rows: list[QuarterlyTargetRow]
+    quarters: Optional[list[int]] = None # which quarters to touch; default all 4
+
+
+@router.post("/revenue/targets/quarterly")
+async def set_quarterly_targets_bulk(
+    body: QuarterlyTargetsBulkIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("business_head", "coo", "ceo", "super_admin"))
+):
+    """Set Q1-Q4 targets for any number of team members in ONE save.
+    Each quarter total is split evenly across its 3 months and written as
+    normal monthly revenue_targets rows — the SAME rows Analytics/Performance
+    already sums over, so there is never a separate 'quarterly' or 'yearly'
+    literal period key to drift out of sync.
+
+    Pass `quarters` to only touch specific quarters (e.g. mid-year top-up);
+    omit it to set/replace the full FY in one call (typical FY rollover use)."""
+    from app.services.permission_service import can_user_edit_target
+    from app.services.period_service import months_in_quarter
+    from fastapi import HTTPException
+
+    if body.target_type not in ("revenue", "order_booking"):
+        raise HTTPException(400, "target_type must be 'revenue' or 'order_booking'")
+    quarters_to_set = body.quarters or [1, 2, 3, 4]
+    for q_num in quarters_to_set:
+        if q_num not in (1, 2, 3, 4):
+            raise HTTPException(400, "quarters must be within 1-4")
+
+    updated_users = []
+    for row in body.rows:
+        if not await can_user_edit_target(db, user, row.user_id):
+            raise HTTPException(403, f"You cannot set targets for user {row.user_id}")
+        quarter_amounts = {1: row.q1, 2: row.q2, 3: row.q3, 4: row.q4}
+        uid = uuid.UUID(row.user_id)
+        for q_num in quarters_to_set:
+            months = months_in_quarter(q_num, body.fy)
+            per_month = round(quarter_amounts[q_num] / len(months), 2) if months else 0
+            for (yr, mo) in months:
+                period_str = f"{yr}-{mo:02d}"
+                existing = (await db.execute(
+                    select(RevenueTarget).where(
+                        RevenueTarget.user_id == uid,
+                        RevenueTarget.period == period_str,
+                        RevenueTarget.target_type == body.target_type
+                    )
+                )).scalar_one_or_none()
+                if existing:
+                    existing.target_amount = per_month
+                else:
+                    db.add(RevenueTarget(
+                        user_id=uid, period=period_str,
+                        target_type=body.target_type, target_amount=per_month
+                    ))
+        updated_users.append(row.user_id)
+
+    await db.commit()
+    fy_totals = {row.user_id: round(row.q1 + row.q2 + row.q3 + row.q4, 2) for row in body.rows}
+    return {
+        "fy": body.fy, "target_type": body.target_type,
+        "quarters_updated": quarters_to_set,
+        "users_updated": len(updated_users),
+        "fy_totals": fy_totals,
+        "updated_by": user.email,
+    }
+
+
+@router.get("/revenue/targets/rollover-preview")
+async def rollover_preview(
+    fy: int,                             # target FY to pre-fill, e.g. 2027 for FY2027-28
+    growth_pct: float = 15.0,
+    target_type: str = "revenue",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("business_head", "coo", "ceo", "super_admin"))
+):
+    """Suggests CFY quarterly targets by taking each member's PFY (fy-1)
+    quarterly actual-target totals and applying growth_pct uplift.
+    Pure preview — writes nothing. The BU Head hand-tunes then saves via
+    POST /revenue/targets/quarterly."""
+    from app.services.permission_service import resolve_visible_user_ids
+    from app.services.period_service import months_in_quarter
+
+    visible_ids = await resolve_visible_user_ids(db, user)
+    q = select(User).where(
+        User.is_active == True,
+        User.role.in_(["rep", "inside_sales", "pre_sales", "manager"])
+    )
+    if visible_ids is not None:
+        q = q.where(User.id.in_(visible_ids))
+    team = (await db.execute(q)).scalars().all()
+    team_ids = [u.id for u in team]
+
+    pfy = fy - 1
+    pfy_periods = [f"{y}-{m:02d}" for q_ in (1, 2, 3, 4) for (y, m) in months_in_quarter(q_, pfy)]
+    month_to_q = {}
+    for q_ in (1, 2, 3, 4):
+        for (y, m) in months_in_quarter(q_, pfy):
+            month_to_q[f"{y}-{m:02d}"] = q_
+
+    rows = (await db.execute(
+        select(RevenueTarget).where(
+            RevenueTarget.user_id.in_(team_ids),
+            RevenueTarget.period.in_(pfy_periods),
+            RevenueTarget.target_type == target_type
+        )
+    )).scalars().all()
+
+    pfy_totals: dict = {}
+    for r in rows:
+        uid = str(r.user_id)
+        pfy_totals.setdefault(uid, {1: 0, 2: 0, 3: 0, 4: 0})
+        q_num = month_to_q.get(r.period)
+        if q_num:
+            pfy_totals[uid][q_num] += float(r.target_amount)
+
+    mult = 1 + (growth_pct / 100)
+    suggestions = []
+    for u in sorted(team, key=lambda x: (x.region or "", x.name)):
+        pfy_q = pfy_totals.get(str(u.id), {1: 0, 2: 0, 3: 0, 4: 0})
+        suggested = {k: round(v * mult, 2) for k, v in pfy_q.items()}
+        suggestions.append({
+            "user_id": str(u.id), "name": u.name, "region": getattr(u, "region", None) or u.bu,
+            "pfy_q1": pfy_q[1], "pfy_q2": pfy_q[2], "pfy_q3": pfy_q[3], "pfy_q4": pfy_q[4],
+            "pfy_total": round(sum(pfy_q.values()), 2),
+            "q1": suggested[1], "q2": suggested[2], "q3": suggested[3], "q4": suggested[4],
+            "fy_total": round(sum(suggested.values()), 2),
+        })
+
+    return {
+        "fy": fy, "pfy": pfy, "growth_pct": growth_pct, "target_type": target_type,
+        "members": suggestions,
     }
 
 
