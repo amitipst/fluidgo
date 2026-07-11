@@ -7,8 +7,10 @@ export type Role =
   | 'inside_sales'
   | 'pre_sales'
   | 'manager'
-  | 'bu_head'
+  | 'regional_manager'
+  | 'bu_head'          // deprecated — legacy alias for regional_manager, kept for backward compat
   | 'business_head'
+  | 'coo'
   | 'hr'
   | 'finance'
   | 'ceo'
