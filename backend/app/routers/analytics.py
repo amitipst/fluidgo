@@ -852,6 +852,24 @@ async def funnel_analytics(db: AsyncSession = Depends(get_db),
             PipelineDeal.stage == "closed_won"),
         PipelineDeal.user_id))).scalar() or 0
 
+    # CSG Phase 1 — hunting (net-new) vs farming (expansion/renewal, often
+    # sourced from Service Delivery signals) split of open pipeline.
+    hunting_value = (await db.execute(_scoped(
+        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+            PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
+            PipelineDeal.deal_type.isnot(None), PipelineDeal.deal_type != "farming"),
+        PipelineDeal.user_id))).scalar() or 0
+    farming_value = (await db.execute(_scoped(
+        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+            PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
+            PipelineDeal.deal_type == "farming"),
+        PipelineDeal.user_id))).scalar() or 0
+    farming_from_delivery = (await db.execute(_scoped(
+        select(func.count(PipelineDeal.id)).where(
+            PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
+            PipelineDeal.source == "service_delivery"),
+        PipelineDeal.user_id))).scalar() or 0
+
     def pct(n, d): return round(100 * n / d) if d else 0
 
     return {
@@ -868,4 +886,9 @@ async def funnel_analytics(db: AsyncSession = Depends(get_db),
         "overall_conversion": pct(deals_won, meetings_total),
         "open_pipeline_value": float(open_value),
         "won_value": float(won_value),
+        "hunting_vs_farming": {
+            "hunting_value": float(hunting_value),
+            "farming_value": float(farming_value),
+            "farming_from_service_delivery_count": farming_from_delivery,
+        },
     }

@@ -254,6 +254,19 @@ class PipelineDeal(Base):
     outcome_competitor:  Mapped[str]      = mapped_column(String(120), nullable=True)  # who won, if lost to competitor
     outcome_recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     outcome_ai_analysis: Mapped[str]      = mapped_column(Text, nullable=True)         # AI post-mortem (what went wrong / how to improve)
+    # ── Customer Success Governance (CSG) Phase 1 — hunting vs farming ────────
+    # deal_type distinguishes net-new pipeline (hunting) from expansion/renewal
+    # on an existing account (farming). source records who originated it —
+    # 'service_delivery' means it came from an SDM flagging a signal during
+    # delivery work (see DORDaily / account_service.get_or_create_account),
+    # not from a Sales rep prospecting. account_id is a soft reference (no FK
+    # constraint, consistent with manager_id/presales_owner_id elsewhere in
+    # this schema) — links this deal to the same persistent Account that
+    # Service Delivery's DOR entries reference, so farming signals and
+    # delivery reality sit on one timeline per customer.
+    deal_type:        Mapped[str]       = mapped_column(String(20), nullable=True, server_default="hunting")  # hunting | farming
+    source:           Mapped[str]       = mapped_column(String(20), nullable=True, server_default="sales")     # sales | service_delivery
+    account_id:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     # ── Contract / win-back ───────────────────────────────────────────────────
     # For won deals AND deals lost to a competitor on a fixed-term contract:
     # capture the term so we can resurface the account before the incumbent's
@@ -345,6 +358,7 @@ class DORDaily(Base):
     user_id:               Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     report_date:           Mapped[Date]      = mapped_column(Date, nullable=False)
     client_account:        Mapped[str]       = mapped_column(String(150), nullable=True)
+    account_id:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # soft ref → accounts.id, see Account
     status:                Mapped[str]       = mapped_column(String(20), default="on_track")  # on_track | at_risk | critical
     tickets_open_start:    Mapped[int]       = mapped_column(Integer, default=0)
     tickets_new:           Mapped[int]       = mapped_column(Integer, default=0)
@@ -359,6 +373,25 @@ class DORDaily(Base):
     resource_available:    Mapped[int]       = mapped_column(Integer, nullable=True)
     blockers_notes:        Mapped[str]       = mapped_column(Text, nullable=True)
     submitted_at:          Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+class Account(Base):
+    """CSG Phase 1 — the persistent customer identity that Sales pipeline
+    (hunting AND farming deals) and Service Delivery (DOR, and future
+    meetings/SIP/timeline) both anchor to, instead of each side tracking the
+    same customer as a disconnected free-text string. Deliberately minimal
+    for Phase 1 — no health score, no relationship owner workflow, no
+    timeline aggregation yet; those are Phase 3/4 (see CSG roadmap doc).
+    Looked up case-insensitively by (name, business) via
+    account_service.get_or_create_account() rather than created directly, so
+    "Team Aviation" and "team aviation india pvt ltd" don't silently split
+    into two accounts."""
+    __tablename__ = "accounts"
+    id:               Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name:             Mapped[str]       = mapped_column(String(255), nullable=False)
+    business:         Mapped[str]       = mapped_column(String(50), default="fluidpro")
+    region:           Mapped[str]       = mapped_column(String(100), nullable=True)
+    primary_owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # usually the Sales rep/manager who owns this account
+    created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class ScoringResult(Base):
     """Cached computed score per user/period — with full FGA approval workflow state."""

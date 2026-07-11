@@ -11,8 +11,9 @@ from datetime import date, datetime
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
-from app.models import User, DORDaily, role_level
+from app.models import User, DORDaily, PipelineDeal, role_level
 from app.services.deps import get_current_user, require_level
+from app.services.account_service import get_or_create_account
 
 router = APIRouter()
 
@@ -126,3 +127,48 @@ async def team_dor(month: Optional[str] = None, db: AsyncSession = Depends(get_d
         row["email"] = u.email if u else None
         out.append(row)
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CSG Phase 1 — farming signal. An SDM (or their manager) notices something in
+# a delivery conversation worth Sales following up on (expansion, renewal,
+# cross-sell) and flags it here. This creates a REAL PipelineDeal — deal_type
+# 'farming', source 'service_delivery' — on the shared Account, visible to
+# whoever it's assigned to like any other deal. No AI, no auto-detection;
+# that's Phase 5 once there's enough meeting/SIP history to train on. This is
+# the human-in-the-loop version of the same idea, shippable now.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class FlagOpportunityIn(BaseModel):
+    notes: str
+    potential_value: Optional[float] = None
+    assign_to_user_id: Optional[str] = None   # sales rep/manager to route it to; unassigned if omitted
+
+
+@router.post("/{dor_id}/flag-opportunity")
+async def flag_opportunity(dor_id: str, body: FlagOpportunityIn, db: AsyncSession = Depends(get_db),
+                           user: User = Depends(require_level(20))):
+    dor = (await db.execute(select(DORDaily).where(DORDaily.id == uuid.UUID(dor_id)))).scalar_one_or_none()
+    if not dor:
+        raise HTTPException(404, "DOR entry not found")
+    if not dor.client_account:
+        raise HTTPException(400, "This DOR entry has no client/account set — add one before flagging an opportunity")
+
+    sdm = (await db.execute(select(User).where(User.id == dor.user_id))).scalar_one_or_none()
+    account = await get_or_create_account(db, dor.client_account, business=(sdm.business if sdm else "fluidpro"))
+    dor.account_id = account.id
+
+    owner_id = uuid.UUID(body.assign_to_user_id) if body.assign_to_user_id else user.id
+    deal = PipelineDeal(
+        user_id=owner_id, company=account.name, stage="cold",
+        todays_update=f"Flagged from Service Delivery ({sdm.name if sdm else 'SDM'}, {dor.report_date}): {body.notes}",
+        deal_value=body.potential_value, account_id=account.id,
+        deal_type="farming", source="service_delivery",
+    )
+    db.add(deal)
+    await db.commit()
+    await db.refresh(deal)
+    return {
+        "deal_id": str(deal.id), "account_id": str(account.id), "account_name": account.name,
+        "assigned_to": str(owner_id), "deal_type": "farming", "source": "service_delivery",
+    }

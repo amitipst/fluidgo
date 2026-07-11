@@ -35,6 +35,10 @@ export default function DOREntry() {
   const qc = useQueryClient()
   const [form, setForm] = useState<any>(emptyForm)
   const [saved, setSaved] = useState(false)
+  const [showFlag, setShowFlag] = useState(false)
+  const [flagNotes, setFlagNotes] = useState('')
+  const [flagValue, setFlagValue] = useState('')
+  const [flagResult, setFlagResult] = useState<any>(null)
 
   const { data: history = [] } = useQuery({
     queryKey: ['dor-history'],
@@ -66,6 +70,17 @@ export default function DOREntry() {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
       qc.invalidateQueries({ queryKey: ['dor-history'] })
+    },
+  })
+
+  const flagOpportunity = useMutation({
+    mutationFn: () => api.post(`/dor/${form.id}/flag-opportunity`, {
+      notes: flagNotes,
+      potential_value: flagValue ? Number(flagValue) : null,
+    }),
+    onSuccess: (r: any) => {
+      setFlagResult(r.data)
+      setFlagNotes(''); setFlagValue('')
     },
   })
 
@@ -169,6 +184,40 @@ export default function DOREntry() {
           </button>
         </div>
       </div>
+
+      {form.id && (
+        <div className="card mt-4">
+          <button onClick={() => setShowFlag(v => !v)}
+            className="flex items-center justify-between w-full text-left">
+            <div>
+              <div className="font-semibold text-sm text-wep-navy">🎯 Flag as Opportunity for Sales</div>
+              <div className="text-xs text-wep-muted">Noticed an expansion, renewal, or cross-sell signal in this account? Route it to Sales as real pipeline.</div>
+            </div>
+            <span className="text-wep-muted">{showFlag ? '−' : '+'}</span>
+          </button>
+
+          {showFlag && (
+            <div className="mt-3 space-y-3">
+              <textarea rows={2} value={flagNotes} onChange={e => setFlagNotes(e.target.value)}
+                placeholder={`What did you notice about ${form.client_account || 'this account'}?`}
+                className="form-input" />
+              <input type="number" min="0" placeholder="Potential value (₹, optional)"
+                value={flagValue} onChange={e => setFlagValue(e.target.value)}
+                className="form-input w-56" />
+              <button onClick={() => flagOpportunity.mutate()}
+                disabled={!flagNotes || flagOpportunity.isPending}
+                className="btn-primary text-sm disabled:opacity-40">
+                {flagOpportunity.isPending ? 'Flagging…' : 'Flag Opportunity'}
+              </button>
+              {flagResult && (
+                <p className="text-xs text-emerald-600 font-semibold">
+                  ✅ Created as a farming opportunity on {flagResult.account_name} — now visible in Pipeline.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
