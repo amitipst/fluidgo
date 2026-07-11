@@ -22,6 +22,8 @@ import SystemHealth from '@/pages/SystemHealth'
 import FGAApproval from '@/pages/FGAApproval'
 import Gamification from '@/pages/Gamification'
 import Help from '@/pages/Help'
+import DOREntry from '@/pages/DOREntry'
+import ManualKPIEntry from '@/pages/ManualKPIEntry'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Toaster from '@/components/Toaster'
 import './index.css'
@@ -39,6 +41,7 @@ function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?
 
 const MANAGER_ROLES = ['manager','regional_manager','bu_head','business_head','ceo','super_admin']
 const MGMT_FINANCE  = [...MANAGER_ROLES, 'hr', 'finance']
+const KPI_ENTRY_ROLES = [...MANAGER_ROLES, 'service_delivery_manager', 'rep', 'inside_sales', 'pre_sales']
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -61,6 +64,17 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="help"          element={<Help />} />
               <Route path="analytics"     element={<Analytics />} />
               <Route path="gamification"  element={<Gamification />} />
+              {/* Service Delivery */}
+              <Route path="dor" element={
+                <ProtectedRoute roles={['service_delivery_manager', ...MANAGER_ROLES]}>
+                  <DOREntry />
+                </ProtectedRoute>
+              } />
+              <Route path="kpi-entry" element={
+                <ProtectedRoute roles={KPI_ENTRY_ROLES}>
+                  <ManualKPIEntry />
+                </ProtectedRoute>
+              } />
               {/* Management — manager+ */}
               <Route path="team" element={
                 <ProtectedRoute roles={[...MANAGER_ROLES, 'inside_sales']}>

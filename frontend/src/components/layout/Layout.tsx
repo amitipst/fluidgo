@@ -95,6 +95,7 @@ export default function Layout() {
   const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const canSeeFGA     = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
   const canSeeScoring = ['regional_manager','bu_head','business_head','practice_head','ceo','super_admin'].includes(user?.role ?? '')
+  const isSDM = user?.role === 'service_delivery_manager'
 
   const isFieldRole = FIELD_ROLES.includes(user?.role ?? '')
 
@@ -143,6 +144,14 @@ export default function Layout() {
           {coreNav.map(item => (
             <SideLink key={item.to} {...item} />
           ))}
+
+          {isSDM && (
+            <>
+              <NavSection label="Service Delivery" />
+              <SideLink to="/dor" icon="🛠️" label="Daily Ops Report" />
+              <SideLink to="/kpi-entry" icon="📋" label="Monthly KPI Entry" />
+            </>
+          )}
 
           {(canSeeTeam || canSeeRevenue) && (
             <>

@@ -35,9 +35,10 @@ ROLE_HIERARCHY: dict[str, dict] = {
     "inside_sales":   {"level": 10, "scope": "own"},
     "pre_sales":      {"level": 10, "scope": "own"},
     # Management roles
-    "manager":            {"level": 20, "scope": "team"},
-    "hr":                 {"level": 25, "scope": "hr"},
-    "finance":            {"level": 25, "scope": "finance"},
+    "manager":              {"level": 20, "scope": "team"},
+    "service_delivery_manager": {"level": 20, "scope": "team"},  # same tier as manager — a distinct role LABEL so FGA templates and reporting can target it separately, and its reportees (technicians) feed the Resource Attrition KRA
+    "hr":                   {"level": 25, "scope": "hr"},
+    "finance":               {"level": 25, "scope": "finance"},
     "regional_manager":   {"level": 30, "scope": "region"},   # heads ONE region within ONE business
     # DEPRECATED — old name for regional_manager, kept only so any existing
     # data/integrations using this string keep working. Do not assign this
@@ -282,15 +283,82 @@ class ScoringTemplate(Base):
 
 class ScoringParameter(Base):
     """One weighted line item within a ScoringTemplate — this is what makes weights
-    config-driven: edit rows here (via /api/scoring/templates), never a Python constant."""
+    config-driven: edit rows here (via /api/scoring/templates), never a Python constant.
+
+    calc_type='pct'    — value is a straight 0-100 achievement %; contribution =
+                          value * (weight_pct/100). Used by Sales/PreSales.
+    calc_type='tiered' — value is looked up against `tiers` (a JSON list of bands)
+                          to find a MULTIPLIER, and contribution = weight_pct * multiplier
+                          (so a strong band can score ABOVE the parameter's base weight,
+                          and a weak one can score 0 — matches banded KRA scorecards
+                          like Service Delivery's, where >=99% SLA scores 1.5x weight).
+                          tiers format: [{"label": "<80%", "max": 80, "multiplier": 0},
+                            {"label": ">=80%", "min": 80, "multiplier": null, "formula": "square"}]
+                          A tier with "formula":"square" uses multiplier = (value/100)**2
+                          instead of a flat number (e.g. "square of achievement").
+
+    metric_source starting with "manual." has no auto-calculator — its value comes
+    from ManualMetricEntry (entered via the UI each period) instead of DSR/pipeline
+    data, for KPIs sourced from systems fluidGo doesn't integrate with (invoicing,
+    ticketing, etc).
+
+    is_active supports enable/disable without losing history — a disabled parameter
+    is skipped in scoring but its past ScoringResult breakdowns are untouched."""
     __tablename__ = "scoring_parameters"
     id:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     template_id:   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)  # FK scoring_templates.id (CASCADE)
     name:          Mapped[str]       = mapped_column(String(100), nullable=False)
     weight_pct:    Mapped[float]     = mapped_column(Numeric(5, 2), nullable=False)
-    metric_source: Mapped[str]       = mapped_column(String(100), nullable=False)  # key into scoring_engine's metric registry
-    calc_type:     Mapped[str]       = mapped_column(String(20), default="pct")
+    metric_source: Mapped[str]       = mapped_column(String(100), nullable=False)  # key into scoring_engine's metric registry, or "manual.<slug>"
+    calc_type:     Mapped[str]       = mapped_column(String(20), default="pct")    # pct | tiered
+    tiers:         Mapped[list]      = mapped_column(JSONB, nullable=True)         # only for calc_type='tiered'
+    is_active:     Mapped[bool]      = mapped_column(Boolean, default=True, server_default="true")
     sort_order:    Mapped[int]       = mapped_column(Integer, default=0)
+
+class ManualMetricEntry(Base):
+    """Period achievement value for a 'manual.*' metric_source, entered via UI
+    instead of computed from DSR/pipeline data — for KPIs sourced from systems
+    fluidGo doesn't integrate with (Tally/Zoho collections, ManageEngine tickets,
+    review logs, etc). One row per (user, metric_key, period); upserted on re-entry
+    so correcting a mistake doesn't create duplicate history."""
+    __tablename__ = "manual_metric_entries"
+    id:          Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id:     Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=False)
+    metric_key:  Mapped[str]        = mapped_column(String(100), nullable=False)  # matches parameter.metric_source
+    period:      Mapped[str]        = mapped_column(String(20), nullable=False)
+    value:       Mapped[float]      = mapped_column(Numeric(8, 3), nullable=False)  # 0-100 achievement %, or whatever scale the tiers use
+    raw_inputs:  Mapped[dict]       = mapped_column(JSONB, nullable=True)  # optional supporting numbers, e.g. {"total_invoiced": 937403.2, "collected": 937403.2}
+    notes:       Mapped[str]        = mapped_column(Text, nullable=True)
+    entered_by:  Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=False)
+    entered_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class DORDaily(Base):
+    """Daily Operations Report — Service Delivery Manager's equivalent of DSRDaily.
+    Lightweight day-to-day operational log; feeds the Reports section and gives a
+    running pulse between monthly FGA cycles. FGA itself is scored from
+    ManualMetricEntry period aggregates, not summed from these daily rows — the two
+    KRA sets (daily ops vs monthly scorecard) don't share a 1:1 formula, matching
+    how DSR activity counts and Sales FGA are related but computed independently."""
+    __tablename__ = "dor_daily"
+    id:                    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id:               Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    report_date:           Mapped[Date]      = mapped_column(Date, nullable=False)
+    client_account:        Mapped[str]       = mapped_column(String(150), nullable=True)
+    status:                Mapped[str]       = mapped_column(String(20), default="on_track")  # on_track | at_risk | critical
+    tickets_open_start:    Mapped[int]       = mapped_column(Integer, default=0)
+    tickets_new:           Mapped[int]       = mapped_column(Integer, default=0)
+    tickets_closed:        Mapped[int]       = mapped_column(Integer, default=0)
+    tickets_overdue:       Mapped[int]       = mapped_column(Integer, default=0)   # open >3 days
+    escalations_raised:    Mapped[int]       = mapped_column(Integer, default=0)
+    escalations_resolved:  Mapped[int]       = mapped_column(Integer, default=0)
+    collection_calls_made: Mapped[int]       = mapped_column(Integer, default=0)
+    collection_amount:     Mapped[float]     = mapped_column(Numeric(12, 2), nullable=True)
+    client_meetings_held:  Mapped[int]       = mapped_column(Integer, default=0)
+    resource_deployed:     Mapped[int]       = mapped_column(Integer, nullable=True)
+    resource_available:    Mapped[int]       = mapped_column(Integer, nullable=True)
+    blockers_notes:        Mapped[str]       = mapped_column(Text, nullable=True)
+    submitted_at:          Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class ScoringResult(Base):
     """Cached computed score per user/period — with full FGA approval workflow state."""

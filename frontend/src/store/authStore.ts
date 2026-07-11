@@ -7,6 +7,7 @@ export type Role =
   | 'inside_sales'
   | 'pre_sales'
   | 'manager'
+  | 'service_delivery_manager'
   | 'regional_manager'
   | 'bu_head'          // deprecated — legacy alias for regional_manager, kept for backward compat
   | 'business_head'
@@ -17,7 +18,7 @@ export type Role =
   | 'super_admin'
 
 export type OrgRoleKey =
-  | 'sales' | 'presales' | 'manager' | 'bu_head'
+  | 'sales' | 'presales' | 'service_delivery' | 'manager' | 'bu_head'
   | 'practice_head' | 'hr' | 'finance' | 'admin' | 'super_admin'
   | null
 

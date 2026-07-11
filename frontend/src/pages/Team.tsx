@@ -13,6 +13,7 @@ const V3_ROLES = [
   { key: 'inside_sales',  label: '📞 Inside Sales',           level: 10 },
   { key: 'pre_sales',     label: '🔧 Pre-Sales',              level: 10 },
   { key: 'manager',       label: '👔 Manager',                level: 20 },
+  { key: 'service_delivery_manager', label: '🛠️ Service Delivery Manager', level: 20 },
   { key: 'regional_manager', label: '🗺️ Regional Manager',     level: 30 },
   { key: 'business_head', label: '🏭 Business Head',          level: 40 },
   { key: 'coo',           label: '🎯 COO',                     level: 45 },

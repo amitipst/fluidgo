@@ -112,6 +112,43 @@ async def _metric_presales_win_rate_pct(db: AsyncSession, user: User, period: st
     return (sum(1 for d in deals if d.stage == "closed_won") / len(deals)) * 100
 
 
+async def _get_manual_metric_value(db: AsyncSession, user: User, metric_key: str, period: str) -> float:
+    """Value for a 'manual.*' metric_source — entered via the Manual KPI Entry
+    screen instead of computed from DSR/pipeline data. Missing entry = 0, same
+    as any other metric with no activity that period."""
+    from app.models import ManualMetricEntry
+    result = await db.execute(
+        select(ManualMetricEntry).where(
+            ManualMetricEntry.user_id == user.id,
+            ManualMetricEntry.metric_key == metric_key,
+            ManualMetricEntry.period == period,
+        )
+    )
+    entry = result.scalar_one_or_none()
+    return float(entry.value) if entry else 0.0
+
+
+def resolve_tier_multiplier(value: float, tiers: list) -> float:
+    """Looks `value` (0-100 achievement, or whatever scale the tiers use) up
+    against a parameter's tier bands to find its multiplier. Each tier is
+    {"label": str, "min": float|None, "max": float|None, "multiplier": float|None,
+    "formula": str|None}. Bounds are half-open: min <= value < max (top tier's
+    max is None = open-ended, bottom tier's min is None = -infinity).
+    "formula": "square" computes multiplier = (value/100)**2 instead of using
+    a flat number — e.g. a KRA scored as "square of achievement" above a
+    qualifying threshold, rewarding values close to 100% disproportionately."""
+    for tier in (tiers or []):
+        lo, hi = tier.get("min"), tier.get("max")
+        if lo is not None and value < lo:
+            continue
+        if hi is not None and value >= hi:
+            continue
+        if tier.get("formula") == "square":
+            return (value / 100.0) ** 2
+        return float(tier.get("multiplier") or 0.0)
+    return 0.0  # no tier matched — misconfigured template, fail safe to 0
+
+
 METRIC_REGISTRY = {
     "revenue.target_achievement_pct": _metric_revenue_target_achievement_pct,
     "activity.rigor_avg": _metric_activity_rigor_avg,
@@ -125,7 +162,10 @@ METRIC_REGISTRY = {
 # rep/inside_sales have no org_role_key by default (v2 role mapping is opt-in via
 # /api/users or /api/roles) — this fallback lets scoring work immediately without
 # requiring every existing seeded user to be re-mapped first.
-LEGACY_ROLE_FALLBACK = {"rep": "sales", "inside_sales": "presales"}
+LEGACY_ROLE_FALLBACK = {
+    "rep": "sales", "inside_sales": "presales",
+    "service_delivery_manager": "service_delivery",
+}
 
 
 async def compute_score(db: AsyncSession, user: User, period: str) -> dict:
@@ -144,16 +184,26 @@ async def compute_score(db: AsyncSession, user: User, period: str) -> dict:
         return {"score": float(cached.score), "breakdown": cached.breakdown,
                 "template_id": str(template.id), "cached": True}
 
-    parameters = await scoring_repo.get_parameters(db, template.id)
+    parameters = [p for p in await scoring_repo.get_parameters(db, template.id) if p.is_active]
     breakdown, total = [], 0.0
     for p in parameters:
-        calc = METRIC_REGISTRY.get(p.metric_source)
-        value = await calc(db, user, period) if calc else 0.0
+        if p.metric_source.startswith("manual."):
+            value = await _get_manual_metric_value(db, user, p.metric_source, period)
+        else:
+            calc = METRIC_REGISTRY.get(p.metric_source)
+            value = await calc(db, user, period) if calc else 0.0
         weight = float(p.weight_pct)
-        contribution = value * (weight / 100.0)
+
+        row = {"name": p.name, "weight_pct": weight, "value": round(value, 1)}
+        if p.calc_type == "tiered":
+            multiplier = resolve_tier_multiplier(value, p.tiers)
+            contribution = weight * multiplier
+            row["multiplier"] = round(multiplier, 3)
+        else:
+            contribution = value * (weight / 100.0)
+        row["contribution"] = round(contribution, 2)
         total += contribution
-        breakdown.append({"name": p.name, "weight_pct": weight,
-                           "value": round(value, 1), "contribution": round(contribution, 2)})
+        breakdown.append(row)
 
     score = round(total, 1)
     await scoring_repo.save_result(db, user.id, template.id, period, score, breakdown)
