@@ -3,17 +3,25 @@
 Org hierarchy for fluidPro:
   business_head (Amit) → sees ALL regions within fluidPro globally (BU = business line)
   regional_manager → sees own region only (e.g. a regional head hired per-region; "bu_head" is the deprecated old name for this role)
-  manager → sees own team (direct reports via manager_id)
+  manager → sees their FULL reporting chain via manager_id, any depth — not
+            just direct reports. If a manager's own report is themselves a
+            manager with reports, those are included automatically.
   rep / pre_sales → own data only
 
-DUAL ROLE: any of the above can ALSO be personally assigned as someone's
-manager_id — independent of region/business — e.g. a regional_manager of West who
-additionally line-manages one rep in North, or a business_head who directly
-manages a small team rather than delegating to a separate manager account.
-resolve_visible_user_ids() unions those personal direct reports into every
-role's normal scope, so this works everywhere (DSR approval, targets, FGA,
-meetings, pipeline, opportunities...) not just a single dedicated screen.
-Set it via the Team page → edit a user → "Reports to (Manager)".
+Hierarchy is defined by BINDING manager_id at role-assignment time (Team
+page → "Reports to (Manager)"), not by hard-coding region/business rules —
+resolve_subtree_user_ids() walks that chain recursively. This is also how
+Sales and Pre-Sales can run entirely separate manager chains under the same
+Business Head: each chain is just its own subtree, no special-casing needed.
+
+DUAL ROLE: any role can ALSO be personally assigned as someone's manager_id,
+independent of region/business — e.g. a regional_manager of West who
+additionally line-manages a chain of reports in North, or a business_head
+who directly manages a small team rather than delegating to a separate
+manager account. resolve_visible_user_ids() unions that whole personal
+subtree into every role's normal scope, so this works everywhere (DSR
+approval, targets, FGA, meetings, pipeline, opportunities...) not just a
+single dedicated screen.
 
 Region values (canonical):
   India - North | India - South | India - West | India - East | India - Central
@@ -21,7 +29,8 @@ Region values (canonical):
 """
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, literal
+from sqlalchemy.orm import aliased
 from app.models import User, ROLE_HIERARCHY, role_level
 
 
@@ -32,6 +41,37 @@ INDIA_REGIONS = [
     "India - East",
     "India - Central",
 ]
+
+
+async def resolve_subtree_user_ids(db: AsyncSession, root_id, max_depth: int = 20) -> list:
+    """Returns EVERY user beneath root_id in the manager_id org chart, at ANY
+    depth — not just direct reports. This is what lets hierarchy be defined
+    purely by binding manager_id at role-assignment time (Team page →
+    "Reports to (Manager)") instead of hard-coding region/business scope
+    rules: a manager's manager automatically sees that manager's whole team,
+    a director automatically sees their whole division, and Sales vs
+    Pre-Sales can each have their own manager chain under the same Business
+    Head without any special-casing.
+
+    Depth-capped as a cheap safety net against an accidental manager_id
+    cycle (e.g. two people mistakenly set as each other's manager) — a real
+    org chart will never come close to 20 levels."""
+    base = (
+        select(User.id, User.manager_id, literal(1).label("depth"))
+        .where(User.manager_id == root_id, User.is_active == True)
+        .cte(name="subtree", recursive=True)
+    )
+    parent = aliased(User)
+    recursive_part = select(
+        parent.id, parent.manager_id, (base.c.depth + 1).label("depth")
+    ).where(
+        parent.manager_id == base.c.id,
+        parent.is_active == True,
+        base.c.depth < max_depth,
+    )
+    subtree = base.union_all(recursive_part)
+    result = await db.execute(select(subtree.c.id))
+    return [row[0] for row in result.all()]
 
 
 async def resolve_visible_user_ids(
@@ -61,7 +101,9 @@ async def resolve_visible_user_ids(
     async def _with_dual_role(base_ids: Optional[list]) -> Optional[list]:
         if base_ids is None or region_filter:
             return base_ids
-        extra = await resolve_direct_report_ids(db, current_user)
+        # Recursive, not just direct reports — a dual-hat user's personal
+        # chain can itself be several manager levels deep.
+        extra = await resolve_subtree_user_ids(db, current_user.id)
         if not extra:
             return base_ids
         return list(set(base_ids) | set(extra))
@@ -113,17 +155,17 @@ async def resolve_visible_user_ids(
         result = await db.execute(q)
         return await _with_dual_role([row[0] for row in result.all()])
 
-    # Manager — direct reports only
+    # Manager — their FULL reporting chain, any depth. Hierarchy is defined
+    # purely by binding manager_id at role-assignment time (Team page), not
+    # hard-coded region/business rules: if a manager's own reports include
+    # another manager who themselves has reps, those reps are included too.
+    # This is also how Sales and Pre-Sales can run separate manager chains
+    # under the same Business Head — each chain is just its own subtree.
     if scope == "team":
-        result = await db.execute(
-            select(User.id).where(
-                User.manager_id == current_user.id,
-                User.is_active == True
-            )
-        )
-        direct_reports = [row[0] for row in result.all()]
-        if not direct_reports:
-            # Fallback: same region + business
+        subtree = await resolve_subtree_user_ids(db, current_user.id)
+        if not subtree:
+            # Fallback for a freshly-assigned manager with no reports bound
+            # yet: same region + business, so their view isn't empty.
             result = await db.execute(
                 select(User.id).where(
                     User.region == current_user.region,
@@ -132,7 +174,7 @@ async def resolve_visible_user_ids(
                 )
             )
             return [row[0] for row in result.all()]
-        return direct_reports
+        return subtree
 
     # Default: own only, plus any personal direct reports (dual-role field
     # roles are rare but not disallowed — e.g. a senior rep temporarily
