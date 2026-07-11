@@ -261,6 +261,13 @@ export default function Team() {
                         return mgr ? ` · reports to ${mgr.name}` : ''
                       })()}
                     </span>
+                    {u.has_direct_reports && u.role !== 'manager' && (
+                      <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: '#FDE8F0', color: '#F0115E' }}
+                        title={`Also personally manages ${u.direct_report_count} ${u.direct_report_count === 1 ? 'person' : 'people'} (dual role)`}>
+                        🎖️ Dual role · manages {u.direct_report_count}
+                      </span>
+                    )}
                     {!u.is_active && <span className="ml-2 text-[10px] font-bold uppercase text-red-500">Exited</span>}
                   </div>
                   <div className="flex gap-2 shrink-0">

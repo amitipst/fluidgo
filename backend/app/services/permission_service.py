@@ -2,8 +2,18 @@
 
 Org hierarchy for fluidPro:
   business_head (Amit) → sees ALL regions within fluidPro globally
+  bu_head → sees own BU/region only (e.g. a regional head hired per-BU)
   manager → sees own team (direct reports via manager_id)
   rep / pre_sales → own data only
+
+DUAL ROLE: any of the above can ALSO be personally assigned as someone's
+manager_id — independent of region/bu/business — e.g. a bu_head of West who
+additionally line-manages one rep in North, or a business_head who directly
+manages a small team rather than delegating to a separate manager account.
+resolve_visible_user_ids() unions those personal direct reports into every
+role's normal scope, so this works everywhere (DSR approval, targets, FGA,
+meetings, pipeline, opportunities...) not just a single dedicated screen.
+Set it via the Team page → edit a user → "Reports to (Manager)".
 
 Region values (canonical):
   India - North | India - South | India - West | India - East | India - Central
@@ -33,8 +43,28 @@ async def resolve_visible_user_ids(
     Returns None = sees everyone (CEO/super_admin).
 
     region_filter: when business_head passes a region name, scope narrows to that region.
+
+    DUAL-ROLE SUPPORT: any role (manager, bu_head, business_head, ...) can
+    ALSO be personally assigned as someone's manager_id, independent of
+    region/bu/business — e.g. a BU Head of West who is additionally the
+    direct manager of one rep in North. Whatever the role's normal scope
+    query returns is UNIONED with those personal direct reports, so a dual
+    role works consistently across every router that calls this function
+    (DSR approval, targets, FGA, meetings, pipeline, opportunities, etc.) —
+    not just the one screen that happens to call resolve_direct_report_ids
+    directly. Skipped when region_filter is set: an explicit single-region
+    drill-down should show only that region, not leak in an out-of-region
+    direct report.
     """
     scope = ROLE_HIERARCHY.get(current_user.role, {}).get("scope", "own")
+
+    async def _with_dual_role(base_ids: Optional[list]) -> Optional[list]:
+        if base_ids is None or region_filter:
+            return base_ids
+        extra = await resolve_direct_report_ids(db, current_user)
+        if not extra:
+            return base_ids
+        return list(set(base_ids) | set(extra))
 
     # CEO / super_admin — see everything
     if scope == "all":
@@ -64,7 +94,7 @@ async def resolve_visible_user_ids(
         if region_filter:
             q = q.where(User.region == region_filter)
         result = await db.execute(q)
-        return [row[0] for row in result.all()]
+        return await _with_dual_role([row[0] for row in result.all()])
 
     # BU Head (legacy) — users in same bu + business
     if scope == "bu":
@@ -76,7 +106,7 @@ async def resolve_visible_user_ids(
         if region_filter:
             q = q.where(User.region == region_filter)
         result = await db.execute(q)
-        return [row[0] for row in result.all()]
+        return await _with_dual_role([row[0] for row in result.all()])
 
     # Manager — direct reports only
     if scope == "team":
@@ -99,8 +129,10 @@ async def resolve_visible_user_ids(
             return [row[0] for row in result.all()]
         return direct_reports
 
-    # Default: own only
-    return [current_user.id]
+    # Default: own only, plus any personal direct reports (dual-role field
+    # roles are rare but not disallowed — e.g. a senior rep temporarily
+    # mentoring one junior hire before a formal manager is hired).
+    return await _with_dual_role([current_user.id])
 
 
 async def resolve_direct_report_ids(db: AsyncSession, current_user: User) -> list:

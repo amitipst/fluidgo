@@ -48,7 +48,8 @@ class UserUpdate(BaseModel):
 class UserStatusUpdate(BaseModel):
     is_active: bool
 
-def _serialize(u: User) -> dict:
+def _serialize(u: User, direct_report_counts: Optional[dict] = None) -> dict:
+    count = (direct_report_counts or {}).get(u.id, 0)
     return {
         "id":         str(u.id),
         "name":       u.name,
@@ -61,6 +62,11 @@ def _serialize(u: User) -> dict:
         "manager_id": str(u.manager_id) if u.manager_id else None,
         "is_active":  u.is_active,
         "created_at": u.created_at,
+        # Dual-role indicator — true when this person is personally assigned
+        # (via manager_id) as someone's manager, regardless of their own
+        # role/region/bu. Distinct from being a plain 'manager' role.
+        "has_direct_reports":  count > 0,
+        "direct_report_count": count,
     }
 
 def _can_create_role(actor_role: str, target_role: str) -> bool:
@@ -87,7 +93,18 @@ async def list_users(
     if not include_inactive:
         query = query.where(User.is_active == True)
     query = query.order_by(User.is_active.desc(), User.name)
-    return [_serialize(u) for u in (await db.execute(query)).scalars().all()]
+    users = (await db.execute(query)).scalars().all()
+
+    # One aggregate query for dual-role badges, instead of N+1 per user.
+    from sqlalchemy import func
+    counts_rows = (await db.execute(
+        select(User.manager_id, func.count(User.id))
+        .where(User.manager_id.isnot(None), User.is_active == True)
+        .group_by(User.manager_id)
+    )).all()
+    direct_report_counts = {mgr_id: cnt for mgr_id, cnt in counts_rows}
+
+    return [_serialize(u, direct_report_counts) for u in users]
 
 @router.post("")
 async def create_user(
