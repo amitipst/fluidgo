@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { format } from 'date-fns'
 import api, { getErrorMessage } from '@/hooks/useApi'
+import { useAuthStore } from '@/store/authStore'
 import CloseDealModal from '@/components/CloseDealModal'
 
 const STAGES = ['All', 'cold', 'warm', 'hot', 'closed_won', 'closed_lost', 'dropped']
@@ -42,6 +43,29 @@ export default function Pipeline() {
     company: '', stage: 'cold', deal_value: '', closure_eta: '', todays_update: '', next_step: '',
   })
   const [closingDeal, setClosingDeal] = useState<any | null>(null)
+  const [reassigningId, setReassigningId] = useState<string | null>(null)
+  const [reassignTo, setReassignTo] = useState('')
+
+  const { user } = useAuthStore()
+  const canReassign = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
+
+  const { data: teamUsers = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => api.get('/users').then(r => r.data),
+    enabled: canReassign,
+  })
+  const salesUsers = teamUsers.filter((u: any) =>
+    ['rep','inside_sales','pre_sales','manager'].includes(u.role))
+
+  const reassignDeal = useMutation({
+    mutationFn: ({ id, new_owner_id }: { id: string; new_owner_id: string }) =>
+      api.post(`/pipeline/${id}/reassign`, { new_owner_id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline'] })
+      setReassigningId(null); setReassignTo('')
+    },
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not reassign deal')),
+  })
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey: ['pipeline'],
@@ -280,6 +304,17 @@ export default function Pipeline() {
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${cfg.color}`}>
                         {cfg.label}
                       </span>
+                      {d.source === 'service_delivery' && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-600"
+                          title="This deal came from a Service Delivery signal">
+                          🛠️ From Service Delivery
+                        </span>
+                      )}
+                      {d.deal_type === 'farming' && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
+                          🌱 Farming
+                        </span>
+                      )}
                       {d.roadblock && (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-500">
                           ⚠️ Roadblock
@@ -313,6 +348,12 @@ export default function Pipeline() {
                       className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
                       ✏️ Edit
                     </button>
+                    {canReassign && (
+                      <button onClick={() => { setReassigningId(reassigningId === d.id ? null : d.id); setReassignTo('') }}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
+                        🔀 Reassign
+                      </button>
+                    )}
                     {!['closed_won','closed_lost','on_hold','dropped'].includes(d.stage) && (
                       <button onClick={() => setClosingDeal(d)}
                         className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white hover:opacity-90"
@@ -322,6 +363,23 @@ export default function Pipeline() {
                     )}
                   </div>
                 </div>
+                )}
+                {reassigningId === d.id && (
+                  <div className="mt-3 pt-3 border-t border-wep-border flex items-center gap-2 flex-wrap">
+                    <select className="form-input py-1.5 text-sm w-56" value={reassignTo}
+                      onChange={e => setReassignTo(e.target.value)}>
+                      <option value="">Select a team member…</option>
+                      {salesUsers.map((u: any) => (
+                        <option key={u.id} value={u.id}>{u.name} ({u.role.replace('_',' ')})</option>
+                      ))}
+                    </select>
+                    <button disabled={!reassignTo || reassignDeal.isPending}
+                      onClick={() => reassignDeal.mutate({ id: d.id, new_owner_id: reassignTo })}
+                      className="btn-primary text-xs px-3 py-1.5 disabled:opacity-40">
+                      {reassignDeal.isPending ? 'Assigning…' : 'Assign'}
+                    </button>
+                    <button onClick={() => setReassigningId(null)} className="btn-outline text-xs px-3 py-1.5">Cancel</button>
+                  </div>
                 )}
               </div>
             )

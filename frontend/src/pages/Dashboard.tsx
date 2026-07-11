@@ -174,6 +174,7 @@ export default function Dashboard() {
   const hour   = new Date().getHours()
   const isBU   = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const isField = ['rep','inside_sales','pre_sales','manager'].includes(user?.role ?? '')
+  const isSDM = user?.role === 'service_delivery_manager'
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'))
   const [quote] = useState(getQuoteOfDay)
@@ -181,12 +182,28 @@ export default function Dashboard() {
   const { data: dash, isLoading } = useQuery({
     queryKey: ['dashboard', user?.id, selectedMonth],
     queryFn: () => api.get(`/analytics/dashboard?month=${selectedMonth}`).then(r => r.data),
-    enabled: !!user?.id,
+    enabled: !!user?.id && !isSDM,
   })
+
+  // Service Delivery: DOR history for the month, aggregated client-side —
+  // avoids a bespoke backend endpoint for what's a small, already-fetched list.
+  const { data: dorHistory = [], isLoading: dorLoading } = useQuery({
+    queryKey: ['dor-history', selectedMonth],
+    queryFn: () => api.get(`/dor/history?month=${selectedMonth}`).then(r => r.data),
+    enabled: isSDM,
+  })
+  const todayDOR = dorHistory.find((d: any) => d.date === today)
+  const dorMonthTotals = dorHistory.reduce((acc: any, d: any) => ({
+    tickets_closed: acc.tickets_closed + (d.tickets_closed || 0),
+    escalations_raised: acc.escalations_raised + (d.escalations_raised || 0),
+    tickets_overdue: acc.tickets_overdue + (d.tickets_overdue || 0),
+    client_meetings_held: acc.client_meetings_held + (d.client_meetings_held || 0),
+  }), { tickets_closed: 0, escalations_raised: 0, tickets_overdue: 0, client_meetings_held: 0 })
 
   const { data: todayDSR } = useQuery({
     queryKey: ['dsr-today', today],
     queryFn: () => api.get(`/dsr?date=${today}`).then(r => r.data),
+    enabled: !isSDM,
   })
 
   // Rep's own revenue target vs achievement (field roles that carry a number)
@@ -240,29 +257,45 @@ export default function Dashboard() {
             {isField && (
               <Link to="/dsr" className="btn-primary">✏️ Submit DSR</Link>
             )}
+            {isSDM && (
+              <Link to="/dor" className="btn-primary">🛠️ Submit DOR</Link>
+            )}
           </div>
         </div>
       </div>
 
       {/* ── KPI Grid ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-        <KPICard label="Visits"      value={dash?.total_visits    ?? 0} icon="🏢"
-          sub={isBU ? `BU · ${selectedMonth}` : selectedMonth}
-          accentColor="#0D9488" loading={isLoading} />
-        <KPICard label="Calls"       value={dash?.total_calls     ?? 0} icon="📞"
-          accentColor="#1E6FD9" loading={isLoading} />
-        <KPICard label="Follow-Ups"  value={dash?.total_followups ?? 0} icon="🔄"
-          accentColor="#D97706" loading={isLoading} />
-        <KPICard label="New Leads"   value={dash?.total_leads     ?? 0} icon="🎯"
-          accentColor="#0EA5E9" loading={isLoading} />
-        <KPICard label="Avg Rigor"
-          value={isLoading ? '…' : rigor > 0 ? `${rigor}/100` : '—'}
-          sub={rigorLabel} icon="⚡"
-          accentColor={rigorColor} loading={isLoading} />
-      </div>
+      {isSDM ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <KPICard label="Tickets Closed" value={dorMonthTotals.tickets_closed} icon="🎫"
+            sub={selectedMonth} accentColor="#0D9488" loading={dorLoading} />
+          <KPICard label="Overdue (>3d)" value={dorMonthTotals.tickets_overdue} icon="⏰"
+            accentColor={dorMonthTotals.tickets_overdue > 0 ? '#DC2626' : '#0D9488'} loading={dorLoading} />
+          <KPICard label="Escalations" value={dorMonthTotals.escalations_raised} icon="⚠️"
+            accentColor={dorMonthTotals.escalations_raised > 0 ? '#D97706' : '#0D9488'} loading={dorLoading} />
+          <KPICard label="Client Meetings" value={dorMonthTotals.client_meetings_held} icon="🤝"
+            accentColor="#1E6FD9" loading={dorLoading} />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+          <KPICard label="Visits"      value={dash?.total_visits    ?? 0} icon="🏢"
+            sub={isBU ? `BU · ${selectedMonth}` : selectedMonth}
+            accentColor="#0D9488" loading={isLoading} />
+          <KPICard label="Calls"       value={dash?.total_calls     ?? 0} icon="📞"
+            accentColor="#1E6FD9" loading={isLoading} />
+          <KPICard label="Follow-Ups"  value={dash?.total_followups ?? 0} icon="🔄"
+            accentColor="#D97706" loading={isLoading} />
+          <KPICard label="New Leads"   value={dash?.total_leads     ?? 0} icon="🎯"
+            accentColor="#0EA5E9" loading={isLoading} />
+          <KPICard label="Avg Rigor"
+            value={isLoading ? '…' : rigor > 0 ? `${rigor}/100` : '—'}
+            sub={rigorLabel} icon="⚡"
+            accentColor={rigorColor} loading={isLoading} />
+        </div>
+      )}
 
-      {/* ── AI Panel ── */}
-      {user?.id && <AIPanel userId={user.id} />}
+      {/* ── AI Panel (sales-activity insight — not relevant for Service Delivery) ── */}
+      {user?.id && !isSDM && <AIPanel userId={user.id} />}
 
       {/* ── My Targets (rep visibility into own revenue) ── */}
       {isRevenueRep && myRev?.has_target && (
@@ -310,8 +343,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Today's DSR (rep only) ── */}
-      {!isBU && (
+      {/* ── Today's DSR (field roles) ── */}
+      {!isBU && !isSDM && (
         <div className="card mb-6">
           <div className="flex items-center justify-between mb-4">
             <div className="font-bold text-wep-navy text-sm">📋 Today's DSR</div>
@@ -340,6 +373,43 @@ export default function Dashboard() {
               <div className="text-4xl mb-3">📋</div>
               <p className="text-wep-muted text-sm mb-4">No DSR submitted yet today.</p>
               <Link to="/dsr" className="btn-primary text-sm">Submit Today's DSR →</Link>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Today's DOR (Service Delivery Manager) ── */}
+      {isSDM && (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-bold text-wep-navy text-sm">🛠️ Today's Operations Report</div>
+            {!todayDOR && (
+              <Link to="/dor" className="text-xs font-semibold text-wep-orange hover:underline">
+                Submit now →
+              </Link>
+            )}
+          </div>
+          {todayDOR ? (
+            <div className="grid grid-cols-3 gap-4 text-center">
+              {[
+                { label: 'Tickets Closed', val: todayDOR.tickets_closed, color: '#0D9488' },
+                { label: 'Escalations',    val: todayDOR.escalations_raised,
+                  color: todayDOR.escalations_raised > 0 ? '#D97706' : '#0D9488' },
+                { label: 'Status',
+                  val: todayDOR.status === 'on_track' ? '🟢' : todayDOR.status === 'at_risk' ? '🟡' : '🔴',
+                  color: '#1E6FD9' },
+              ].map(({ label, val, color }) => (
+                <div key={label}>
+                  <div className="font-display font-black text-2xl" style={{ color }}>{val}</div>
+                  <div className="text-wep-muted text-xs mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <div className="text-4xl mb-3">🛠️</div>
+              <p className="text-wep-muted text-sm mb-4">No Operations Report submitted yet today.</p>
+              <Link to="/dor" className="btn-primary text-sm">Submit Today's DOR →</Link>
             </div>
           )}
         </div>

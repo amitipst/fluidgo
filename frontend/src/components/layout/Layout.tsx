@@ -11,11 +11,11 @@ const NAV_CORE = [
   { to: '/dsr',           icon: '✏️', label: 'Submit DSR',   fieldOnly: true },
   { to: '/dsr/history',   icon: '📋', label: 'My DSR Log',   fieldOnly: true },
   { to: '/meetings',      icon: '🤝', label: 'Meetings'                },
-  { to: '/leads',         icon: '🎯', label: 'Leads'                   },
-  { to: '/pipeline',      icon: '📊', label: 'Pipeline'                },
-  { to: '/opportunities', icon: '🧭', label: 'Opportunities'           },
-  { to: '/analytics',     icon: '📈', label: 'Analytics'              },
-  { to: '/gamification',  icon: '🎮', label: 'My Schemes'             },
+  { to: '/leads',         icon: '🎯', label: 'Leads',                    salesOnly: true },
+  { to: '/pipeline',      icon: '📊', label: 'Pipeline',                 salesOnly: true },
+  { to: '/opportunities', icon: '🧭', label: 'Opportunities',            salesOnly: true },
+  { to: '/analytics',     icon: '📈', label: 'Analytics',                salesOnly: true },
+  { to: '/gamification',  icon: '🎮', label: 'My Schemes',               salesOnly: true },
 ]
 const NAV_MANAGER = [
   { to: '/team',     icon: '👥', label: 'Team'     },
@@ -101,9 +101,13 @@ export default function Layout() {
 
   const isFieldRole = FIELD_ROLES.includes(user?.role ?? '')
 
-  // Remove DSR items for non-field roles; remove gamification from core if manager+
+  // Remove DSR items for non-field roles; remove gamification from core if manager+;
+  // Service Delivery doesn't work Sales pipeline concepts (Leads/Pipeline/
+  // Opportunities/Analytics/Schemes) — Meetings stays, since client meetings
+  // are just as real for delivery as for sales.
   const coreNav = NAV_CORE.filter(n => {
     if ((n as any).fieldOnly && !isFieldRole) return false
+    if ((n as any).salesOnly && isSDM) return false
     if (n.to === '/gamification' && canSeeTeam) return false
     return true
   })
@@ -112,7 +116,8 @@ export default function Layout() {
 
   const ROLE_LABELS: Record<string, string> = {
     rep: 'Sales Rep', inside_sales: 'Inside Sales', pre_sales: 'Pre-Sales',
-    manager: 'Manager', regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
+    manager: 'Manager', service_delivery_manager: 'Service Delivery Manager',
+    regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
     practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', ceo: 'CEO',
     super_admin: 'Super Admin',
   }

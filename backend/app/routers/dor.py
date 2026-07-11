@@ -137,12 +137,19 @@ async def team_dor(month: Optional[str] = None, db: AsyncSession = Depends(get_d
 # whoever it's assigned to like any other deal. No AI, no auto-detection;
 # that's Phase 5 once there's enough meeting/SIP history to train on. This is
 # the human-in-the-loop version of the same idea, shippable now.
+#
+# Default assignment: an SDM doesn't work Sales pipeline, so a flag they raise
+# defaults to THEIR MANAGER (Business Head or their reporting line) for
+# triage — not to the SDM themselves, who has no way to action a deal. The
+# manager (or Business Head) then reassigns to the right sales rep via
+# Pipeline → Reassign. assign_to_user_id lets the flagger pick a specific
+# person directly when they already know who should get it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 class FlagOpportunityIn(BaseModel):
     notes: str
     potential_value: Optional[float] = None
-    assign_to_user_id: Optional[str] = None   # sales rep/manager to route it to; unassigned if omitted
+    assign_to_user_id: Optional[str] = None   # explicit target; defaults to the flagger's manager
 
 
 @router.post("/{dor_id}/flag-opportunity")
@@ -158,10 +165,16 @@ async def flag_opportunity(dor_id: str, body: FlagOpportunityIn, db: AsyncSessio
     account = await get_or_create_account(db, dor.client_account, business=(sdm.business if sdm else "fluidpro"))
     dor.account_id = account.id
 
-    owner_id = uuid.UUID(body.assign_to_user_id) if body.assign_to_user_id else user.id
+    if body.assign_to_user_id:
+        owner_id = uuid.UUID(body.assign_to_user_id)
+    elif user.manager_id:
+        owner_id = user.manager_id
+    else:
+        owner_id = user.id   # no manager on record — safe fallback so the deal always has an owner
+
     deal = PipelineDeal(
         user_id=owner_id, company=account.name, stage="cold",
-        todays_update=f"Flagged from Service Delivery ({sdm.name if sdm else 'SDM'}, {dor.report_date}): {body.notes}",
+        todays_update=f"🛠️ New requirement flagged from Service Delivery ({sdm.name if sdm else 'SDM'}, {dor.report_date}): {body.notes}",
         deal_value=body.potential_value, account_id=account.id,
         deal_type="farming", source="service_delivery",
     )

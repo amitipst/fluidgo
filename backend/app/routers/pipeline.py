@@ -4,8 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date, datetime
 from typing import Optional, Literal
+import uuid
 from app.database import get_db
-from app.models import PipelineDeal, User
+from app.models import PipelineDeal, User, role_level
 from app.services.deps import get_current_user
 from app.services.audit_service import audit
 
@@ -87,6 +88,53 @@ async def update_deal(deal_id: str, body: DealIn, request: Request,
             f"{deal.company}: {', '.join(changes)}", request=request,
         )
     return {"id": deal_id, "updated": True}
+
+
+class ReassignIn(BaseModel):
+    new_owner_id: str
+
+
+@router.post("/{deal_id}/reassign")
+async def reassign_deal(deal_id: str, body: ReassignIn, request: Request,
+                        background_tasks: BackgroundTasks,
+                        db: AsyncSession = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    """Change a deal's owner — the missing half of CSG Phase 1's flag-opportunity
+    flow: a Service Delivery signal defaults to the flagger's manager for
+    triage (see dor.py), and THIS is how that manager routes it to the right
+    sales rep. Manager-tier+ only, and both the deal's current owner and the
+    new owner must be within the actor's visible scope (same rule as any
+    other cross-user action in the app)."""
+    if role_level(user.role) < 20:
+        raise HTTPException(403, "Only managers and above can reassign deals")
+
+    deal = (await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))).scalar_one_or_none()
+    if not deal:
+        raise HTTPException(404, "Deal not found")
+
+    from app.services.permission_service import resolve_visible_user_ids
+    visible = await resolve_visible_user_ids(db, user)
+    if visible is not None and deal.user_id not in visible:
+        raise HTTPException(403, "You cannot reassign this deal")
+
+    new_owner_id = uuid.UUID(body.new_owner_id)
+    new_owner = (await db.execute(select(User).where(User.id == new_owner_id))).scalar_one_or_none()
+    if not new_owner:
+        raise HTTPException(404, "New owner not found")
+    if visible is not None and new_owner_id not in visible:
+        raise HTTPException(403, "You cannot assign this deal to someone outside your scope")
+
+    old_owner_id = deal.user_id
+    deal.user_id = new_owner_id
+    deal.last_activity_at = datetime.utcnow()
+    await db.commit()
+
+    if old_owner_id != new_owner_id:
+        background_tasks.add_task(
+            audit, db, user, "REASSIGN", "pipeline", deal_id,
+            f"{deal.company}: reassigned to {new_owner.name}", request=request,
+        )
+    return {"id": deal_id, "new_owner_id": str(new_owner_id), "new_owner_name": new_owner.name}
 
 
 # ── Structured close (win / loss / hold / drop) with reason taxonomy ──────────

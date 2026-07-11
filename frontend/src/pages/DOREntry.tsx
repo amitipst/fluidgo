@@ -190,8 +190,8 @@ export default function DOREntry() {
           <button onClick={() => setShowFlag(v => !v)}
             className="flex items-center justify-between w-full text-left">
             <div>
-              <div className="font-semibold text-sm text-wep-navy">🎯 Flag as Opportunity for Sales</div>
-              <div className="text-xs text-wep-muted">Noticed an expansion, renewal, or cross-sell signal in this account? Route it to Sales as real pipeline.</div>
+              <div className="font-semibold text-sm text-wep-navy">🎯 Flag a New Requirement</div>
+              <div className="text-xs text-wep-muted">Noticed an expansion, renewal, or cross-sell signal in this account? Your manager will see it and assign it to the right Sales rep.</div>
             </div>
             <span className="text-wep-muted">{showFlag ? '−' : '+'}</span>
           </button>
@@ -207,11 +207,11 @@ export default function DOREntry() {
               <button onClick={() => flagOpportunity.mutate()}
                 disabled={!flagNotes || flagOpportunity.isPending}
                 className="btn-primary text-sm disabled:opacity-40">
-                {flagOpportunity.isPending ? 'Flagging…' : 'Flag Opportunity'}
+                {flagOpportunity.isPending ? 'Flagging…' : 'Flag Requirement'}
               </button>
               {flagResult && (
                 <p className="text-xs text-emerald-600 font-semibold">
-                  ✅ Created as a farming opportunity on {flagResult.account_name} — now visible in Pipeline.
+                  ✅ Sent to your manager for assignment — {flagResult.account_name} now shows in Pipeline.
                 </p>
               )}
             </div>
