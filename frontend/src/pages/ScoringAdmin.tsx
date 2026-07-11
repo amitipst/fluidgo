@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 
 interface Tier {
@@ -86,7 +86,7 @@ export default function ScoringAdmin() {
       qc.invalidateQueries({ queryKey: ['scoring-templates'] })
       setTimeout(() => setSaved(false), 2000)
     },
-    onError: (err: any) => setError(err?.response?.data?.detail ?? 'Save failed'),
+    onError: (err: any) => setError(getErrorMessage(err, 'Save failed')),
   })
 
   const createTemplate = useMutation({
@@ -100,7 +100,7 @@ export default function ScoringAdmin() {
       setShowNewTemplate(false); setNewTemplateName(''); setNewRoleKey('')
       setSelectedId(r.data.id)
     },
-    onError: (err: any) => setError(err?.response?.data?.detail ?? 'Could not create template'),
+    onError: (err: any) => setError(getErrorMessage(err, 'Could not create template')),
   })
 
   function updateParam(i: number, patch: Partial<Param>) {

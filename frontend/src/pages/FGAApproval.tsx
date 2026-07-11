@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ function ReviewModal({ result, onClose, onDone }: {
       })
       onDone(); onClose()
     } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? 'Action failed. Please try again.')
+      setErr(getErrorMessage(e, 'Action failed. Please try again.'))
     } finally { setLoading(false) }
   }
 
@@ -286,7 +286,7 @@ export default function FGAApproval() {
       setFreezeMsg(`✅ ${res.data.frozen} scores frozen for ${period}`)
       refetch()
     } catch (e: any) {
-      setFreezeMsg(`❌ ${e?.response?.data?.detail ?? 'Freeze failed'}`)
+      setFreezeMsg(`❌ ${getErrorMessage(e, 'Freeze failed')}`)
     } finally { setFreezing(false) }
   }
 

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { toast } from '@/store/toastStore'
 
 const SOURCES = ['All', 'Call', 'Visit', 'Referral', 'LinkedIn', 'Email']
@@ -59,7 +59,7 @@ export default function Leads() {
                 source: 'Call', next_action: '', next_action_date: '' })
       setShowAdd(false); setAddErr('')
     },
-    onError: (e: any) => setAddErr(e?.response?.data?.detail ?? 'Failed to save lead')
+    onError: (e: any) => setAddErr(getErrorMessage(e, 'Failed to save lead'))
   })
 
   const convertToDeal = useMutation({
@@ -69,7 +69,7 @@ export default function Leads() {
       qc.invalidateQueries({ queryKey: ['pipeline'] })
       toast.success(res.data.message, { label: 'View in Pipeline', onClick: () => navigate('/pipeline') })
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail ?? 'Could not convert to deal'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Could not convert to deal')),
   })
 
   // Filtered view

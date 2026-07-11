@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { toast } from '@/store/toastStore'
 
 // Human-readable labels for the fixed taxonomy (mirrors backend OUTCOME_TAXONOMY)
@@ -72,7 +72,7 @@ export default function CloseDealModal({ deal, onClose, onDone }: {
       toast.success(msg)
       onDone()
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Could not close the deal')
+      toast.error(getErrorMessage(e, 'Could not close the deal'))
     } finally {
       setSaving(false)
     }

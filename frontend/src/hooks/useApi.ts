@@ -3,6 +3,25 @@ import { useAuthStore } from '@/store/authStore'
 
 const api = axios.create({ baseURL: '/api' })
 
+/** Always returns a plain, renderable string from an API error — never the
+ * raw error object. FastAPI's own validation errors (422) return `detail`
+ * as an ARRAY of {loc, msg, type} objects, not a string; blindly rendering
+ * `err.response.data.detail` in JSX throws "Objects are not valid as a
+ * React child" and crashes the whole page (this bit a real onboarding flow
+ * — see MASTER_TRACKER.md). Every onError handler that shows a message to
+ * the user should route through this instead of reading `detail` directly. */
+export function getErrorMessage(err: any, fallback = 'Something went wrong'): string {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d: any) => (typeof d === 'string' ? d : d?.msg || JSON.stringify(d)))
+      .join('; ') || fallback
+  }
+  if (detail && typeof detail === 'object') return detail.msg || JSON.stringify(detail)
+  return err?.message || fallback
+}
+
 // ── Request: attach access token ──────────────────────────────────────────
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().accessToken

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ function TargetEditor({ period }: { period: string }) {
       qc.invalidateQueries({ queryKey: ['revenue-analytics'] })
       qc.invalidateQueries({ queryKey: ['performance'] })
     },
-    onError: (e: any) => { setSaving(null); alert(e?.response?.data?.detail ?? 'Could not save target') },
+    onError: (e: any) => { setSaving(null); alert(getErrorMessage(e, 'Could not save target')) },
   })
 
   if (isLoading) return <div className="skeleton h-32 rounded-2xl" />
@@ -254,7 +254,7 @@ function QuarterlyTargetEditor({ fyYear, activeQuarter }: { fyYear: number; acti
       })
       setEdits(e => ({ ...e, ...next }))
     },
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not load last FY targets'),
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not load last FY targets')),
   })
 
   const saveAll = useMutation({
@@ -273,7 +273,7 @@ function QuarterlyTargetEditor({ fyYear, activeQuarter }: { fyYear: number; acti
       qc.invalidateQueries({ queryKey: ['revenue-analytics'] })
       qc.invalidateQueries({ queryKey: ['performance'] })
     },
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not save targets'),
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not save targets')),
   })
 
   if (isLoading) return <div className="skeleton h-40 rounded-2xl" />

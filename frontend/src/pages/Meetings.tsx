@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/store/toastStore'
 
@@ -71,7 +71,7 @@ export default function Meetings() {
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       setForm(emptyForm); setShowAdd(false); setAddErr('')
     },
-    onError: (e: any) => setAddErr(e?.response?.data?.detail ?? 'Failed to save meeting'),
+    onError: (e: any) => setAddErr(getErrorMessage(e, 'Failed to save meeting')),
   })
 
   const convertToLead = useMutation({
@@ -81,7 +81,7 @@ export default function Meetings() {
       qc.invalidateQueries({ queryKey: ['leads'] })
       toast.success(res.data.message, { label: 'View in Leads', onClick: () => navigate('/leads') })
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail ?? 'Could not convert to lead'),
+    onError: (e: any) => toast.error(getErrorMessage(e, 'Could not convert to lead')),
   })
 
   const filtered = (meetings as any[]).filter(m => {

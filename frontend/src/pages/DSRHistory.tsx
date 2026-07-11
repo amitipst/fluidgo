@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { format } from 'date-fns'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -254,14 +254,14 @@ export default function DSRHistory() {
       qc.invalidateQueries({ queryKey: ['dsr-team-pending'] })
       qc.invalidateQueries({ queryKey: ['dsr-history'] })
     },
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Action failed')
+    onError: (e: any) => alert(getErrorMessage(e, 'Action failed'))
   })
 
   const requestEditMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       api.post(`/dsr/${id}/request-edit`, { reason }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dsr-history'] }),
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not send request')
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not send request'))
   })
 
   const grantEditMutation = useMutation({
@@ -271,7 +271,7 @@ export default function DSRHistory() {
       qc.invalidateQueries({ queryKey: ['dsr-history'] })
       qc.invalidateQueries({ queryKey: ['dsr-edit-requests'] })
     },
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Could not grant edit')
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not grant edit'))
   })
 
   const displayed = viewMode === 'mine' ? myHistory : teamPending

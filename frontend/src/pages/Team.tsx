@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 import { format } from 'date-fns'
 
@@ -102,7 +102,7 @@ export default function Team() {
       qc.invalidateQueries({ queryKey: ['users'] })
       qc.invalidateQueries({ queryKey: ['team-analytics'] })
     },
-    onError: (err: any) => setFormError(err?.response?.data?.detail ?? 'Could not create user')
+    onError: (err: any) => setFormError(getErrorMessage(err, 'Could not create user'))
   })
 
   const setStatus = useMutation({
@@ -121,7 +121,7 @@ export default function Team() {
       qc.invalidateQueries({ queryKey: ['users'] })
       qc.invalidateQueries({ queryKey: ['team-analytics'] })
     },
-    onError: (err: any) => setEditError(err?.response?.data?.detail ?? 'Could not update member')
+    onError: (err: any) => setEditError(getErrorMessage(err, 'Could not update member'))
   })
 
   function startEdit(u: any) {

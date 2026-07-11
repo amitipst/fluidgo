@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { getQuoteOfDay } from '@/lib/quotes'
 
 // Simple math captcha — prevents automated login attempts
@@ -112,8 +112,7 @@ export default function Login() {
       setAuth(res.data.user, res.data.access_token, res.data.refresh_token)
       navigate('/')
     } catch (err: any) {
-      const msg = err?.response?.data?.detail
-      setError(msg ?? 'Invalid email or password. Please try again.')
+      setError(getErrorMessage(err, 'Invalid email or password. Please try again.'))
     } finally { setLoading(false) }
   }
 

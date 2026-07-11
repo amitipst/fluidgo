@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import { format } from 'date-fns'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ function CreateSchemeForm({ period, onCreated }: { period: string; onCreated: ()
                 metric:'calls', target_value:0, reward_type:'points',
                 reward_value:'', reward_badge:'' })
     } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? 'Failed to create scheme')
+      setErr(getErrorMessage(e, 'Failed to create scheme'))
     } finally { setLoading(false) }
   }
 

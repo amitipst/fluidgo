@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { format } from 'date-fns'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
 import CloseDealModal from '@/components/CloseDealModal'
 
 const STAGES = ['All', 'cold', 'warm', 'hot', 'closed_won', 'closed_lost', 'dropped']
@@ -59,7 +59,7 @@ export default function Pipeline() {
       setForm({ company:'', stage:'cold', deal_value:'', closure_eta:'', todays_update:'', next_step:'' })
       setShowAdd(false); setAddErr('')
     },
-    onError: (e: any) => setAddErr(e?.response?.data?.detail ?? 'Failed to save deal')
+    onError: (e: any) => setAddErr(getErrorMessage(e, 'Failed to save deal'))
   })
 
   const updateDeal = useMutation({
@@ -75,7 +75,7 @@ export default function Pipeline() {
       qc.invalidateQueries({ queryKey: ['pipeline'] })
       setEditId(null)
     },
-    onError: (e: any) => alert(e?.response?.data?.detail ?? 'Failed to update deal')
+    onError: (e: any) => alert(getErrorMessage(e, 'Failed to update deal'))
   })
 
   function startEdit(d: any) {
