@@ -81,6 +81,21 @@ async def create_template(body: TemplateIn, db: AsyncSession = Depends(get_db),
     if not _can_manage_scoring(user):
         raise HTTPException(403, "Scoring admin requires regional_manager role or above")
     _validate_weights(body.parameters)
+
+    # scoring_templates.role_key has an enforced FK to org_roles.role_key
+    # (see 0003_v2_foundation.py) — auto-provision the row for a brand-new
+    # role_key instead of letting the insert below hit a raw FK-violation
+    # 500. This is what makes "+ New Template" actually work for ANY future
+    # role_key typed into the UI, not just the ones already seeded.
+    from app.models import OrgRole
+    role_exists = (await db.execute(
+        select(OrgRole).where(OrgRole.role_key == body.role_key)
+    )).scalar_one_or_none()
+    if not role_exists:
+        db.add(OrgRole(role_key=body.role_key, display_name=body.role_key.replace("_", " ").title(),
+                        parent_role_key="manager", data_scope="team"))
+        await db.flush()
+
     existing = await scoring_repo.get_active_template(db, body.role_key)
     version = 1
     if existing:

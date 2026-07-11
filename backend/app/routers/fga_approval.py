@@ -82,43 +82,60 @@ async def freeze_period(body: FreezeRequest, db: AsyncSession = Depends(get_db),
         q = q.where(User.id.in_(visible_ids))
     reps = (await db.execute(q)).scalars().all()
 
-    frozen = []
+    frozen, failed = [], []
     for rep in reps:
-        result = await compute_score(db, rep, body.period)
-        if result.get("score") is None:
-            continue  # no template mapped — skip
-        existing = (await db.execute(
-            select(ScoringResult).where(
-                ScoringResult.user_id == rep.id,
-                ScoringResult.template_id == uuid.UUID(result["template_id"]),
-                ScoringResult.period == body.period
-            ).limit(1)
-        )).scalar_one_or_none()
-        if existing and existing.approval_status not in (None, "pending_manager"):
+        try:
+            result = await compute_score(db, rep, body.period)
+            if result.get("score") is None:
+                continue  # no template mapped — skip
+
+            # scoring_results only ever had an INDEX on (user_id, template_id,
+            # period), never a UNIQUE constraint (see migration 0019) — if an
+            # earlier freeze run ever raced or double-inserted, there could be
+            # more than one row here. .scalar_one_or_none() throws
+            # MultipleResultsFound in that case, which is a real, reproducible
+            # 500 — fetch all matches instead and keep the most recent.
+            matches = (await db.execute(
+                select(ScoringResult).where(
+                    ScoringResult.user_id == rep.id,
+                    ScoringResult.template_id == uuid.UUID(result["template_id"]),
+                    ScoringResult.period == body.period
+                ).order_by(ScoringResult.computed_at.desc())
+            )).scalars().all()
+            existing = matches[0] if matches else None
+            for stale in matches[1:]:
+                await db.delete(stale)
+
+            if existing and existing.approval_status not in (None, "pending_manager"):
+                frozen.append({"user_id": str(rep.id), "name": rep.name,
+                               "score": float(existing.score), "status": existing.approval_status,
+                               "skipped": True})
+                continue
+            if existing:
+                existing.score = result["score"]
+                existing.breakdown = result["breakdown"]
+                existing.computed_at = datetime.utcnow()
+                existing.approval_status = "pending_manager"
+            else:
+                db.add(ScoringResult(
+                    user_id=rep.id,
+                    template_id=uuid.UUID(result["template_id"]),
+                    period=body.period,
+                    score=result["score"],
+                    breakdown=result.get("breakdown"),
+                    approval_status="pending_manager",
+                    computed_at=datetime.utcnow()
+                ))
             frozen.append({"user_id": str(rep.id), "name": rep.name,
-                           "score": float(existing.score), "status": existing.approval_status,
-                           "skipped": True})
-            continue
-        if existing:
-            existing.score = result["score"]
-            existing.breakdown = result["breakdown"]
-            existing.computed_at = datetime.utcnow()
-            existing.approval_status = "pending_manager"
-        else:
-            db.add(ScoringResult(
-                user_id=rep.id,
-                template_id=uuid.UUID(result["template_id"]),
-                period=body.period,
-                score=result["score"],
-                breakdown=result.get("breakdown"),
-                approval_status="pending_manager",
-                computed_at=datetime.utcnow()
-            ))
-        frozen.append({"user_id": str(rep.id), "name": rep.name,
-                       "score": result["score"], "status": "pending_manager"})
+                           "score": result["score"], "status": "pending_manager"})
+        except Exception as e:
+            # One rep's bad data (or a genuine bug) no longer takes down the
+            # freeze for everyone else — it's reported back instead, so the
+            # actual failure is visible without needing server logs.
+            failed.append({"user_id": str(rep.id), "name": rep.name, "error": str(e)})
 
     await db.commit()
-    return {"period": body.period, "frozen": len(frozen), "results": frozen}
+    return {"period": body.period, "frozen": len(frozen), "results": frozen, "failed": failed}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

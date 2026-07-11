@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { APP_VERSION } from '@/version'
 import { useAuthStore } from '@/store/authStore'
+import { useIdleLogout } from '@/hooks/useIdleLogout'
 
 // Field roles only — can submit DSR
 const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
@@ -96,6 +97,7 @@ export default function Layout() {
   const canSeeFGA     = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
   const canSeeScoring = ['regional_manager','bu_head','business_head','practice_head','ceo','super_admin'].includes(user?.role ?? '')
   const isSDM = user?.role === 'service_delivery_manager'
+  const { showWarning, secondsLeft, stayLoggedIn, logoutNow } = useIdleLogout()
 
   const isFieldRole = FIELD_ROLES.includes(user?.role ?? '')
 
@@ -269,6 +271,26 @@ export default function Layout() {
           </NavLink>
         ))}
       </nav>
+
+      {showWarning && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+          style={{ background: 'rgba(26,11,46,0.55)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center">
+            <div className="text-3xl mb-2">⏳</div>
+            <h3 className="font-display font-bold text-wep-navy text-lg mb-1">Still there?</h3>
+            <p className="text-wep-muted text-sm mb-4">
+              You'll be logged out in <span className="font-bold text-wep-orange">{secondsLeft}s</span> due to inactivity.
+            </p>
+            <div className="flex gap-2 justify-center">
+              <button onClick={stayLoggedIn} className="btn-primary flex-1">Stay logged in</button>
+              <button onClick={logoutNow}
+                className="flex-1 px-4 py-2 rounded-xl text-sm font-semibold text-wep-muted border border-wep-border">
+                Log out now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

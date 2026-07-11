@@ -1,8 +1,10 @@
 # fluidGo — FluidPro Sales Intelligence Platform
 
-> **Status:** Live on localhost · v3 architecture · July 2026
-> **Business:** fluidPro (IT Infra Managed Services) · **BU:** West
+> **Status:** Live on AWS EC2 · v3.1 architecture · July 2026
+> **Business:** fluidPro (IT Infra Managed Services) · **Tracks:** Sales · Pre-Sales · Service Delivery
 > **Stack:** React 18 PWA · FastAPI · PostgreSQL 15 · Ollama (local LLM) · Docker Compose
+>
+> **📋 For current architecture, feature status, known issues, and roadmap: see [`MASTER_TRACKER.md`](./MASTER_TRACKER.md) — it's the living source of truth (Linear hit its free-tier issue cap 2026-07-11). This README covers quick-start, project layout, and stable reference material that doesn't change every session.
 
 ---
 
@@ -31,12 +33,15 @@ Open **http://localhost** — you're running.
 
 | Role | Email | Password |
 |------|-------|----------|
-| BU Head | `amit@wepsol.com` | `Admin@2026!` |
-| Manager | `manager@fluidpro.in` | `Mgr@2026!` |
-| Sales Rep | `danish@fluidpro.in` | `Fluid@2026!` |
-| Inside Sales | `inside@fluidpro.in` | `Inside@2026!` |
+| Business Head | `amit.singh@wepsol.com` | `Admin@2026!` |
+| Super Admin | `itsupport.blr@wepsol.com` | (see password vault) |
+| Manager | `manager@fluidpro.in` | `Mgr@2026!` (⚠️ deactivated — see MASTER_TRACKER.md §6) |
+| Sales Rep | `danish@fluidpro.in` | `Fluid@2026!` (⚠️ deactivated) |
+| Inside Sales | `inside@fluidpro.in` | `Inside@2026!` (⚠️ deactivated) |
 
-> **Session expiry:** JWT access tokens expire in 15 minutes. If you see 403 errors after a long session, press **Ctrl+Shift+R** to hard-refresh — the refresh token will restore your session automatically.
+> **Session:** JWT access tokens auto-refresh via a silent retry-once
+> interceptor. Idle sessions now auto-logout after 30 minutes (warning shown
+> 60s before) — see `useIdleLogout.ts`.
 
 ---
 
@@ -88,29 +93,19 @@ Change model: update `.env` then `docker compose restart backend`.
 
 ---
 
-## 👥 Role Hierarchy (v3)
+## 👥 Role Hierarchy (v3.1)
 
-```
-CEO / super_admin  (level 99/50) — all businesses, all BUs, all data
-  └── Business Head  (level 40)  — all BUs within one business (e.g. fluidPro)
-        └── BU Head      (level 30)  — full BU (West) — can set targets, run FGA
-              └── Manager    (level 20)  — own team (direct reports via manager_id)
-                    ├── Sales Rep      (level 10) — own DSR/deals/leads only
-                    ├── Inside Sales   (level 10) — own data only
-                    └── Pre-Sales      (level 10) — own data only
-
-HR       (level 25, scope=hr)      — all users' FGA scores, no sales data
-Finance  (level 25, scope=finance) — approved FGA export only
-```
-
-### Role enforcement rules
-- **Role creation:** You can only create users at a **lower level** than yourself
-- **BU isolation:** Manager/BU Head can only onboard users to their own BU
-- **Data scope:** Manager sees only direct reports (`manager_id` FK); BU Head sees full BU
-- **Multi-BU:** A BU Head from West cannot see North BU data. CEO sees all.
+> Full current hierarchy, dual-role rules, and recursive scoping behavior:
+> see [`MASTER_TRACKER.md` §2](./MASTER_TRACKER.md#2-role-hierarchy-current-as-of-0019).
+> Summary: `CEO/super_admin → COO → Business Head (one business line, all
+> regions) → Regional Manager (one region) → Manager (full reporting chain,
+> recursive) → Rep/Inside Sales/Pre-Sales/Service Delivery Manager`. Hierarchy
+> is defined by binding `manager_id` at role-assignment time (Team page),
+> not hard-coded region/business rules — a manager's manager automatically
+> sees the whole team beneath them, any depth.
 
 ### Supported roles in Team → Onboard form
-`rep` · `inside_sales` · `pre_sales` · `manager` · `bu_head` · `business_head` · `hr` · `finance` · `ceo` · `super_admin`
+`rep` · `inside_sales` · `pre_sales` · `manager` · `service_delivery_manager` · `regional_manager` · `business_head` · `coo` · `hr` · `finance` · `ceo` · `super_admin`
 
 ---
 
@@ -181,11 +176,29 @@ Full interactive docs: **http://localhost/api/docs**
 ### Scoring
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| GET | `/api/scoring/templates` | BU Head+ | FGA weight templates |
-| POST | `/api/scoring/templates` | BU Head+ | Create/version template |
-| PATCH | `/api/scoring/templates/{id}/parameters` | BU Head+ | Update weights |
-| GET | `/api/scoring/metrics` | BU Head+ | Available metric keys |
+| GET | `/api/scoring/templates` | Regional Manager+ | FGA weight templates (any parameter count) |
+| POST | `/api/scoring/templates` | Regional Manager+ | Create/version template (auto-provisions `org_roles` row) |
+| PATCH | `/api/scoring/templates/{id}/parameters` | Regional Manager+ | Full replace — add/remove/enable/disable parameters freely |
+| PATCH | `/api/scoring/parameters/{id}/toggle` | Regional Manager+ | Quick enable/disable, no weight revalidation |
+| GET | `/api/scoring/metrics` | Regional Manager+ | Available auto-calculator metric keys |
+| GET | `/api/scoring/manual-entry/fields?role_key=` | Rep+ | Manual KPI fields for a role's active template (drives the entry form dynamically) |
+| GET/POST | `/api/scoring/manual-entry` | Rep+ (own or in-scope) | Get/submit a period's manual KPI value |
 | GET | `/api/scoring/my-score?period=` | Rep+ | Own FGA score |
+
+### Daily Operations Report (DOR) — Service Delivery
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/dor` | Service Delivery Manager | Submit/update a day's ops report |
+| GET | `/api/dor/history?month=` | Rep+ (own) | Own DOR entries for a month |
+| GET | `/api/dor/team?month=` | Manager+ | Team's DOR entries, scoped |
+| POST | `/api/dor/{id}/flag-opportunity` | Manager+ | Turn a delivery signal into a real (farming) PipelineDeal — CSG Phase 1 |
+
+### Revenue Targets (Quarterly/FY)
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/analytics/revenue/team-targets?mode=&fy=` | Manager+ | Monthly, or full FY quarterly grid |
+| POST | `/api/analytics/revenue/targets/quarterly` | Business Head+ | Bulk-set Q1-Q4 for any number of members in one call |
+| GET | `/api/analytics/revenue/targets/rollover-preview?fy=&growth_pct=` | Business Head+ | Suggests next-FY targets from prior-FY actuals + growth% |
 
 ---
 
@@ -193,15 +206,12 @@ Full interactive docs: **http://localhost/api/docs**
 
 ### Migrations (Alembic)
 
-| File | Rev | Content |
-|------|-----|---------|
-| `0001_initial_schema.py` | 0001 | users, dsr_daily, self_scores, meetings, leads, pipeline, ai_insights |
-| `0002_add_user_is_active.py` | 0002 | `users.is_active` |
-| `0003_v2_foundation.py` | 0003 | org_roles, scoring_templates/parameters/results, revenue_targets, pipeline v2 opportunity fields |
-| `0003_fga_approval_workflow.py` | 0004 | FGA approval columns on scoring_results |
-| `0005_v3_roles_incentives_gamification.py` | 0005 | business/manager_id on users, incentive_schemes, points_ledger, user_badges |
+Current head: **0019**. Full table: [`MASTER_TRACKER.md` §4](./MASTER_TRACKER.md#4-migrations-alembic).
+Highlights: `0003` = org_roles/scoring engine foundation, `0005` = v3 roles/incentives,
+`0017` = Service Delivery FGA + DOR, `0018` = CSG Phase 1 (accounts, hunting/farming),
+`0019` = fixed a real duplicate-row bug in `scoring_results`.
 
-Run all migrations: `docker compose exec backend alembic upgrade head`
+Run all migrations: `docker compose exec backend alembic upgrade head` (automatic via `update.sh`)
 
 ### Key tables
 
@@ -212,10 +222,13 @@ self_scores         — 5-dimension self-scoring linked to dsr_daily
 meetings            — F2F/virtual/call log with BANT fields
 leads               — new lead pipeline
 pipeline            — deals (extended to Opportunity in v2)
-scoring_templates   — FGA weight templates (config-driven)
-scoring_parameters  — individual weight line items
+scoring_templates   — FGA weight templates (config-driven, pct or tiered)
+scoring_parameters  — individual weight line items (tiers JSONB for banded scoring)
 scoring_results     — computed FGA scores with approval workflow
-revenue_targets     — per-user per-period targets
+manual_metric_entries — period KPI values for manual.* metric sources (Service Delivery)
+dor_daily           — Service Delivery Manager's daily operations log
+accounts            — persistent customer identity (anchors Sales + Service Delivery)
+revenue_targets     — per-user per-period targets (monthly grain; quarterly/FY editor sums these)
 ai_insights         — cached Ollama responses (6h TTL)
 incentive_schemes   — Manager/BU Head created incentive programs
 points_ledger       — gamification points earned
@@ -326,18 +339,20 @@ fluidgo/
 │   │   │   ├── scoring.py            # FGA scoring templates
 │   │   │   ├── fga_approval.py       # FGA approval workflow
 │   │   │   ├── incentives.py         # Incentive schemes & gamification
-│   │   │   └── roles.py              # Org role CRUD
+│   │   │   ├── roles.py              # Org role CRUD
+│   │   │   └── dor.py                # Daily Operations Report (Service Delivery) + opportunity flagging
 │   │   ├── services/
 │   │   │   ├── auth_service.py       # JWT + bcrypt
 │   │   │   ├── deps.py               # Route guards (require_role/level/scope)
 │   │   │   ├── ai_service.py         # Ollama prompt builder + streaming
 │   │   │   ├── rigor_service.py      # Rigor score + BANT calculator
-│   │   │   ├── scoring_engine.py     # FGA computation engine
+│   │   │   ├── scoring_engine.py     # FGA computation engine (pct + tiered)
 │   │   │   ├── deal_health_service.py # Deal health scoring
-│   │   │   └── permission_service.py # Data-scope resolver (v3 hierarchy)
+│   │   │   ├── account_service.py    # Customer identity resolution (CSG Phase 1)
+│   │   │   └── permission_service.py # Data-scope resolver (recursive hierarchy)
 │   │   ├── repositories/             # DB query helpers
 │   │   └── prompts/                  # Ollama prompt templates
-│   ├── alembic/                      # DB migrations (0001–0005)
+│   ├── alembic/                      # DB migrations (0001–0019)
 │   ├── seed.py                       # Dev seed (Danish May 2026 data)
 │   └── Dockerfile
 ├── frontend/
@@ -354,10 +369,14 @@ fluidgo/
 │   │   │   ├── Team.tsx              # Team management + performance matrix
 │   │   │   ├── RevenueIntelligence.tsx # Revenue vs target dashboard
 │   │   │   ├── FGAApproval.tsx       # FGA approval workflow (all stages)
-│   │   │   └── ScoringAdmin.tsx      # FGA weight configuration
+│   │   │   ├── ScoringAdmin.tsx      # FGA weight configuration — dynamic parameters, tier editor
+│   │   │   ├── DOREntry.tsx          # Service Delivery daily ops log + Flag Opportunity
+│   │   │   └── ManualKPIEntry.tsx    # Monthly manual.* metric entry (dynamic per template)
 │   │   ├── components/
-│   │   │   └── layout/Layout.tsx     # Dark navy sidebar + mobile nav
-│   │   ├── hooks/useApi.ts           # Axios + JWT refresh (singleton pattern)
+│   │   │   └── layout/Layout.tsx     # Dark navy sidebar + mobile nav + idle-logout warning
+│   │   ├── hooks/
+│   │   │   ├── useApi.ts             # Axios + JWT refresh (singleton pattern)
+│   │   │   └── useIdleLogout.ts      # 30-min idle timeout, warning + auto-logout
 │   │   └── store/authStore.ts        # Zustand auth state
 │   ├── tailwind.config.js            # WEPSol brand tokens
 │   ├── vite.config.ts                # PWA manifest
@@ -365,7 +384,8 @@ fluidgo/
 ├── nginx/dev.conf                    # Reverse proxy config
 ├── docker-compose.yml                # All 5 services
 ├── .env.example                      # Required env vars
-└── README.md                         # This file
+├── README.md                         # This file
+└── MASTER_TRACKER.md                 # Living architecture/status/roadmap doc (see top of this file)
 ```
 
 ---
@@ -430,6 +450,11 @@ docker compose exec backend python debug_auth.py
 
 ## 📋 Linear Sprint Status
 
+> Linear hit its free-tier issue cap 2026-07-11 — table below is a snapshot,
+> may not reflect the newest work. See [`MASTER_TRACKER.md` §5](./MASTER_TRACKER.md#5-feature--epic-status)
+> for current status, and the "Epic 9 – CSG Roadmap & Phasing" project doc
+> in Linear (a document, not an issue, since the cap blocked issue creation).
+
 | Issue | Title | Status |
 |-------|-------|--------|
 | WEP-27 | Docker Compose scaffold | ✅ Done |
@@ -452,23 +477,11 @@ docker compose exec backend python debug_auth.py
 
 ---
 
-## 🔮 What's Next (Priority Order)
+## 🔮 What's Next
 
-### Immediate — Frontend pages not yet built
-1. **Gamification UI** — `Leaderboard.tsx` + `MyProgress.tsx` + `SchemeManager.tsx`
-2. **Team.tsx v3 update** — new role dropdown (all 10 roles), manager_id assignment, business field
-3. **Analytics.tsx** — add month picker (same as Dashboard), rep selector for BU Head
-
-### Short-term (WEP-33/34)
-4. **EC2 + k3s production deploy** — use `setup-ec2.sh` + k8s manifests
-5. **CI/CD pipeline** — GitHub Actions → GHCR → k3s rolling deploy
-6. **Revenue targets setup** — set Danish's May 2026 target so FGA Business Generation score shows real data
-
-### Medium-term
-7. **WhatsApp/email DSR reminder** — 6pm daily if not submitted
-8. **Weekly PDF summary** — auto-generated for BU Head
-9. **Manager coaching notes** — inline on team DSR view
-10. **Kylas CRM sync** (WEP-42, deferred until stable)
+> Roadmap moved to [`MASTER_TRACKER.md` §7](./MASTER_TRACKER.md#7-roadmap-near--far) —
+> kept current there since it changes every session. This section previously
+> listed items (Gamification UI, Team v3, EC2 deploy) that are now all long done.
 
 ---
 
@@ -487,27 +500,24 @@ Data model supports all 4 businesses. Phase 1 = fluidPro West BU only. Phase 2 a
 
 ## ⚠️ Known Issues / Limitations
 
-- **Revenue target for FGA** — Danish has no target set for May 2026, so Business Generation (40%) scores 0. Set via `POST /api/analytics/revenue/targets`.
-- **Duplicate scoring_result rows** — if freeze is called multiple times, Danish shows 2 rows. Fixed by scoping to `(user_id, template_id, period)` in the query. Non-blocking.
+> Current, actively-maintained list: [`MASTER_TRACKER.md` §6](./MASTER_TRACKER.md#6-known-issues) —
+> this section is now historical/stable-only entries that don't change often.
+
 - **FGA period default** — FGA Approval page defaults to previous month (correct). Current month scores can only be frozen after month-end.
 - **Ollama cold start** — first AI analysis after container start takes 15–30s on CPU-only mode.
 - **PostCSS warning** — `postcss.config.js` needs `"type": "module"` in `package.json`. Non-blocking.
 
 ---
 
-## 🧾 Recent Progress (July 2026 UAT session)
+## 🧾 Recent Progress
 
-- **Fixed:** `/dsr/history` 500 error — `_edit_lock_state()` in `dsr.py` compared a tz-naive `datetime.utcnow()` against tz-aware `submitted_at`/`edit_granted_until` (Postgres `timestamptz`), raising `TypeError`. Same bug present in approve/reject, request-edit, grant-edit, and `/dsr/team/edit-requests`. All six spots now normalize via a shared `_aware()` helper and `datetime.now(timezone.utc)`. Verified live against Ishaant's account and full smoke suite (40/40).
-- **Fixed:** `smoke_test.py` was silently broken two ways — wrong port in the run command (`:80` instead of `:8000`), and 4 of its 6 test accounts (`manager@fluidpro.in`, `danish@fluidpro.in`, `sanjay.ps@fluidpro.in`, `inside@fluidpro.in`) had been deactivated. Reactivated with passwords reset to the values already documented in this README's Default Credentials table.
-- **Solved — dual-hat role mapping (business_head who also personally line-manages a team):** previously `manager_id`-based "my team" scoping in `permission_service.py` only activated for `role == 'manager'`, so a `business_head`/`bu_head` who directly manages reps (rather than delegating to a separate manager account) had no focused "my team" view — only the full-BU view. Fixed by decoupling "has direct reports" from `role` entirely:
-  - New `resolve_direct_report_ids()` in `permission_service.py` — role-independent, just checks `manager_id`.
-  - `/api/users/me`, `/api/auth/login`, `/api/auth/refresh` now return `has_direct_reports` (and count) on the user object.
-  - `/api/dsr/team` and `/api/dsr/team/pending` accept `?scope=direct` to force manager_id-only filtering, layered on top of whatever the primary role already grants.
-  - DSR History page shows a **"Whole BU" / "My Team"** toggle whenever `has_direct_reports` is true and role isn't plain `manager` (for whom it'd be redundant).
-  - This generalizes to any BU across the 4-business roadmap without new roles or schema changes — any business_head/bu_head who gets direct reports assigned via `manager_id` automatically gets the toggle.
-  - Amit Singh's direct reports set: Ishaant Hangloo, Modassir Tanweer, Sowmya N.
-  - Tracked in Linear: see WEP-41 (Role-Based Governance) sub-issue.
-- **Superseded — manager_id known limitation above:** the "manager_id not set on existing users, falls back to full-BU" limitation is now only a concern for the plain `manager` role's team-scope fallback (region+business match). BU-level dual-hat users get the explicit toggle described above instead of relying on that fallback.
+> Session-by-session log moved to [`MASTER_TRACKER.md` §8](./MASTER_TRACKER.md#8-session-log) —
+> that's the current, growing history. Entries below predate that file and
+> are kept for continuity.
+
+- **Fixed:** `/dsr/history` 500 error — `_edit_lock_state()` in `dsr.py` compared a tz-naive `datetime.utcnow()` against tz-aware `submitted_at`/`edit_granted_until` (Postgres `timestamptz`), raising `TypeError`. Same bug present in approve/reject, request-edit, grant-edit, and `/dsr/team/edit-requests`. All six spots now normalize via a shared `_aware()` helper and `datetime.now(timezone.utc)`.
+- **Fixed:** `smoke_test.py` was silently broken two ways — wrong port in the run command, and 4 of its 6 test accounts had been deactivated (left deactivated per Amit's call — see MASTER_TRACKER.md §6).
+- **Solved — dual-hat role mapping**, later generalized into the fully recursive hierarchy described in §2 above (any depth, not just one level).
 
 ---
 
