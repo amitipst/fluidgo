@@ -122,6 +122,16 @@ async def team_analytics(include_inactive: bool = False, db: AsyncSession = Depe
             "total_followups": sum(d.followups for d in dsrs),
             "total_leads":     sum(d.new_leads for d in dsrs),
             "total_proposals": sum(d.proposals for d in dsrs),
+            # Pre-Sales — best-practice KPIs for a solution/pre-sales engineer:
+            # demos and POCs run (technical proof, not just talk), proposals/
+            # solutions supported (their actual output), tech discussions and
+            # workshops (depth of engagement). Zero for Sales-track rows, since
+            # dsr_type='sales' rows never populate these columns.
+            "total_demos":           sum(d.demos_conducted for d in dsrs),
+            "total_pocs":            sum(d.pocs_conducted for d in dsrs),
+            "total_proposals_supported": sum(d.proposals_supported for d in dsrs),
+            "total_tech_discussions":    sum(d.tech_discussions for d in dsrs),
+            "total_workshops":           sum(d.workshops_conducted for d in dsrs),
             "avg_rigor":       avg_rigor,
             "rigor_label":     rigor_label(int(avg_rigor))
         })

@@ -514,12 +514,21 @@ export default function Team() {
               {trackTeamData.length ? Math.round(trackTeamData.reduce((a: number, d: any) => a + d.avg_rigor, 0) / trackTeamData.length) : '—'}
             </div>
           </div>
-          <div className="card text-center">
-            <div className="text-xs text-wep-muted uppercase tracking-wide mb-1">Total Leads</div>
-            <div className="font-display font-bold text-2xl text-wep-electric">
-              {trackTeamData.reduce((a: number, d: any) => a + d.total_leads, 0)}
+          {activeTrack === 'presales' ? (
+            <div className="card text-center">
+              <div className="text-xs text-wep-muted uppercase tracking-wide mb-1">Demos + POCs</div>
+              <div className="font-display font-bold text-2xl text-wep-electric">
+                {trackTeamData.reduce((a: number, d: any) => a + d.total_demos + d.total_pocs, 0)}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="card text-center">
+              <div className="text-xs text-wep-muted uppercase tracking-wide mb-1">Total Leads</div>
+              <div className="font-display font-bold text-2xl text-wep-electric">
+                {trackTeamData.reduce((a: number, d: any) => a + d.total_leads, 0)}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -610,7 +619,10 @@ export default function Team() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-wep-border">
-              {['Rep','DSR Today','Calls','Visits','Follow-Ups','Leads','Avg Rigor'].map(h => (
+              {(activeTrack === 'presales'
+                ? ['Rep','DSR Today','Demos','POCs','Proposals/Solutions','Tech Discussions','Avg Rigor']
+                : ['Rep','DSR Today','Calls','Visits','Follow-Ups','Leads','Avg Rigor']
+              ).map(h => (
                 <th key={h} className="text-left text-[10px] font-bold uppercase tracking-wide text-wep-muted py-2 pr-4 whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -644,10 +656,21 @@ export default function Team() {
                       </span>
                     )}
                   </td>
-                  <td className="py-3 pr-4 font-medium">{m.total_calls}</td>
-                  <td className="py-3 pr-4 font-medium">{m.total_visits}</td>
-                  <td className="py-3 pr-4 font-medium">{m.total_followups}</td>
-                  <td className="py-3 pr-4 font-medium">{m.total_leads}</td>
+                  {activeTrack === 'presales' ? (
+                    <>
+                      <td className="py-3 pr-4 font-medium">{m.total_demos}</td>
+                      <td className="py-3 pr-4 font-medium">{m.total_pocs}</td>
+                      <td className="py-3 pr-4 font-medium">{m.total_proposals_supported}</td>
+                      <td className="py-3 pr-4 font-medium">{m.total_tech_discussions}</td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="py-3 pr-4 font-medium">{m.total_calls}</td>
+                      <td className="py-3 pr-4 font-medium">{m.total_visits}</td>
+                      <td className="py-3 pr-4 font-medium">{m.total_followups}</td>
+                      <td className="py-3 pr-4 font-medium">{m.total_leads}</td>
+                    </>
+                  )}
                   <td className="py-3 pr-4">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-1.5 bg-wep-border rounded-full max-w-[60px]">
