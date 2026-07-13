@@ -218,6 +218,32 @@ time it happens.
 
 **Migrations added:** 0017, 0018, 0019 — all additive, no destructive changes.
 
+### 2026-07-13 (this session)
+Built: Pipeline update history. Today's Update / Next Step on a deal were
+overwritten in place on every Save — no trail of what a rep reported over
+time. Added `pipeline_updates` append-only table (migration 0020, soft
+references, no FK constraint — same pattern as `account_id`/
+`presales_owner_id` on `pipeline`). `PATCH /pipeline/{id}` now writes a
+history row whenever `todays_update` changes, in the same transaction as
+the deal update; existing `todays_update`/`next_step` columns stay as the
+current-state snapshot so the Pipeline list view is unchanged. New
+`GET /pipeline/{id}/updates` returns the ordered timeline (same visibility
+rule as the deal itself). `PipelineHistory.tsx` adds a collapsible "Show
+history" section to the Pipeline card edit form. Verified locally
+(`py_compile` on the three backend files, `tsc --noEmit` on the frontend —
+both clean) and pushed to `main` (commit `89e876e`); not yet deployed to
+EC2 or run against a live DB. Logged on WEP-37 (Epic 2 – Opportunity
+Intelligence) instead of a new sub-issue — workspace is over Linear's free
+issue limit, update-in-place still works.
+
+**Not resolved / next step:** this is the foundation, not the full ask —
+the actual AI trend analysis (stall detection: flag deals with no update
+in N days; momentum summary via the same Ollama call pattern as
+`generate_deal_postmortem` in pipeline.py) still needs to be built on top
+of the now-ordered `pipeline_updates` sequence.
+
+**Migrations added:** 0020 — additive, no destructive changes.
+
 ---
 
 *This file supersedes README.md's "Recent Progress" and "Known Issues"
