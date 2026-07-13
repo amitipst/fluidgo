@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
-from app.models import PipelineDeal, User, role_level
+from app.models import PipelineDeal, User, role_level, PipelineUpdate
 from app.services.deps import get_current_user
 from app.services.audit_service import audit
 
@@ -74,6 +74,23 @@ async def update_deal(deal_id: str, body: DealIn, request: Request,
         setattr(deal, k, v)
     # Any edit counts as activity — keeps "stale deal" logic honest.
     deal.last_activity_at = datetime.utcnow()
+
+    # Today's Update / Next Step used to just overwrite in place, losing the
+    # trail of what a rep reported over time. Every save that carries a new
+    # todays_update now also appends a PipelineUpdate history row (old
+    # remarks are never lost), and snapshots the stage at the time — this
+    # becomes the ordered sequence the History timeline + future AI trend
+    # analysis (stall detection, momentum) reads from.
+    if "todays_update" in updates and updates["todays_update"]:
+        db.add(PipelineUpdate(
+            deal_id=deal.id,
+            author_id=user.id,
+            update_text=deal.todays_update,
+            next_step=deal.next_step,
+            stage_at_time=deal.stage,
+            created_at=datetime.utcnow(),
+        ))
+
     await db.commit()
 
     new_value = float(deal.deal_value) if deal.deal_value is not None else None
@@ -88,6 +105,44 @@ async def update_deal(deal_id: str, body: DealIn, request: Request,
             f"{deal.company}: {', '.join(changes)}", request=request,
         )
     return {"id": deal_id, "updated": True}
+
+
+@router.get("/{deal_id}/updates")
+async def list_deal_updates(deal_id: str, db: AsyncSession = Depends(get_db),
+                            user: User = Depends(get_current_user)):
+    """Ordered remark history for a deal (newest first) — the History
+    timeline on the Pipeline card, and the input sequence for AI trend
+    analysis. Same visibility rule as the deal itself: owner, or anyone
+    whose scope includes the owner."""
+    deal = (await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))).scalar_one_or_none()
+    if not deal:
+        raise HTTPException(404, "Deal not found")
+
+    if deal.user_id != user.id and role_level(user.role) >= 20:
+        from app.services.permission_service import resolve_visible_user_ids
+        visible = await resolve_visible_user_ids(db, user)
+        if visible is not None and deal.user_id not in visible:
+            raise HTTPException(403, "You cannot view this deal's history")
+    elif deal.user_id != user.id and role_level(user.role) < 20:
+        raise HTTPException(403, "You cannot view this deal's history")
+
+    result = await db.execute(
+        select(PipelineUpdate, User.name)
+        .join(User, User.id == PipelineUpdate.author_id, isouter=True)
+        .where(PipelineUpdate.deal_id == deal_id)
+        .order_by(PipelineUpdate.created_at.desc())
+    )
+    return [
+        {
+            "id": str(entry.id),
+            "author_name": author_name,
+            "update_text": entry.update_text,
+            "next_step": entry.next_step,
+            "stage_at_time": entry.stage_at_time,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        }
+        for entry, author_name in result.all()
+    ]
 
 
 class ReassignIn(BaseModel):

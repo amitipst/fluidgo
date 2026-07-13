@@ -4,6 +4,7 @@ import { format } from 'date-fns'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 import CloseDealModal from '@/components/CloseDealModal'
+import PipelineHistory from '@/components/PipelineHistory'
 
 const STAGES = ['All', 'cold', 'warm', 'hot', 'closed_won', 'closed_lost', 'dropped']
 const PRACTICES = ['All practices', 'Cloud & Security', 'Microsoft', 'Managed Services',
@@ -95,8 +96,9 @@ export default function Pipeline() {
       todays_update: editForm.todays_update || undefined,
       next_step: editForm.next_step || undefined,
     }),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: ['pipeline'] })
+      qc.invalidateQueries({ queryKey: ['pipeline-history', id] })
       setEditId(null)
     },
     onError: (e: any) => alert(getErrorMessage(e, 'Failed to update deal'))
@@ -288,6 +290,7 @@ export default function Pipeline() {
                       <input className="form-input" value={editForm.next_step}
                         onChange={e => setEditForm(f => ({ ...f, next_step: e.target.value }))} />
                     </div>
+                    <PipelineHistory dealId={d.id} />
                     <div className="md:col-span-2 flex gap-2">
                       <button onClick={() => updateDeal.mutate(d.id)} disabled={updateDeal.isPending}
                         className="btn-primary text-sm py-1.5">

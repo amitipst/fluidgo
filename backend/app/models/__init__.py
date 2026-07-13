@@ -276,6 +276,24 @@ class PipelineDeal(Base):
     reengage_at:      Mapped[datetime]  = mapped_column(Date, nullable=True)           # when to resurface as an alert
     reengage_done:    Mapped[bool]      = mapped_column(Boolean, default=False)        # rep dismissed/actioned the alert
 
+class PipelineUpdate(Base):
+    """Append-only remark history for a pipeline deal. `todays_update`/`next_step`
+    on PipelineDeal itself stay as the current-state snapshot (list view keeps
+    working unchanged) — every PATCH that changes todays_update also writes one
+    of these rows, so old remarks are never lost. Ordered by created_at this is
+    a clean input sequence for AI trend analysis (stall detection, momentum
+    summaries) using the same Ollama call pattern as generate_deal_postmortem.
+    deal_id/author_id are soft references (no FK constraint), consistent with
+    account_id/presales_owner_id on PipelineDeal above."""
+    __tablename__ = "pipeline_updates"
+    id:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    author_id:     Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    update_text:   Mapped[str]       = mapped_column(Text, nullable=False)
+    next_step:     Mapped[str]       = mapped_column(Text, nullable=True)
+    stage_at_time: Mapped[str]       = mapped_column(String(20), nullable=True)
+    created_at:    Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
 class OrgRole(Base):
     """Additive org-hierarchy layer. Independent of `users.role` (rep|inside_sales|
     manager|regional_manager|business_head), which stays untouched for existing auth/require_role() checks."""
