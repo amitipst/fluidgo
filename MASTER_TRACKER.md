@@ -307,6 +307,54 @@ guess-fixing a system that's working as designed.
 
 ---
 
+### 2026-07-14 (this session)
+Resolved the DSR-editability investigation from the prior session: added a
+manager-facing badge instead of changing the edit-lock logic itself (which
+was confirmed working as designed). Sidebar now shows a live count, polled
+every 60s, from `GET /dsr/team/edit-requests` on the DSR nav link for any
+role that can act on it (manager/regional_manager/bu_head/business_head/
+ceo/super_admin). Also fixed a related gap found while building this:
+regional_manager+ roles had **zero** sidebar path to DSR Team review at
+all, since "My DSR Log" is `fieldOnly` and hidden for them — added a
+dedicated "DSR Approvals" nav item under Management for those roles,
+deep-linking via `?view=team` (`DSRHistory.tsx` now reads that query param
+on mount). Verified (`tsc --noEmit` clean) and deployed to EC2 alongside
+the previously-pending AI-truncation/deal-stage fixes — all three (AI
+panel truncation, lead-qualification reversal, DSR badge) confirmed live
+via `alembic current` (0021, unchanged) and 200 responses on both local
+and public HTTPS. Commits `59a55fd`, `0ca1436`.
+
+Built the AI trend analysis deferred from 2026-07-13's pipeline-history
+work, now that `pipeline_updates` gives an ordered per-deal remark
+sequence to analyse:
+- **Stall detection** (pure SQL, no LLM): `GET /pipeline` now returns
+  `days_since_activity` and `is_stalled` per deal, computed from
+  `last_activity_at` (already bumped on every PATCH). A deal counts as
+  stalled at 7+ days with no activity, but only while it's in an open
+  stage (cold/warm/hot/qualification) — `on_hold` is an intentional pause
+  and closed_* are terminal, so both are excluded. Surfaced as a
+  🐌 Stalled badge on the Pipeline card.
+- **AI momentum check** (on-demand, rep-triggered): new
+  `POST /pipeline/{id}/momentum` feeds the last 5 `pipeline_updates` rows
+  (chronological) to phi3:mini via the existing `analyse()` call pattern
+  (same as `generate_deal_postmortem`), asking for one short verdict —
+  moving forward / stalled / going in circles — with supporting evidence.
+  Deliberately rep-triggered rather than auto-run on every save, to keep
+  Ollama load bounded on the 2-vCPU host. Result caches on the deal row
+  (`ai_momentum_summary`/`ai_momentum_generated_at`, migration 0022) so
+  `GET /pipeline/{id}/momentum` can hydrate the last verdict without
+  re-running it. New `DealMomentum.tsx` component adds a "Check momentum"
+  section to the Pipeline card edit form, next to the existing history
+  timeline. Needs at least 2 logged updates to produce a verdict.
+Verified locally (`py_compile` on the three backend files, `tsc --noEmit`
+on the frontend — both clean); not yet deployed to EC2 or run against a
+live DB.
+
+**Migrations added:** 0022 — additive (two nullable columns on `pipeline`),
+no destructive changes.
+
+---
+
 *This file supersedes README.md's "Recent Progress" and "Known Issues"
 sections going forward — check here first. README.md stays the quick-start
 reference; this file is the detailed, chronological record.*

@@ -1,0 +1,12 @@
+TASK: Deal Momentum Check
+
+You are given a chronological sequence of remarks a sales rep logged on one deal (oldest first) - each is a "Today's Update" plus the "Next Step" they committed to, tagged with the pipeline stage at that time.
+
+Judge whether the deal is moving forward, stalled, or going in circles (the same next step repeated without new progress).
+
+Output exactly ONE sentence, no markdown, no extra emoji - start with one of these three labels exactly:
+✅ Moving forward:
+⚠️ Stalled:
+🔁 Going in circles:
+
+Follow it with the specific evidence from the remarks that supports your verdict. Under 35 words total. Never invent details not present in the remarks.

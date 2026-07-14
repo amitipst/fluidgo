@@ -5,6 +5,7 @@ import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 import CloseDealModal from '@/components/CloseDealModal'
 import PipelineHistory from '@/components/PipelineHistory'
+import DealMomentum from '@/components/DealMomentum'
 
 // Must match every stage the backend can actually set (pipeline.py's DealIn
 // Literal) — "qualification" (default landing stage when a lead is converted,
@@ -300,6 +301,7 @@ export default function Pipeline() {
                         onChange={e => setEditForm(f => ({ ...f, next_step: e.target.value }))} />
                     </div>
                     <PipelineHistory dealId={d.id} />
+                    <DealMomentum dealId={d.id} />
                     <div className="md:col-span-2 flex gap-2">
                       <button onClick={() => updateDeal.mutate(d.id)} disabled={updateDeal.isPending}
                         className="btn-primary text-sm py-1.5">
@@ -330,6 +332,12 @@ export default function Pipeline() {
                       {d.roadblock && (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-500">
                           ⚠️ Roadblock
+                        </span>
+                      )}
+                      {d.is_stalled && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-600"
+                          title={`No activity in ${d.days_since_activity} days`}>
+                          🐌 Stalled ({d.days_since_activity}d)
                         </span>
                       )}
                     </div>

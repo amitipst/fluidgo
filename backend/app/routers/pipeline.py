@@ -12,6 +12,15 @@ from app.services.audit_service import audit
 
 router = APIRouter()
 
+# ── Stall detection thresholds ────────────────────────────────────────────
+# Pure SQL/Python, no LLM call — computed on every list_deals() response from
+# last_activity_at (already bumped on every PATCH, see update_deal below).
+# on_hold/dropped/closed_* are deliberately excluded: on_hold is an
+# intentional pause, closed_* are terminal — "stalled" only means something
+# for a deal a rep is supposedly still actively working.
+STALL_THRESHOLD_DAYS = 7
+OPEN_STAGES = {"cold", "warm", "hot", "qualification"}
+
 class DealIn(BaseModel):
     company: str
     # Must cover every stage value any endpoint can actually put a deal into,
@@ -73,7 +82,18 @@ async def list_deals(db: AsyncSession = Depends(get_db), user: User = Depends(ge
         q = q.where(PipelineDeal.user_id.in_(visible))
     q = q.order_by(PipelineDeal.updated_at.desc())
     result = await db.execute(q)
-    return [{c.name: getattr(d, c.name) for c in d.__table__.columns} for d in result.scalars().all()]
+    now = datetime.utcnow()
+    rows = []
+    for d in result.scalars().all():
+        row = {c.name: getattr(d, c.name) for c in d.__table__.columns}
+        last_touch = d.last_activity_at or d.created_at
+        days_since = (now - last_touch).days if last_touch else None
+        row["days_since_activity"] = days_since
+        row["is_stalled"] = bool(
+            d.stage in OPEN_STAGES and days_since is not None and days_since >= STALL_THRESHOLD_DAYS
+        )
+        rows.append(row)
+    return rows
 
 @router.patch("/{deal_id}")
 async def update_deal(deal_id: str, body: DealIn, request: Request,
@@ -164,6 +184,96 @@ async def list_deal_updates(deal_id: str, db: AsyncSession = Depends(get_db),
         }
         for entry, author_name in result.all()
     ]
+
+
+# ── AI momentum check (on-demand) ──────────────────────────────────────────
+# Rep-triggered rather than auto-run on every save, to keep Ollama load
+# bounded — same reasoning as generate_deal_postmortem only firing on
+# close, not on every edit. Verdict is cached on the deal row so reopening
+# the card shows the last check without re-running it.
+MOMENTUM_MIN_UPDATES = 2  # need at least 2 remarks to judge a trend
+
+
+async def _build_momentum_context(db: AsyncSession, deal: PipelineDeal) -> tuple[str, int]:
+    """Chronological (oldest-first) remark sequence for the momentum prompt.
+    Last 5 updates is enough context for phi3:mini without an oversized prompt."""
+    result = await db.execute(
+        select(PipelineUpdate)
+        .where(PipelineUpdate.deal_id == deal.id)
+        .order_by(PipelineUpdate.created_at.desc())
+        .limit(5)
+    )
+    updates = list(reversed(result.scalars().all()))
+    lines = [
+        f"[{u.created_at.strftime('%d-%b')}, stage={u.stage_at_time or 'unknown'}] "
+        f"Update: {u.update_text}" + (f" | Next step: {u.next_step}" if u.next_step else "")
+        for u in updates
+    ]
+    context = f"Deal: {deal.company}\n\n" + "\n".join(lines)
+    return context, len(updates)
+
+
+def _check_deal_access(deal: PipelineDeal, user: User):
+    """Same visibility rule as list_deal_updates: owner, or anyone whose
+    scope includes the owner. Raises 403 if not permitted."""
+    if deal.user_id != user.id and role_level(user.role) < 20:
+        raise HTTPException(403, "You cannot access this deal")
+
+
+@router.post("/{deal_id}/momentum")
+async def check_deal_momentum(deal_id: str, db: AsyncSession = Depends(get_db),
+                              user: User = Depends(get_current_user)):
+    """Run (or re-run) the AI momentum check over this deal's pipeline_updates
+    sequence — has it moved forward, stalled, or gone in circles? Synchronous
+    (not a background task): the prompt asks for one short sentence, so it
+    finishes well under ai_service.analyse()'s timeout even on this host's
+    ~2 tok/s phi3:mini."""
+    deal = (await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))).scalar_one_or_none()
+    if not deal:
+        raise HTTPException(404, "Deal not found")
+    _check_deal_access(deal, user)
+    if deal.user_id != user.id:
+        from app.services.permission_service import resolve_visible_user_ids
+        visible = await resolve_visible_user_ids(db, user)
+        if visible is not None and deal.user_id not in visible:
+            raise HTTPException(403, "You cannot access this deal")
+
+    context, n = await _build_momentum_context(db, deal)
+    if n < MOMENTUM_MIN_UPDATES:
+        return {"status": "insufficient_history",
+                "message": f"Needs at least {MOMENTUM_MIN_UPDATES} logged updates to judge momentum — this deal has {n}."}
+
+    from app.services.ai_service import analyse
+    summary = await analyse(context, prompt_type="deal_momentum")
+    if summary.startswith("⚠️ AI analysis unavailable"):
+        raise HTTPException(503, summary)
+
+    deal.ai_momentum_summary = summary.strip()
+    deal.ai_momentum_generated_at = datetime.utcnow()
+    await db.commit()
+    return {"status": "ready", "summary": deal.ai_momentum_summary,
+            "generated_at": deal.ai_momentum_generated_at.isoformat()}
+
+
+@router.get("/{deal_id}/momentum")
+async def get_deal_momentum(deal_id: str, db: AsyncSession = Depends(get_db),
+                            user: User = Depends(get_current_user)):
+    """Last cached momentum verdict, if one has been generated."""
+    deal = (await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))).scalar_one_or_none()
+    if not deal:
+        raise HTTPException(404, "Deal not found")
+    _check_deal_access(deal, user)
+    if deal.user_id != user.id:
+        from app.services.permission_service import resolve_visible_user_ids
+        visible = await resolve_visible_user_ids(db, user)
+        if visible is not None and deal.user_id not in visible:
+            raise HTTPException(403, "You cannot access this deal")
+
+    return {
+        "status": "ready" if deal.ai_momentum_summary else "not_generated",
+        "summary": deal.ai_momentum_summary,
+        "generated_at": deal.ai_momentum_generated_at.isoformat() if deal.ai_momentum_generated_at else None,
+    }
 
 
 class ReassignIn(BaseModel):

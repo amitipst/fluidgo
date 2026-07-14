@@ -283,6 +283,11 @@ class PipelineDeal(Base):
     contract_end_date:Mapped[datetime]  = mapped_column(Date, nullable=True)
     reengage_at:      Mapped[datetime]  = mapped_column(Date, nullable=True)           # when to resurface as an alert
     reengage_done:    Mapped[bool]      = mapped_column(Boolean, default=False)        # rep dismissed/actioned the alert
+    # ── AI trend analysis over pipeline_updates (on-demand, rep-triggered) ────
+    # Verdict cached here so reopening the deal card shows the last check
+    # without re-running Ollama; see generate_deal_momentum in pipeline.py.
+    ai_momentum_summary:      Mapped[str]      = mapped_column(Text, nullable=True)
+    ai_momentum_generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class PipelineUpdate(Base):
     """Append-only remark history for a pipeline deal. `todays_update`/`next_step`
