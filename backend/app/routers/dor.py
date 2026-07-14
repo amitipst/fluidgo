@@ -1,9 +1,11 @@
 """Daily Operations Report (DOR) — Service Delivery Manager's day-to-day
-operational log. Lightweight by design (no approval workflow, unlike DSR):
-this is a running pulse for the Reports section and dashboards, not what
-feeds FGA (FGA uses ManualMetricEntry period aggregates — see scoring.py).
+operational log. Lightweight by design compared to DSR: a simple manager
+approve/reject exists (see approve_dor below), but deliberately no
+edit-lock/window - the SDM can always resubmit. This is a running pulse
+for the Reports section and dashboards, not what feeds FGA (FGA uses
+ManualMetricEntry period aggregates — see scoring.py).
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,6 +16,7 @@ from app.database import get_db
 from app.models import User, DORDaily, PipelineDeal, role_level
 from app.services.deps import get_current_user, require_level
 from app.services.account_service import get_or_create_account
+from app.services.audit_service import audit
 
 router = APIRouter()
 
@@ -51,6 +54,10 @@ def _serialize(d: DORDaily) -> dict:
         "resource_deployed": d.resource_deployed, "resource_available": d.resource_available,
         "blockers_notes": d.blockers_notes,
         "submitted_at": d.submitted_at.isoformat() if d.submitted_at else None,
+        "approval_status": d.approval_status,
+        "approved_by": str(d.approved_by) if d.approved_by else None,
+        "approved_at": d.approved_at.isoformat() if d.approved_at else None,
+        "manager_comment": d.manager_comment,
     }
 
 
@@ -72,6 +79,10 @@ async def submit_dor(body: DORIn, db: AsyncSession = Depends(get_db),
         for k, v in fields.items():
             setattr(existing, k, v)
         existing.submitted_at = datetime.utcnow()
+        # Any edit resets approval status - a corrected/rejected entry goes
+        # back to "submitted" so it's visible for (re-)review, same reasoning
+        # as DSR's submit_dsr (though DOR has no self-edit window to bypass).
+        existing.approval_status = "submitted"
         row = existing
     else:
         row = DORDaily(user_id=user.id, report_date=body.date, submitted_at=datetime.utcnow(), **fields)
@@ -127,6 +138,51 @@ async def team_dor(month: Optional[str] = None, db: AsyncSession = Depends(get_d
         row["email"] = u.email if u else None
         out.append(row)
     return out
+
+
+class DORApprovalIn(BaseModel):
+    action:  Literal["approve", "reject"]
+    comment: Optional[str] = None
+
+
+@router.post("/{dor_id}/approve")
+async def approve_dor(dor_id: str, body: DORApprovalIn, background_tasks: BackgroundTasks,
+                      db: AsyncSession = Depends(get_db),
+                      user: User = Depends(require_level(20))):
+    """Simple manager approve/reject on a DOR entry - no edit-lock/window
+    like DSR (see module docstring). Rejecting sets approval_status to
+    "rejected" with the manager's comment; the SDM can always resubmit
+    (submit_dor resets to "submitted" on any save), which is what brings
+    it back for review."""
+    from app.services.permission_service import resolve_visible_user_ids
+
+    dor = (await db.execute(select(DORDaily).where(DORDaily.id == uuid.UUID(dor_id)))).scalar_one_or_none()
+    if not dor:
+        raise HTTPException(404, "DOR entry not found")
+
+    visible = await resolve_visible_user_ids(db, user)
+    if visible is not None and dor.user_id not in visible:
+        raise HTTPException(403, "You cannot approve DOR entries outside your team")
+
+    if dor.approval_status == "approved" and body.action == "approve":
+        raise HTTPException(400, "DOR entry is already approved")
+
+    if body.action == "approve":
+        dor.approval_status = "approved"
+        dor.approved_by     = user.id
+        dor.approved_at     = datetime.utcnow()
+        dor.manager_comment = body.comment
+        summary = f"DOR approved for {dor.report_date}"
+    else:
+        dor.approval_status = "rejected"
+        dor.approved_by     = None
+        dor.approved_at     = None
+        dor.manager_comment = body.comment
+        summary = f"DOR rejected for {dor.report_date}: {body.comment or 'No reason given'}"
+
+    await db.commit()
+    background_tasks.add_task(audit, db, user, f"DOR_{body.action.upper()}", "dor", dor_id, summary)
+    return {"dor_id": dor_id, "approval_status": dor.approval_status, "action": body.action}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

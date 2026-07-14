@@ -353,6 +353,58 @@ live DB.
 **Migrations added:** 0022 — additive (two nullable columns on `pipeline`),
 no destructive changes.
 
+### 2026-07-14, later same day — production regression + 3 more fixes
+Deployed the AI trend analysis above, then Amit reported Pipeline showing
+"0 of 0 deals" in production while Opportunities (same underlying table)
+still showed all 10. Root cause: the stall-detection code just shipped
+subtracted a naive `datetime.utcnow()` from `last_activity_at`/`created_at`,
+which come back tz-aware from asyncpg on `DateTime(timezone=True)` columns
+- the exact bug class already fixed once in `dsr.py`'s `_edit_lock_state`.
+The `TypeError` 500'd `GET /pipeline`; the frontend's `useQuery` silently
+falls back to an empty array on a failed request, so it just looked like
+no deals existed, no visible error. Fixed with the same `_aware()`
+normalization pattern already established in `dsr.py`. Commit `5057f7f`.
+
+Also fixed while investigating the same report:
+- **DSR reject not clearing the pending list.** `approve_dsr`'s reject
+  branch set `approval_status` back to `"submitted"` — the exact status
+  `team/pending` filters on — so a rejected DSR immediately reappeared in
+  the same queue the manager just acted on. Reject now sets a distinct
+  `"rejected"` status; `_edit_lock_state()` always leaves it unlocked (the
+  rep must be able to fix it regardless of the 24h window), and any save
+  resets it back to `"submitted"` (existing behavior), which is what puts
+  it up for re-review. `GET /dsr/team/pending` gained a `status` query
+  param (submitted/approved/rejected/all, default submitted — existing
+  callers unaffected). `DSRHistory.tsx` adds Pending/Approved/Rejected
+  tabs in Team Approval view. Commit `cb8d835`.
+- **DOR/DMR approval — did not exist at all.** Confirmed `dor.py` had no
+  `approval_status`, no approve/reject, no edit-lock — the model docstring
+  literally said "no approval workflow, unlike DSR." Amit chose the
+  lightest of three scoping options (full DSR-equivalent workflow /
+  simple approve-reject / read-only-for-now): simple approve/reject, no
+  edit-lock or window. Migration 0023 adds `approval_status`/
+  `approved_by`/`approved_at`/`manager_comment` to `dor_daily` (same
+  shape as DSR's, minus the lock fields). New `POST /dor/{id}/approve`.
+  `submit_dor` resets `approval_status` to `"submitted"` on every save,
+  same escape hatch as DSR. There was no frontend page listing individual
+  DOR entries at all (Team.tsx's Operations tab only ever showed an
+  aggregated monthly rollup) — added a "pending DORs awaiting review"
+  card above that matrix, reusing the same `dor-team` query already
+  fetched there, rather than building a whole new page. Commit pending.
+- **Team meetings showing only 1 for a Business Head — investigated, not
+  a bug.** `list_meetings`'s `scope=team` correctly uses
+  `resolve_visible_user_ids` (same helper Pipeline/Opportunities use, and
+  Opportunities was visibly returning the full 10-deal BU scope). Meeting
+  Intelligence is a separate, manually-logged BANT record - `Meeting(` is
+  only ever instantiated in `create_meeting`, nothing auto-populates it
+  from DSR calls/visits. Most likely explanation: reps are filling DSR
+  daily counters but not separately using "Log Meeting." Flagged as an
+  adoption gap, not a defect - same class of finding as the DSR-edit
+  investigation two sessions ago.
+
+**Migrations added:** 0023 — additive (four nullable/defaulted columns on
+`dor_daily`), no destructive changes.
+
 ---
 
 *This file supersedes README.md's "Recent Progress" and "Known Issues"

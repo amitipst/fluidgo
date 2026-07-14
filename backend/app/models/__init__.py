@@ -404,6 +404,13 @@ class DORDaily(Base):
     resource_available:    Mapped[int]       = mapped_column(Integer, nullable=True)
     blockers_notes:        Mapped[str]       = mapped_column(Text, nullable=True)
     submitted_at:          Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # ── Simple manager approval (no edit-lock/window, unlike DSR) ─────────────
+    # Any save resets this to "submitted" (see submit_dor in dor.py), so a
+    # rejected entry naturally reappears for review once the SDM resubmits.
+    approval_status:       Mapped[str]       = mapped_column(String(20), default="submitted", nullable=False)
+    approved_by:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    approved_at:            Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    manager_comment:        Mapped[str]       = mapped_column(String(500), nullable=True)
 
 class Account(Base):
     """CSG Phase 1 — the persistent customer identity that Sales pipeline

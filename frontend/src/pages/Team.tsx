@@ -285,6 +285,18 @@ export default function Team() {
     onError: (err: any) => setEditError(getErrorMessage(err, 'Could not update member'))
   })
 
+  // Simple approve/reject for individual DOR entries — no edit-lock/window
+  // like DSR (the SDM can always resubmit; rejecting just resets it to
+  // "submitted" once resaved). Lives on the existing Operations tab rather
+  // than a new page, right above the aggregated matrix it already fetches.
+  const [dorComment, setDorComment] = useState<Record<string, string>>({})
+  const approveDor = useMutation({
+    mutationFn: ({ id, action, comment }: { id: string; action: 'approve' | 'reject'; comment?: string }) =>
+      api.post(`/dor/${id}/approve`, { action, comment }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dor-team'] }),
+    onError: (err: any) => alert(getErrorMessage(err, 'Could not update DOR entry'))
+  })
+
   function startEdit(u: any) {
     setEditingId(u.id)
     setEditError('')
@@ -596,6 +608,52 @@ export default function Team() {
           ) : null}
         </div>
       )}
+
+      {/* Pending DOR entries — individual, actionable rows (the matrix below
+          is an aggregate rollup and has no per-entry approve/reject). */}
+      {isOpsTrack && (() => {
+        const pendingDors = dorTeamMonth.filter((d: any) => d.approval_status === 'submitted')
+        return pendingDors.length > 0 ? (
+          <div className="card mb-6 border-l-4 border-l-blue-400">
+            <div className="font-bold text-sm text-wep-navy mb-3">
+              🛠️ {pendingDors.length} pending DOR{pendingDors.length > 1 ? 's' : ''} awaiting review
+            </div>
+            <div className="space-y-2">
+              {pendingDors.map((d: any) => (
+                <div key={d.id} className="flex items-center justify-between gap-3 text-sm flex-wrap border-b border-wep-border/50 pb-2 last:border-0 last:pb-0">
+                  <div className="min-w-0">
+                    <span className="font-semibold">{d.name}</span>
+                    <span className="text-wep-muted"> — {format(new Date(d.date), 'd MMM')}</span>
+                    {d.client_account && <span className="text-wep-muted"> · {d.client_account}</span>}
+                    <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                      d.status === 'critical' ? 'bg-red-50 text-red-600' :
+                      d.status === 'at_risk'  ? 'bg-amber-50 text-amber-600' : 'bg-teal-50 text-teal-600'
+                    }`}>
+                      {d.status.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input className="form-input py-1 text-xs w-40"
+                      placeholder="Comment (optional)"
+                      value={dorComment[d.id] || ''}
+                      onChange={e => setDorComment(c => ({ ...c, [d.id]: e.target.value }))} />
+                    <button onClick={() => approveDor.mutate({ id: d.id, action: 'approve', comment: dorComment[d.id] || undefined })}
+                      disabled={approveDor.isPending}
+                      className="text-xs font-bold px-3 py-1.5 rounded-lg text-white" style={{ background: '#059669' }}>
+                      ✅ Approve
+                    </button>
+                    <button onClick={() => approveDor.mutate({ id: d.id, action: 'reject', comment: dorComment[d.id] || 'Please review and resubmit' })}
+                      disabled={approveDor.isPending}
+                      className="text-xs font-bold px-3 py-1.5 rounded-lg text-white" style={{ background: '#DC2626' }}>
+                      ↩ Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null
+      })()}
 
       {/* Team matrix — Sales/PreSales (DSR-based) or Operations (DOR-based) */}
       {isOpsTrack ? (
