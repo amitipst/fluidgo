@@ -441,6 +441,33 @@ deployed to EC2.
 **Migrations added:** 0024 — additive (new `scheme_winners` table), no
 destructive changes.
 
+### 2026-07-14, same day — HR nav trim + read-only Activity Logs
+After deploying the HR fixes above, Amit tested as an actual HR user
+(Pankaj Sharma) and flagged two more things: Leads/Pipeline/Opportunities/
+Analytics/My Schemes are sales-pipeline concepts HR has no use for, and HR
+needs to see rigor scores + logs for DSR/DMR(pre-sales)/DOR — read-only,
+no approve/reject.
+
+- `Layout.tsx`: those five nav items were already tagged `salesOnly` and
+  excluded for `isSDM`, but not for HR — extended the same filter to HR.
+  Meetings deliberately stays (not tagged `salesOnly`, shared across Sales
+  and Delivery already).
+- New `ActivityLogs.tsx`: read-only page, three tabs (Sales DSR / Pre-Sales
+  DMR / Service Delivery DOR — "DMR" is Amit's term for what the backend
+  just calls `dsr_type='presales'` on the same `dsr_daily` table; flagging
+  this mapping in case it's wrong), month picker, no action buttons at
+  all. Deliberately built as a NEW page rather than reusing DSRHistory.tsx/
+  Team.tsx (which have approve/reject/manage-team actions baked in) — this
+  keeps the "read-only for HR" guarantee structural rather than relying on
+  remembering to hide buttons correctly on a shared page. No backend
+  changes needed: both `GET /dsr/team/pending?status=all` and
+  `GET /dor/team` already work for HR today (`require_level(20)`, HR is
+  level 25) — this page just renders them without the action affordances.
+  Nav link gated to `hr`/`finance` only (managers already have full
+  read+action access via the existing pages).
+Verified locally (`tsc --noEmit` clean); no migration, pure frontend +
+existing-endpoint reuse; not yet deployed to EC2.
+
 ---
 
 *This file supersedes README.md's "Recent Progress" and "Known Issues"

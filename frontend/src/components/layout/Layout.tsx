@@ -36,6 +36,11 @@ const NAV_MANAGER = [
 const NAV_DSR_APPROVALS = { to: '/dsr/history?view=team', icon: '📝', label: 'DSR Approvals' }
 const NAV_FGA     = { to: '/fga-approval',  icon: '🏆', label: 'FGA Approval' }
 const NAV_SCHEME_WINNERS = { to: '/scheme-winners', icon: '🎉', label: 'Scheme Winners' }
+// Read-only rigor/log audit view — HR and Finance only. Deliberately NOT
+// shown to manager-tier roles, who already have full read+action access
+// to the same data via DSR History → Team and the Team page's Operations
+// tab; this exists specifically for roles that shouldn't get those actions.
+const NAV_ACTIVITY_LOGS = { to: '/activity-logs', icon: '🗂️', label: 'Activity Logs' }
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
 
@@ -119,6 +124,7 @@ export default function Layout() {
 
   const isFieldRole   = FIELD_ROLES.includes(user?.role ?? '')
   const isDsrManager  = DSR_MANAGER_ROLES.includes(user?.role ?? '')
+  const canSeeActivityLogs = ['hr', 'finance'].includes(user?.role ?? '')
 
   // Pending DSR edit-request count, surfaced as a sidebar badge so it
   // doesn't sit unseen inside DSR History → Team tab. Polled every 60s.
@@ -131,13 +137,16 @@ export default function Layout() {
   })
   const dsrEditRequestCount = dsrEditRequests.length
 
+  const isHR = user?.role === 'hr'
+
   // Remove DSR items for non-field roles; remove gamification from core if manager+;
-  // Service Delivery doesn't work Sales pipeline concepts (Leads/Pipeline/
-  // Opportunities/Analytics/Schemes) — Meetings stays, since client meetings
-  // are just as real for delivery as for sales.
+  // Service Delivery and HR don't work Sales pipeline concepts (Leads/
+  // Pipeline/Opportunities/Analytics/Schemes) — Meetings stays, since
+  // client meetings are just as real for delivery as for sales, and isn't
+  // tagged salesOnly in the first place.
   const coreNav = NAV_CORE.filter(n => {
     if ((n as any).fieldOnly && !isFieldRole) return false
-    if ((n as any).salesOnly && isSDM) return false
+    if ((n as any).salesOnly && (isSDM || isHR)) return false
     if (n.to === '/gamification' && canSeeTeam) return false
     return true
   })
@@ -212,6 +221,7 @@ export default function Layout() {
                 <SideLink {...NAV_DSR_APPROVALS} badge={dsrEditRequestCount} />}
               {canSeeFGA     && <SideLink {...NAV_FGA} />}
               {canSeeFGA     && <SideLink {...NAV_SCHEME_WINNERS} />}
+              {canSeeActivityLogs && <SideLink {...NAV_ACTIVITY_LOGS} />}
             </>
           )}
 

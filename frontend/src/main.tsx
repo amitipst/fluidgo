@@ -22,6 +22,7 @@ import ScoringAdmin from '@/pages/ScoringAdmin'
 import SystemHealth from '@/pages/SystemHealth'
 import FGAApproval from '@/pages/FGAApproval'
 import SchemeWinners from '@/pages/SchemeWinners'
+import ActivityLogs from '@/pages/ActivityLogs'
 import Gamification from '@/pages/Gamification'
 import Help from '@/pages/Help'
 import DOREntry from '@/pages/DOREntry'
@@ -107,6 +108,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="scheme-winners" element={
                 <ProtectedRoute roles={MGMT_FINANCE}>
                   <SchemeWinners />
+                </ProtectedRoute>
+              } />
+              <Route path="activity-logs" element={
+                <ProtectedRoute roles={['hr','finance','super_admin']}>
+                  <ActivityLogs />
                 </ProtectedRoute>
               } />
               {/* Admin */}
