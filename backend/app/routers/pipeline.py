@@ -14,7 +14,16 @@ router = APIRouter()
 
 class DealIn(BaseModel):
     company: str
-    stage: Literal["cold", "warm", "hot", "closed_won", "closed_lost"] = "cold"
+    # Must cover every stage value any endpoint can actually put a deal into,
+    # not just the ones the Pipeline edit form's own dropdown offers - PATCH
+    # always sends the full DealIn body, so an unchanged-but-unlisted current
+    # value fails validation and blocks saving ANY field on that deal.
+    # "qualification" comes from Leads.convert_lead_to_deal (ConvertLeadIn
+    # defaults to it); "on_hold"/"dropped" come from close_deal's outcome
+    # taxonomy. Missing these was the "can't edit/reverse a converted lead"
+    # bug - every PATCH on such a deal 422'd on the stage field alone.
+    stage: Literal["cold", "warm", "hot", "qualification", "on_hold", "dropped",
+                   "closed_won", "closed_lost"] = "cold"
     todays_update: Optional[str] = None
     roadblock: bool = False
     next_step: Optional[str] = None

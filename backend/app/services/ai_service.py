@@ -29,19 +29,25 @@ async def analyse(context: str, model: str = None, prompt_type: str = "daily_ins
     m = model or settings.OLLAMA_MODEL
     prompt = build_prompt(context, prompt_type)
     try:
-        # Measured reality: phi3:mini on this 2-vCPU host generates ~2 tokens/sec,
-        # so 350 tokens = ~176s. Since generation is now fully background (never
-        # tied to an HTTP request or login), we can afford a generous ceiling.
-        # 250 tokens keeps the typical run near ~125s while still giving a full
-        # 4-part answer; 360s ceiling absorbs cold-start reload + variance.
-        async with httpx.AsyncClient(timeout=360) as client:
+        # Measured reality: phi3:mini on this 2-vCPU host generates ~2 tokens/sec.
+        # The daily_insight prompt asks for 4 markdown sections (Rigor Assessment,
+        # Top Priorities, Gaps, This Week) in "under 220 words" - but 220 words of
+        # prose plus markdown headers/emoji/bullets runs well past 220 *tokens*
+        # (word:token ratio is >1 with formatting overhead), and phi3:mini doesn't
+        # reliably self-truncate at the word target anyway. The previous 250-token
+        # cap was cutting generation off mid-sentence before the model reached its
+        # own "This Week" section - that's the truncated Dashboard panel bug.
+        # 400 tokens = ~200s typical; 420s ceiling still absorbs cold-start reload
+        # + variance on top of that with real margin (was ~235s of margin at 250
+        # tokens/125s, now ~220s at 400 tokens/200s - comparable safety headroom).
+        async with httpx.AsyncClient(timeout=420) as client:
             resp = await client.post(
                 f"{settings.OLLAMA_URL}/api/generate",
                 json={"model": m, "prompt": prompt, "stream": False,
                       # Ollama unloads the model after 5min idle by default. Keep
                       # it warm for 2h so back-to-back generations skip the reload.
                       "keep_alive": "2h",
-                      "options": {"temperature": 0.3, "num_predict": 250}}
+                      "options": {"temperature": 0.3, "num_predict": 400}}
             )
             resp.raise_for_status()
             return resp.json().get("response", "No response from model.")

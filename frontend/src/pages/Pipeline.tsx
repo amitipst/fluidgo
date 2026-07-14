@@ -6,19 +6,28 @@ import { useAuthStore } from '@/store/authStore'
 import CloseDealModal from '@/components/CloseDealModal'
 import PipelineHistory from '@/components/PipelineHistory'
 
-const STAGES = ['All', 'cold', 'warm', 'hot', 'closed_won', 'closed_lost', 'dropped']
+// Must match every stage the backend can actually set (pipeline.py's DealIn
+// Literal) — "qualification" (default landing stage when a lead is converted,
+// see Leads.convert_lead_to_deal) and "on_hold" (a close_deal outcome) were
+// missing here, so the Edit form's Stage dropdown had no option matching a
+// deal actually sitting in either state: the <select> rendered with nothing
+// selected, and a rep couldn't move it into a normal stage. Same underlying
+// gap as the backend Literal fix in pipeline.py — fix both together or the
+// bug just moves between them.
+const STAGES = ['All', 'cold', 'warm', 'qualification', 'hot', 'on_hold', 'closed_won', 'closed_lost', 'dropped']
 const PRACTICES = ['All practices', 'Cloud & Security', 'Microsoft', 'Managed Services',
                    'Network', 'End User Computing', 'Cybersecurity', 'Azure']
 const today = format(new Date(), 'yyyy-MM-dd')
 
 const stageCfg: Record<string, { label: string; color: string; dot: string }> = {
-  cold:        { label: 'Cold',        color: 'text-sky-600 bg-sky-50',      dot: '#0EA5E9' },
-  warm:        { label: 'Warm',        color: 'text-amber-600 bg-amber-50',  dot: '#D97706' },
-  hot:         { label: '🔥 Hot',      color: 'text-red-600 bg-red-50',      dot: '#DC2626' },
-  closed_won:  { label: '✅ Won',       color: 'text-green-700 bg-green-50',  dot: '#059669' },
-  closed_lost: { label: '❌ Lost',     color: 'text-gray-500 bg-gray-100',   dot: '#9CA3AF' },
-  on_hold:     { label: '⏸ On Hold',   color: 'text-amber-600 bg-amber-50',  dot: '#D97706' },
-  dropped:     { label: '🚫 Dropped',  color: 'text-gray-400 bg-gray-50',    dot: '#D1D5DB' },
+  cold:          { label: 'Cold',           color: 'text-sky-600 bg-sky-50',       dot: '#0EA5E9' },
+  warm:          { label: 'Warm',           color: 'text-amber-600 bg-amber-50',   dot: '#D97706' },
+  qualification: { label: 'Qualification',  color: 'text-purple-600 bg-purple-50', dot: '#92278E' },
+  hot:           { label: '🔥 Hot',         color: 'text-red-600 bg-red-50',       dot: '#DC2626' },
+  closed_won:    { label: '✅ Won',          color: 'text-green-700 bg-green-50',   dot: '#059669' },
+  closed_lost:   { label: '❌ Lost',        color: 'text-gray-500 bg-gray-100',    dot: '#9CA3AF' },
+  on_hold:       { label: '⏸ On Hold',      color: 'text-amber-600 bg-amber-50',   dot: '#D97706' },
+  dropped:       { label: '🚫 Dropped',     color: 'text-gray-400 bg-gray-50',     dot: '#D1D5DB' },
 }
 
 function fmt(v: number) {
