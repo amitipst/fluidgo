@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
@@ -20,6 +20,20 @@ router = APIRouter()
 # for a deal a rep is supposedly still actively working.
 STALL_THRESHOLD_DAYS = 7
 OPEN_STAGES = {"cold", "warm", "hot", "qualification"}
+
+def _aware(dt):
+    """Normalize a datetime to UTC-aware so it's safe to compare/subtract.
+    Postgres timestamptz columns come back tz-aware via asyncpg, but this
+    file (like the rest of the codebase) writes naive datetime.utcnow()
+    values - subtracting the two raises TypeError. Same bug class, same
+    fix pattern as dsr.py's _aware() (that mismatch caused the earlier
+    /dsr/history 500; this one caused list_deals' new stall-detection
+    subtraction to 500, which is why Pipeline silently showed 0 deals -
+    the frontend's useQuery falls back to an empty array on a failed
+    request instead of surfacing the error)."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 class DealIn(BaseModel):
     company: str
@@ -82,11 +96,11 @@ async def list_deals(db: AsyncSession = Depends(get_db), user: User = Depends(ge
         q = q.where(PipelineDeal.user_id.in_(visible))
     q = q.order_by(PipelineDeal.updated_at.desc())
     result = await db.execute(q)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     rows = []
     for d in result.scalars().all():
         row = {c.name: getattr(d, c.name) for c in d.__table__.columns}
-        last_touch = d.last_activity_at or d.created_at
+        last_touch = _aware(d.last_activity_at) or _aware(d.created_at)
         days_since = (now - last_touch).days if last_touch else None
         row["days_since_activity"] = days_since
         row["is_stalled"] = bool(
