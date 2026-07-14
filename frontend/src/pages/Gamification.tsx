@@ -36,8 +36,9 @@ function ProgressBar({ pct, achieved }: { pct: number; achieved: boolean }) {
 }
 
 // ── Scheme card ───────────────────────────────────────────────────────────────
-function SchemeCard({ scheme, onPause, canManage }: {
+function SchemeCard({ scheme, onPause, canManage, onDetect, detecting, detectResult }: {
   scheme: any; onPause?: (id:string) => void; canManage?: boolean
+  onDetect?: (id:string) => void; detecting?: boolean; detectResult?: any
 }) {
   return (
     <div className={`card group hover:border-wep-border-strong transition-all ${
@@ -102,6 +103,27 @@ function SchemeCard({ scheme, onPause, canManage }: {
               ? `₹${Number(scheme.current_value).toLocaleString('en-IN')} of ₹${Number(scheme.target_value).toLocaleString('en-IN')}`
               : `${scheme.current_value?.toFixed(scheme.metric.includes('avg') ? 1 : 0)} of ${scheme.target_value}`}
           </div>
+        </div>
+      )}
+
+      {/* Detect Winners — scans everyone the scheme applies to and creates
+          SchemeWinner records for anyone who's hit target. Points/badge/
+          recognition credit immediately; cash stops at pending_hr for
+          the HR review queue (see Scheme Winners page). */}
+      {canManage && onDetect && scheme.status === 'active' && (
+        <div className="mt-3 pt-3 border-t border-wep-border/50">
+          <button onClick={() => onDetect(scheme.id)} disabled={detecting}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60 disabled:opacity-40">
+            {detecting ? '⏳ Scanning…' : '🔍 Detect Winners'}
+          </button>
+          {detectResult && (
+            <span className="ml-2 text-xs text-wep-muted">
+              {detectResult.newly_detected.length === 0
+                ? 'No new achievers this run.'
+                : `${detectResult.newly_detected.length} new winner${detectResult.newly_detected.length > 1 ? 's' : ''}${
+                    scheme.reward_type === 'cash' ? ' — sent to HR for review' : ' — credited'}.`}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -241,6 +263,17 @@ export default function Gamification() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schemes'] }),
   })
 
+  const [detectResults, setDetectResults] = useState<Record<string, any>>({})
+  const detectWinners = useMutation({
+    mutationFn: (id: string) => api.post(`/incentives/schemes/${id}/detect-winners`).then(r => r.data),
+    onSuccess: (data, id) => {
+      setDetectResults(r => ({ ...r, [id]: data }))
+      qc.invalidateQueries({ queryKey: ['leaderboard'] })
+      qc.invalidateQueries({ queryKey: ['scheme-winners'] })
+    },
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not detect winners')),
+  })
+
   const managerSchemes = isManager ? schemes : progress?.schemes ?? []
 
   return (
@@ -315,7 +348,10 @@ export default function Gamification() {
             <>
               {managerSchemes.map((s: any) => (
                 <SchemeCard key={s.id} scheme={s} canManage
-                  onPause={id => pauseScheme.mutate(id)} />
+                  onPause={id => pauseScheme.mutate(id)}
+                  onDetect={id => detectWinners.mutate(id)}
+                  detecting={detectWinners.isPending && detectWinners.variables === s.id}
+                  detectResult={detectResults[s.id]} />
               ))}
               {!managerSchemes.length && (
                 <div className="card text-center py-10">

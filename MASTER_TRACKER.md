@@ -405,6 +405,42 @@ Also fixed while investigating the same report:
 **Migrations added:** 0023 — additive (four nullable/defaulted columns on
 `dor_daily`), no destructive changes.
 
+### 2026-07-14, same day — HR role investigation + scheme winner validation
+Amit reported HR's login was "of no use" and asked for an architect-level
+review, given HR should be approving FGA and validating scheme winners.
+Two distinct findings:
+
+- **FGA Approval was a nav bug, not missing functionality.** The backend
+  was already fully correct for HR — `resolve_visible_user_ids` explicitly
+  grants HR org-wide visibility ("FGA audit only"), and `fga_approval.py`'s
+  HR review step (`pending_hr` → approve/override/dispute → `pending_vp`)
+  works exactly as designed. The bug: `Layout.tsx`'s Management section was
+  gated on `(canSeeTeam || canSeeRevenue)`, and HR is in neither list —
+  so the FGA Approval link (despite `canSeeFGA` already including HR) never
+  rendered, and the whole Management section was invisible to HR. Fixed by
+  adding `canSeeFGA` to that gate.
+- **Scheme winner validation genuinely didn't exist.** `incentives.py`'s
+  "achieved" was just a boolean computed on the fly in Gamification.tsx's
+  progress view — nothing was ever persisted, and `PointsLedger` was never
+  actually written to by anything despite the model existing since v3.
+  Amit chose: HR sign-off gate before payout, cash-only (points/badges
+  stay automatic). Built: new `scheme_winners` table (migration 0024) with
+  a status machine (`pending_hr` → `approved`/`rejected`, plus a `paid`
+  flag); `POST /incentives/schemes/{id}/detect-winners` scans everyone a
+  scheme applies to and is now the first thing that actually credits
+  `PointsLedger`/`UserBadge` (points/badge/recognition auto-approve
+  immediately; cash stops at `pending_hr`); `GET /incentives/winners`,
+  `POST /incentives/winners/{id}/review`, `POST /incentives/winners/{id}
+  /mark-paid`. Frontend: "🔍 Detect Winners" button on manager scheme
+  cards in Gamification.tsx, new `SchemeWinners.tsx` review page (Pending/
+  Approved/Rejected tabs, same visual pattern as DSR/DOR approval), nav
+  link gated on `canSeeFGA` (same audience as FGA Approval).
+Verified locally (`py_compile` + `tsc --noEmit` both clean); not yet
+deployed to EC2.
+
+**Migrations added:** 0024 — additive (new `scheme_winners` table), no
+destructive changes.
+
 ---
 
 *This file supersedes README.md's "Recent Progress" and "Known Issues"

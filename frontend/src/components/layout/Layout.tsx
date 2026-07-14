@@ -35,6 +35,7 @@ const NAV_MANAGER = [
 // pending edit requests live. Deep-links straight into the Team view.
 const NAV_DSR_APPROVALS = { to: '/dsr/history?view=team', icon: '📝', label: 'DSR Approvals' }
 const NAV_FGA     = { to: '/fga-approval',  icon: '🏆', label: 'FGA Approval' }
+const NAV_SCHEME_WINNERS = { to: '/scheme-winners', icon: '🎉', label: 'Scheme Winners' }
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
 
@@ -190,7 +191,12 @@ export default function Layout() {
             </>
           )}
 
-          {(canSeeTeam || canSeeRevenue) && (
+          {/* HR/Finance see neither Team nor Revenue but DO see FGA Approval
+              (canSeeFGA includes them) - without canSeeFGA here too, the
+              whole Management section (and the FGA link inside it) was
+              invisible to them, even though the backend has always granted
+              them a real, working review step in the FGA pipeline. */}
+          {(canSeeTeam || canSeeRevenue || canSeeFGA) && (
             <>
               <NavSection label="Management" />
               {canSeeTeam    && <SideLink {...NAV_MANAGER[0]} />}
@@ -205,6 +211,7 @@ export default function Layout() {
               {isDsrManager && !isFieldRole &&
                 <SideLink {...NAV_DSR_APPROVALS} badge={dsrEditRequestCount} />}
               {canSeeFGA     && <SideLink {...NAV_FGA} />}
+              {canSeeFGA     && <SideLink {...NAV_SCHEME_WINNERS} />}
             </>
           )}
 

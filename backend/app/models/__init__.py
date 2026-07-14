@@ -100,6 +100,37 @@ class PointsLedger(Base):
     source:      Mapped[str]       = mapped_column(String(50), nullable=True)
     awarded_at:  Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
+class SchemeWinner(Base):
+    """One user's achievement of one incentive scheme in one period - the
+    validation/payout gate that didn't exist before this: an "achieved"
+    scheme was just a boolean computed on the fly (Gamification.tsx's
+    progress view), never persisted, and PointsLedger was never actually
+    written to by anything despite the model existing. detect_winners()
+    in incentives.py is what creates these rows and is what now actually
+    credits points/badges. Cash rewards stop at status='pending_hr' until
+    HR reviews - real money shouldn't move on an unreviewed auto-computed
+    number. Snapshots reward_type/value/badge at detection time so a later
+    edit to the scheme doesn't retroactively change what was promised."""
+    __tablename__ = "scheme_winners"
+    id:             Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scheme_id:      Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id:        Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    period:         Mapped[str]       = mapped_column(String(7), nullable=False)
+    achieved_value: Mapped[float]     = mapped_column(Numeric(12, 2), nullable=False)
+    target_value:   Mapped[float]     = mapped_column(Numeric(12, 2), nullable=False)
+    reward_type:    Mapped[str]       = mapped_column(String(20), nullable=False)   # cash|points|badge|recognition
+    reward_value:   Mapped[float]     = mapped_column(Numeric(12, 2), nullable=True)
+    reward_badge:   Mapped[str]       = mapped_column(String(50), nullable=True)
+    # points/badge/recognition are low-stakes and auto-approve on detection;
+    # cash requires HR sign-off before it's treated as payable money.
+    status:         Mapped[str]       = mapped_column(String(20), default="pending_hr", nullable=False)
+    hr_reviewed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    hr_reviewed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    hr_comment:     Mapped[str]       = mapped_column(String(500), nullable=True)
+    paid:           Mapped[bool]      = mapped_column(Boolean, default=False, nullable=False)
+    paid_at:        Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    detected_at:    Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
 class UserBadge(Base):
     __tablename__ = "user_badges"
     id:          Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

@@ -15,9 +15,10 @@ from datetime import datetime
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
-from app.models import (User, IncentiveScheme, PointsLedger, UserBadge,
+from app.models import (User, IncentiveScheme, PointsLedger, UserBadge, SchemeWinner,
                          DSRDaily, Meeting, PipelineDeal, role_level)
 from app.services.deps import get_current_user, require_level
+from app.services.permission_service import resolve_visible_user_ids
 from app.services.rigor_service import calculate_rigor_score, bant_score
 
 router = APIRouter()
@@ -275,3 +276,160 @@ async def award_badge(user_id: str, badge_key: str, period: str,
                           badge_key=badge_key, badge_name=badge_info["name"], period=period))
         await db.commit()
     return {"awarded": True, "badge": badge_info}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheme winner validation — HR sign-off gate before cash payout
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WinnerReviewIn(BaseModel):
+    action:  Literal["approve", "reject"]
+    comment: Optional[str] = None
+
+
+def _serialize_winner(w: SchemeWinner, rep_name: str = None, scheme_name: str = None) -> dict:
+    return {
+        "id": str(w.id), "scheme_id": str(w.scheme_id), "user_id": str(w.user_id),
+        "rep_name": rep_name, "scheme_name": scheme_name,
+        "period": w.period,
+        "achieved_value": float(w.achieved_value), "target_value": float(w.target_value),
+        "reward_type": w.reward_type,
+        "reward_value": float(w.reward_value) if w.reward_value is not None else None,
+        "reward_badge": w.reward_badge,
+        "status": w.status,
+        "hr_comment": w.hr_comment,
+        "hr_reviewed_at": w.hr_reviewed_at.isoformat() if w.hr_reviewed_at else None,
+        "paid": w.paid,
+        "paid_at": w.paid_at.isoformat() if w.paid_at else None,
+        "detected_at": w.detected_at.isoformat() if w.detected_at else None,
+    }
+
+
+@router.post("/schemes/{scheme_id}/detect-winners")
+async def detect_winners(scheme_id: str, db: AsyncSession = Depends(get_db),
+                         user: User = Depends(require_level(20))):
+    """Scan every field-role user this scheme applies to; for anyone who has
+    hit target and doesn't already have a SchemeWinner row for this scheme+
+    period, create one. This is the ONLY place PointsLedger/UserBadge
+    actually get written — Gamification.tsx's progress view only ever
+    COMPUTED 'achieved' on the fly, nothing was ever persisted or paid out.
+    Points/badge/recognition credit immediately (low-stakes, auto-approved);
+    cash stops at status='pending_hr' — see review_winner below. Same
+    same-BU-or-above-level authorization as update_scheme."""
+    s = (await db.execute(select(IncentiveScheme).where(IncentiveScheme.id == uuid.UUID(scheme_id)))).scalar_one_or_none()
+    if not s:
+        raise HTTPException(404, "Scheme not found")
+    if s.bu != user.bu and role_level(user.role) < 50:
+        raise HTTPException(403, "Cannot detect winners for schemes outside your BU")
+
+    FIELD_ROLES = {"rep", "inside_sales", "pre_sales", "manager"}
+    from sqlalchemy import or_
+    candidates = (await db.execute(select(User).where(
+        User.business == s.business, User.is_active == True,
+        User.role.in_(FIELD_ROLES),
+        or_(User.bu == s.bu, s.bu == "Global", s.scope == "business"),
+    ))).scalars().all()
+
+    newly_detected = []
+    for rep in candidates:
+        current = await _compute_metric(db, rep, s.period, s.metric)
+        if s.target_value and current < float(s.target_value):
+            continue
+        existing = (await db.execute(select(SchemeWinner).where(
+            SchemeWinner.scheme_id == s.id, SchemeWinner.user_id == rep.id,
+            SchemeWinner.period == s.period,
+        ))).scalar_one_or_none()
+        if existing:
+            continue
+
+        auto_approve = s.reward_type in ("points", "badge", "recognition")
+        db.add(SchemeWinner(
+            scheme_id=s.id, user_id=rep.id, period=s.period,
+            achieved_value=current, target_value=s.target_value,
+            reward_type=s.reward_type, reward_value=s.reward_value, reward_badge=s.reward_badge,
+            status="approved" if auto_approve else "pending_hr",
+            detected_at=datetime.utcnow(),
+        ))
+
+        if s.reward_type == "points" and s.reward_value:
+            db.add(PointsLedger(user_id=rep.id, scheme_id=s.id, period=s.period,
+                                points=int(s.reward_value), reason=f"Scheme achieved: {s.name}",
+                                source="scheme_winner"))
+        elif s.reward_type == "badge" and s.reward_badge and s.reward_badge in BADGES:
+            existing_badge = (await db.execute(select(UserBadge).where(
+                UserBadge.user_id == rep.id, UserBadge.badge_key == s.reward_badge,
+                UserBadge.period == s.period,
+            ))).scalar_one_or_none()
+            if not existing_badge:
+                db.add(UserBadge(user_id=rep.id, badge_key=s.reward_badge,
+                                 badge_name=BADGES[s.reward_badge]["name"], period=s.period))
+
+        newly_detected.append({"user_id": str(rep.id), "name": rep.name,
+                               "value": current, "auto_approved": auto_approve})
+
+    await db.commit()
+    return {"scheme_id": scheme_id, "period": s.period, "newly_detected": newly_detected}
+
+
+@router.get("/winners")
+async def list_winners(status: Literal["pending_hr", "approved", "rejected", "all"] = "pending_hr",
+                       db: AsyncSession = Depends(get_db),
+                       user: User = Depends(require_level(20))):
+    """HR's review queue by default — cash winners awaiting sign-off before
+    payout. Scoped the same way every other team-facing endpoint is
+    (resolve_visible_user_ids; HR's scope='hr' already grants org-wide
+    visibility, same as FGA audit)."""
+    q = select(SchemeWinner)
+    if status != "all":
+        q = q.where(SchemeWinner.status == status)
+    winners = (await db.execute(q.order_by(SchemeWinner.detected_at.desc()))).scalars().all()
+
+    visible = await resolve_visible_user_ids(db, user)
+    out = []
+    for w in winners:
+        if visible is not None and w.user_id not in visible:
+            continue
+        rep = (await db.execute(select(User).where(User.id == w.user_id))).scalar_one_or_none()
+        sch = (await db.execute(select(IncentiveScheme).where(IncentiveScheme.id == w.scheme_id))).scalar_one_or_none()
+        out.append(_serialize_winner(w, rep.name if rep else "Unknown", sch.name if sch else "Unknown scheme"))
+    return out
+
+
+@router.post("/winners/{winner_id}/review")
+async def review_winner(winner_id: str, body: WinnerReviewIn,
+                        db: AsyncSession = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    """HR sign-off gate before a cash reward is treated as payable — same
+    HR_ALLOWED shape as fga_approval.hr_review (HR, or manager-tier+, or
+    super_admin)."""
+    HR_ALLOWED = {"hr", "super_admin", "manager", "regional_manager", "bu_head",
+                  "business_head", "practice_head", "ceo"}
+    if user.role not in HR_ALLOWED:
+        raise HTTPException(403, "Winner review requires HR or manager-level access")
+    w = (await db.execute(select(SchemeWinner).where(SchemeWinner.id == uuid.UUID(winner_id)))).scalar_one_or_none()
+    if not w:
+        raise HTTPException(404, "Winner record not found")
+    if w.status != "pending_hr":
+        raise HTTPException(400, f"Cannot review: status is '{w.status}'")
+    w.status = "approved" if body.action == "approve" else "rejected"
+    w.hr_comment = body.comment
+    w.hr_reviewed_by = user.id
+    w.hr_reviewed_at = datetime.utcnow()
+    await db.commit()
+    return _serialize_winner(w)
+
+
+@router.post("/winners/{winner_id}/mark-paid")
+async def mark_winner_paid(winner_id: str, db: AsyncSession = Depends(get_db),
+                           user: User = Depends(require_level(20))):
+    """Terminal step for an approved cash winner — confirms the money
+    actually moved. Only valid from status='approved'."""
+    w = (await db.execute(select(SchemeWinner).where(SchemeWinner.id == uuid.UUID(winner_id)))).scalar_one_or_none()
+    if not w:
+        raise HTTPException(404, "Winner record not found")
+    if w.status != "approved":
+        raise HTTPException(400, "Only an approved winner can be marked paid")
+    w.paid = True
+    w.paid_at = datetime.utcnow()
+    await db.commit()
+    return _serialize_winner(w)
