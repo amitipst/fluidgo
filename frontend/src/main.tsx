@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
 import Login from '@/pages/Login'
 import ResetPassword from '@/pages/ResetPassword'
+import ChangePassword from '@/pages/ChangePassword'
 import Layout from '@/components/layout/Layout'
 import Dashboard from '@/pages/Dashboard'
 import DSREntry from '@/pages/DSREntry'
@@ -35,6 +36,11 @@ const qc = new QueryClient({
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user } = useAuthStore()
   if (!user) return <Navigate to="/login" replace />
+  // Hard gate: forced password change (first login, or an admin reset)
+  // takes priority over every other route, regardless of role. Backend
+  // enforces this independently too (deps.get_current_user) — this is the
+  // UX side of the same rule, not the security boundary itself.
+  if (user.must_change_password) return <Navigate to="/change-password" replace />
   if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />
   return <>{children}</>
 }
@@ -51,6 +57,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/change-password" element={<ChangePassword />} />
             <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<Dashboard />} />
               {/* DSR */}

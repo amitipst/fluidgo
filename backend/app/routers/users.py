@@ -7,7 +7,7 @@ import uuid
 from app.database import get_db
 from app.models import User, ROLE_HIERARCHY, role_level
 from app.services.deps import get_current_user, require_level
-from app.services.auth_service import hash_password
+from app.services.auth_service import hash_password, generate_temp_password
 from app.services.permission_service import resolve_visible_user_ids
 from app.services.audit_service import audit
 
@@ -140,7 +140,11 @@ async def create_user(
         region=body.region,
         business=body.business,
         is_active=True,
-        manager_id=uuid.UUID(body.manager_id) if body.manager_id else None
+        manager_id=uuid.UUID(body.manager_id) if body.manager_id else None,
+        # Every new account is forced to set its own password at first login
+        # — the admin-chosen onboarding password (above) is a one-time
+        # handoff value, never the password the person actually keeps using.
+        must_change_password=True,
     )
     db.add(new_user)
     await db.commit()
@@ -257,6 +261,59 @@ async def set_user_status(
         request=request,
     )
     return _serialize(target)
+
+@router.post("/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_level(20))
+):
+    """Admin/manager-initiated password reset. Generates a random temp
+    password server-side (the actor never types or chooses it — see
+    generate_temp_password) and forces the target to set their own real
+    password at next login (must_change_password=True). The temp password
+    is returned ONCE in this response and never stored or logged anywhere
+    in plaintext; the actor is responsible for handing it to the user
+    out-of-band (call, WhatsApp, in person) — same model as AWS/Azure admin
+    consoles use for this exact action."""
+    target = (await db.execute(select(User).where(User.id == uuid.UUID(user_id)))).scalar_one_or_none()
+    if not target:
+        raise HTTPException(404, "User not found")
+
+    visible = await resolve_visible_user_ids(db, actor)
+    if visible is not None and target.id not in visible:
+        raise HTTPException(403, "You cannot reset this user's password")
+
+    # Same hierarchy rule as update_user/set_user_status: cannot act on an
+    # account at or above your own level, self excepted. A password reset is
+    # at least as sensitive as any profile edit those endpoints already gate.
+    if actor.role != "super_admin" and actor.id != target.id:
+        if role_level(actor.role) <= role_level(target.role):
+            raise HTTPException(403,
+                f"Cannot reset the password of a '{target.role}' account — it is at or above your own role level.")
+
+    temp_password = generate_temp_password()
+    target.password_hash = hash_password(temp_password)
+    target.must_change_password = True
+    await db.commit()
+
+    # Deliberately no password value anywhere in the audit description —
+    # audit log is visible to more people than should ever see a plaintext
+    # credential, even a temporary one.
+    background_tasks.add_task(
+        audit, db, actor, "PASSWORD_RESET_BY_ADMIN", "user", str(target.id),
+        f"Password reset for {target.name} ({target.email}) by {actor.name}",
+        request=request,
+    )
+    return {
+        "id": str(target.id),
+        "email": target.email,
+        "temp_password": temp_password,
+        "message": "Share this password with the user out-of-band. It will not be shown again — "
+                   "they will be required to set their own password on next login.",
+    }
 
 @router.get("/roles")
 async def list_roles(user: User = Depends(require_level(20))):

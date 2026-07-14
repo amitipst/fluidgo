@@ -19,13 +19,24 @@ regional_manager is a genuinely lower, narrower tier (one region, not the
 whole business) — NOT an alias for business_head. "bu_head" is kept in
 ROLE_HIERARCHY purely for backward compatibility with any existing data.
 """
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.models import User, role_level
 from app.services.auth_service import decode_token
+
+# Paths a user with must_change_password=True is still allowed to hit — just
+# enough to see their own profile, set a real password, and log out. Every
+# other endpoint is blocked server-side (not just hidden in the UI) until
+# they've cleared it via POST /auth/change-password. Exact-path match,
+# method-agnostic on purpose (keeps this list short and easy to eyeball).
+_PASSWORD_CHANGE_ALLOWLIST = {
+    "/api/auth/change-password",
+    "/api/auth/logout",
+    "/api/users/me",
+}
 
 # auto_error=False so a MISSING Authorization header reaches our own handler
 # below (returning a clean 401 the frontend refresh-interceptor recognises)
@@ -41,6 +52,7 @@ FIELD_ROLES    = {"rep", "inside_sales", "pre_sales"}
 ALL_ROLES      = MANAGER_ROLES | FIELD_ROLES | {"hr", "finance"}
 
 async def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: AsyncSession = Depends(get_db)
 ) -> User:
@@ -69,6 +81,14 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account deactivated")
+
+    if getattr(user, "must_change_password", False) and request.url.path not in _PASSWORD_CHANGE_ALLOWLIST:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must set a new password before continuing.",
+            headers={"X-Password-Change-Required": "true"},
+        )
+
     return user
 
 

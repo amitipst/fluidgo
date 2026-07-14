@@ -60,7 +60,8 @@ const emptyForm = {
 // sections can't drift out of sync with each other.
 function MemberRow({ u, allUsers, currentUserId, editingId, setEditingId, startEdit,
                       canManageTarget, setStatus, editForm, setEditForm,
-                      assignableRoles, potentialManagers, updateUser, editError, saveEdit }: any) {
+                      assignableRoles, potentialManagers, updateUser, editError, saveEdit,
+                      resetPassword }: any) {
   return (
     <div key={u.id} className="border-b border-wep-border/50 py-2 text-sm">
       <div className="flex items-center justify-between">
@@ -89,6 +90,20 @@ function MemberRow({ u, allUsers, currentUserId, editingId, setEditingId, startE
               className="text-xs font-semibold px-3 py-1 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60"
             >
               {editingId === u.id ? 'Cancel' : '✏️ Edit'}
+            </button>
+          )}
+          {u.is_active && canManageTarget(u) && (
+            <button
+              disabled={resetPassword.isPending}
+              onClick={() => {
+                if (window.confirm(`Reset ${u.name}'s password? They will need to set a new one at next login.`)) {
+                  resetPassword.mutate({ id: u.id, name: u.name })
+                }
+              }}
+              className="text-xs font-semibold px-3 py-1 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 disabled:opacity-40"
+              title="Generates a temp password and forces them to set a new one at next login"
+            >
+              🔑 Reset Password
             </button>
           )}
           {canManageTarget(u) ? (
@@ -243,6 +258,21 @@ export default function Team() {
       qc.invalidateQueries({ queryKey: ['users'] })
       qc.invalidateQueries({ queryKey: ['team-analytics'] })
     }
+  })
+
+  // Admin-initiated password reset — backend generates the temp password
+  // (never something the admin types/reuses) and forces the target to set
+  // their own real one at next login. Shown once via resetPwResult; never
+  // persisted client-side beyond this in-memory state.
+  const [resetPwResult, setResetPwResult] = useState<{ name: string; email: string; temp_password: string } | null>(null)
+  const [resetPwError, setResetPwError] = useState('')
+  const resetPassword = useMutation({
+    mutationFn: ({ id }: { id: string; name: string }) => api.post(`/users/${id}/reset-password`),
+    onSuccess: (res, variables) => {
+      setResetPwError('')
+      setResetPwResult({ name: variables.name, email: res.data.email, temp_password: res.data.temp_password })
+    },
+    onError: (err: any) => setResetPwError(getErrorMessage(err, 'Could not reset password'))
   })
 
   const updateUser = useMutation({
@@ -447,7 +477,8 @@ export default function Team() {
                   canManageTarget={canManageTarget} setStatus={setStatus}
                   editForm={editForm} setEditForm={setEditForm}
                   assignableRoles={assignableRoles} potentialManagers={potentialManagers}
-                  updateUser={updateUser} editError={editError} saveEdit={saveEdit} />
+                  updateUser={updateUser} editError={editError} saveEdit={saveEdit}
+                  resetPassword={resetPassword} />
               ))}
             </div>
           </div>
@@ -463,7 +494,8 @@ export default function Team() {
                   canManageTarget={canManageTarget} setStatus={setStatus}
                   editForm={editForm} setEditForm={setEditForm}
                   assignableRoles={assignableRoles} potentialManagers={potentialManagers}
-                  updateUser={updateUser} editError={editError} saveEdit={saveEdit} />
+                  updateUser={updateUser} editError={editError} saveEdit={saveEdit}
+                  resetPassword={resetPassword} />
               ))}
             </div>
           </div>
@@ -685,6 +717,45 @@ export default function Team() {
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* One-time reveal of an admin-generated temp password — never
+          persisted, never shown again after this modal closes. */}
+      {resetPwResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl p-6 max-w-[420px] w-full shadow-xl">
+            <div className="text-2xl mb-2">🔑</div>
+            <h3 className="font-display font-bold text-lg text-wep-navy mb-1">Password reset for {resetPwResult.name}</h3>
+            <p className="text-xs text-wep-muted mb-4">
+              Share this with them out-of-band (call, WhatsApp, in person) — it will not be shown again.
+              They'll be required to set their own password the moment they log in.
+            </p>
+            <div className="bg-wep-surface rounded-xl p-3 mb-4">
+              <div className="text-[10px] uppercase tracking-wide text-wep-muted mb-1">Email</div>
+              <div className="text-sm font-medium text-wep-navy mb-3">{resetPwResult.email}</div>
+              <div className="text-[10px] uppercase tracking-wide text-wep-muted mb-1">Temporary Password</div>
+              <div className="flex items-center gap-2">
+                <code className="text-sm font-mono font-bold text-wep-navy bg-white rounded-lg px-2 py-1 flex-1 select-all">
+                  {resetPwResult.temp_password}
+                </code>
+                <button
+                  onClick={() => navigator.clipboard.writeText(resetPwResult.temp_password)}
+                  className="text-xs font-semibold px-2 py-1 rounded-lg bg-wep-navy text-white hover:opacity-90"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+            <button onClick={() => setResetPwResult(null)} className="btn-primary w-full text-sm">
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+      {resetPwError && !resetPwResult && (
+        <div className="fixed bottom-4 right-4 z-50 bg-red-50 text-red-600 text-xs px-4 py-2 rounded-lg shadow-lg">
+          {resetPwError}
+        </div>
       )}
     </div>
   )

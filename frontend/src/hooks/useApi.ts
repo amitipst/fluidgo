@@ -69,7 +69,18 @@ api.interceptors.response.use(
       }
     }
 
-    // 403 is an authorisation issue (not auth) — don't redirect, let component handle it
+    // Backend forces a password change server-side (deps.get_current_user),
+    // not just at login — e.g. an admin resets someone's password while
+    // they're mid-session on a still-valid access token. Every other call
+    // they make 403s with this header; catch it once here instead of
+    // surfacing a confusing "forbidden" error on whatever screen they're on.
+    if (error.response?.status === 403 && error.response?.headers?.['x-password-change-required']
+        && window.location.pathname !== '/change-password') {
+      window.location.href = '/change-password'
+      return new Promise(() => {}) // navigation is happening; don't resolve/reject into the caller
+    }
+
+    // 403 is otherwise an authorisation issue (not auth) — don't redirect, let component handle it
     return Promise.reject(error)
   }
 )

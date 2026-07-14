@@ -20,6 +20,14 @@ class User(Base):
     is_active:    Mapped[bool]       = mapped_column(Boolean, default=True)
     org_role_key: Mapped[str]        = mapped_column(String(30), nullable=True)
     created_at:   Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # ── Password security ─────────────────────────────────────────────────────
+    # Set true on every new onboarding (create_user) and every admin-triggered
+    # reset (POST /users/{id}/reset-password). Enforced server-side in
+    # deps.get_current_user - not just a frontend nag screen - so a user
+    # cannot use the app at all until they've set their own password via
+    # POST /auth/change-password, which clears this and stamps password_changed_at.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    password_changed_at:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
 # ── Role hierarchy ────────────────────────────────────────────────────────────
 # "BU" (Business Unit) means a BUSINESS LINE at WEP — fluidpro | fluidprint |

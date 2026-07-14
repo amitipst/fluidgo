@@ -5,8 +5,10 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models import User
 from app.services.auth_service import (verify_password, create_access_token,
-                                        create_refresh_token, decode_token, hash_password)
+                                        create_refresh_token, decode_token, hash_password,
+                                        validate_password_policy)
 from app.services.audit_service import audit
+from app.services.deps import get_current_user
 
 router = APIRouter()
 
@@ -42,6 +44,11 @@ async def _user_dict(user: User, db: AsyncSession) -> dict:
         # a small team) — lets the frontend show a "My Team" toggle without a
         # separate 'manager' role. See permission_service.resolve_direct_report_ids.
         "has_direct_reports": len(direct_reports) > 0,
+        # Forces the frontend straight to /change-password on login, before
+        # anything else renders. Backend enforces this independently too
+        # (deps.get_current_user) — this flag is for UX, not the security
+        # boundary itself.
+        "must_change_password": getattr(user, "must_change_password", False),
     }
 
 @router.post("/login", response_model=TokenResponse)
@@ -215,9 +222,6 @@ async def reset_password(
     """Consumes a valid, unused, unexpired token and sets the new password."""
     from app.models import PasswordResetToken
 
-    if len(body.new_password) < 8:
-        raise HTTPException(400, "Password must be at least 8 characters")
-
     token_hash = _hash_token(body.token)
     prt = (await db.execute(
         select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
@@ -231,7 +235,13 @@ async def reset_password(
     if not user or not user.is_active:
         raise HTTPException(400, "Account not found or inactive.")
 
+    policy_error = validate_password_policy(body.new_password, name=user.name, email=user.email)
+    if policy_error:
+        raise HTTPException(400, policy_error)
+
     user.password_hash = hash_password(body.new_password)
+    user.must_change_password = False
+    user.password_changed_at = datetime.utcnow()
     prt.used_at = datetime.utcnow()
     # Invalidate any other outstanding tokens for this user
     others = (await db.execute(
@@ -250,3 +260,44 @@ async def reset_password(
         f"Password reset for {user.email}", request=request
     )
     return {"message": "Your password has been reset. You can now sign in."}
+
+
+# ── Self-service change password (logged in) ──────────────────────────────────
+# This is the endpoint the forced first-login / post-admin-reset flow calls.
+# Distinct from /reset-password above: this requires the CURRENT password
+# (proves the person at the keyboard is actually the account holder, not
+# just someone who intercepted a still-valid access token) rather than a
+# emailed token. Both paths converge on the same policy check and both clear
+# must_change_password, so neither can be used to dodge the other's rules.
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(400, "Current password is incorrect.")
+
+    policy_error = validate_password_policy(body.new_password, name=user.name, email=user.email)
+    if policy_error:
+        raise HTTPException(400, policy_error)
+
+    if verify_password(body.new_password, user.password_hash):
+        raise HTTPException(400, "New password must be different from your current password.")
+
+    user.password_hash = hash_password(body.new_password)
+    user.must_change_password = False
+    user.password_changed_at = datetime.utcnow()
+    await db.commit()
+
+    background_tasks.add_task(
+        audit, db, user, "PASSWORD_CHANGED", "auth", None,
+        f"Password changed by {user.email}", request=request
+    )
+    return {"message": "Password updated."}

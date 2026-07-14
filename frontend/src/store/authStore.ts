@@ -33,6 +33,7 @@ export interface AuthUser {
   manager_id?:  string | null
   org_role_key?: OrgRoleKey
   has_direct_reports?: boolean   // dual-hat support — see backend permission_service.py
+  must_change_password?: boolean // forces /change-password before anything else — see ProtectedRoute in main.tsx
 }
 
 interface AuthState {
@@ -40,6 +41,7 @@ interface AuthState {
   accessToken:  string | null
   refreshToken: string | null
   setAuth:  (user: AuthUser, access: string, refresh: string) => void
+  updateUser: (patch: Partial<AuthUser>) => void
   clearAuth: () => void
 }
 
@@ -51,6 +53,11 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       setAuth: (user, accessToken, refreshToken) =>
         set({ user, accessToken, refreshToken }),
+      // Patch fields on the current user without a full re-login — e.g.
+      // clearing must_change_password the moment /auth/change-password
+      // succeeds, so ProtectedRoute stops redirecting on the very next render.
+      updateUser: (patch) =>
+        set((s) => (s.user ? { user: { ...s.user, ...patch } } : s)),
       clearAuth: () =>
         set({ user: null, accessToken: null, refreshToken: null }),
     }),
