@@ -49,9 +49,21 @@ async def create_deal(body: DealIn, db: AsyncSession = Depends(get_db),
 
 @router.get("")
 async def list_deals(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    result = await db.execute(
-        select(PipelineDeal).where(PipelineDeal.user_id == user.id).order_by(PipelineDeal.updated_at.desc())
-    )
+    """Scoped the same way Opportunities already is: reps see their own
+    deals, manager/regional_manager/business_head see their whole visible
+    hierarchy via resolve_visible_user_ids (business_head = all regions in
+    the business). This was hardcoded to user.id only - Pipeline was
+    silently showing just the actor's own deals regardless of role, while
+    Opportunities (same underlying `pipeline` table) showed the correct
+    scoped set. That's why a Business Head's Pipeline view looked like a
+    handful of personal deals instead of the whole BU."""
+    from app.services.permission_service import resolve_visible_user_ids
+    visible = await resolve_visible_user_ids(db, user)
+    q = select(PipelineDeal)
+    if visible is not None:
+        q = q.where(PipelineDeal.user_id.in_(visible))
+    q = q.order_by(PipelineDeal.updated_at.desc())
+    result = await db.execute(q)
     return [{c.name: getattr(d, c.name) for c in d.__table__.columns} for d in result.scalars().all()]
 
 @router.patch("/{deal_id}")
