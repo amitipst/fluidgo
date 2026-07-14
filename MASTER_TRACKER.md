@@ -246,6 +246,43 @@ of the now-ordered `pipeline_updates` sequence.
 
 ---
 
+### 2026-07-14 (this session)
+Built: forced password change security hardening. Audited existing auth
+first — bcrypt hashing, mandatory JWT_SECRET, short-lived access tokens,
+single-use hashed reset tokens, and no-enumeration login/forgot-password
+were already solid. What was missing: no must_change_password flag, no
+admin-initiated reset (only the email-link self-service flow existed), no
+logged-in "change my password" endpoint at all.
+
+Added: `must_change_password` + `password_changed_at` on users (migration
+0021, backfilled true for all existing rows — nobody grandfathered out).
+Enforced server-side in `deps.get_current_user` via a path allowlist, not
+just a frontend redirect — a still-valid access token cannot be used for
+anything else until the password is changed. New
+`POST /auth/change-password` (self-service, requires current password) and
+`POST /users/{id}/reset-password` (admin/manager, generates a random temp
+password server-side — the actor never chooses one — returned once,
+never logged). NIST 800-63B aligned policy (min 10 chars, no forced
+complexity classes, blocks common passwords + name/email substrings),
+shared between change-password and the existing reset-password endpoint so
+they can't drift apart. Frontend: `ChangePassword.tsx`, `ProtectedRoute`
+hard-gate, axios interceptor catches the mid-session case (admin resets
+a password while the user is already logged in on a valid token), Team.tsx
+"Reset Password" action with a one-time temp-password reveal modal.
+
+**Important operational note — every existing UAT user, including Amit,
+will hit the forced change-password screen on their very next action after
+this deploys**, since the migration backfills `must_change_password=true`
+for all pre-existing rows. This is intentional (see rationale above) but
+is a real behavior change on a live UAT with real reps — worth a heads-up
+to the pilot team before/immediately after deploying, not a silent surprise.
+
+**Migrations added:** 0021 — additive (two nullable/defaulted columns), no
+destructive changes, but see the operational note above for the app-level
+behavior change it triggers.
+
+---
+
 *This file supersedes README.md's "Recent Progress" and "Known Issues"
 sections going forward — check here first. README.md stays the quick-start
 reference; this file is the detailed, chronological record.*
