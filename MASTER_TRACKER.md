@@ -281,6 +281,30 @@ to the pilot team before/immediately after deploying, not a silent surprise.
 destructive changes, but see the operational note above for the app-level
 behavior change it triggers.
 
+Also fixed two rep-reported bugs same session: (1) Dashboard AI Performance
+Intelligence panel was cutting off mid-sentence - `ai_service.analyse()`'s
+`num_predict=250` was too low for the 4-section ~220-word `daily_insight`
+prompt; bumped to 400 (timeout 360->420 to match). (2) Any deal sitting at
+stage `qualification` (the default when a lead is converted, see
+`Leads.convert_lead_to_deal`) or `on_hold` (a `close_deal` outcome) could not
+be edited or saved at all - `pipeline.py`'s `DealIn.stage` Literal only
+allowed cold/warm/hot/closed_won/closed_lost, and PATCH always sends the
+full body, so the unchanged-but-invalid current stage 422'd regardless of
+which field the rep was actually trying to edit. This is what reps meant by
+"once a lead is qualified we can't reverse it" - fixed by expanding the
+Literal (backend) and the STAGES/stageCfg dropdown (frontend) to cover every
+stage value the app can actually produce.
+
+**Investigated, not a code bug:** reps also reported DSRs "not editable."
+The 24h self-edit window + manager request/grant-exception flow
+(`request-edit` -> `team/edit-requests` -> `grant-edit`) is fully wired
+end-to-end on both backend and frontend (DSRHistory.tsx fetches AND renders
+pending requests in the Team view). Most likely explanation is reps hitting
+the window and not knowing "Request Edit" exists, or managers not checking
+the Team tab - a workflow/visibility gap, not a defect. Flagged to Amit for
+a decision (longer window? a badge/notification for managers?) rather than
+guess-fixing a system that's working as designed.
+
 ---
 
 *This file supersedes README.md's "Recent Progress" and "Known Issues"
