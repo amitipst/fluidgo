@@ -86,6 +86,13 @@ def _edit_lock_state(dsr: DSRDaily) -> dict:
         return {"locked": True, "reason": "approved",
                 "message": "Approved by your manager and cannot be edited. "
                            "Use 'Request Edit' if a correction is genuinely needed."}
+    # A rejected DSR must always be reopen-able regardless of the 24h window -
+    # the manager explicitly asked for a correction, so the window (designed
+    # to stop stale edits, not block a requested fix) shouldn't apply here.
+    # Saving it (submit_dsr always resets approval_status to "submitted" on
+    # any edit) is what puts it back in front of the manager for re-review.
+    if dsr.approval_status == "rejected":
+        return {"locked": False, "reason": None}
     window_ends = _aware(dsr.submitted_at) + SELF_EDIT_WINDOW
     if now < window_ends:
         return {"locked": False, "reason": None, "self_edit_ends_at": window_ends.isoformat()}
@@ -264,16 +271,25 @@ async def get_team_dsr(
 async def get_pending_approvals(
     month: Optional[str] = None,
     scope: Optional[str] = None,   # "direct" — see /team above
+    status: Literal["submitted", "approved", "rejected", "all"] = "submitted",
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_level(20))
 ):
-    """Returns all submitted (unapproved) DSRs for the manager's team."""
+    """Team DSRs filtered by approval_status - default "submitted" (awaiting
+    review) preserves the original behavior for existing callers. "rejected"
+    is its own status now (see approve_dsr below) rather than being folded
+    back into "submitted", so a rejected DSR correctly drops out of the
+    default pending view instead of reappearing in the same queue the
+    manager just acted on - that was the "reject doesn't remove it from the
+    list" bug. status=all removes the filter entirely."""
     from app.services.permission_service import resolve_visible_user_ids, resolve_direct_report_ids
     if scope == "direct":
         visible = await resolve_direct_report_ids(db, user)
     else:
         visible = await resolve_visible_user_ids(db, user)
-    q = select(DSRDaily).where(DSRDaily.approval_status == "submitted")
+    q = select(DSRDaily)
+    if status != "all":
+        q = q.where(DSRDaily.approval_status == status)
     if visible is not None:
         q = q.where(DSRDaily.user_id.in_(visible))
     if month:
@@ -335,7 +351,13 @@ async def approve_dsr(
         dsr.manager_comment = body.comment
         summary = f"DSR approved for {dsr.date}"
     else:  # reject
-        dsr.approval_status = "submitted"   # back to editable
+        # Distinct terminal-ish status (not "submitted") so a rejected DSR
+        # drops out of the default team/pending view instead of immediately
+        # reappearing in the same queue the manager just cleared it from.
+        # _edit_lock_state() always leaves "rejected" unlocked, and any save
+        # by the rep resets approval_status back to "submitted" (existing
+        # submit_dsr behavior), which is what puts it back up for re-review.
+        dsr.approval_status = "rejected"
         dsr.approved_by     = None
         dsr.approved_at     = None
         dsr.manager_comment = body.comment

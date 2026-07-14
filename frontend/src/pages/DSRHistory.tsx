@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/authStore'
 const STATUS_CFG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
   submitted: { label: 'Submitted',  bg: '#EFF6FF', text: '#1E40AF', dot: '#3B82F6' },
   approved:  { label: '✅ Approved', bg: '#ECFDF5', text: '#065F46', dot: '#10B981' },
+  rejected:  { label: '↩ Rejected', bg: '#FEF2F2', text: '#B91C1C', dot: '#DC2626' },
   draft:     { label: 'Draft',      bg: '#F9FAFB', text: '#6B7280', dot: '#9CA3AF' },
 }
 const rigorColor = (s: number) =>
@@ -229,6 +230,12 @@ export default function DSRHistory() {
   // for plain 'manager' role, whose scope is already direct-reports-only.
   const [teamScope, setTeamScope] = useState<'all' | 'direct'>('all')
   const canNarrowToDirectTeam = user?.has_direct_reports && user?.role !== 'manager'
+  // Team Approval status filter — defaults to Pending (the original,
+  // only-view-that-existed behavior). "Rejected" is its own tab now that
+  // rejecting a DSR sets a distinct approval_status instead of bouncing it
+  // straight back into "submitted" (which was why a just-rejected DSR
+  // never appeared to leave the pending list).
+  const [statusFilter, setStatusFilter] = useState<'submitted' | 'approved' | 'rejected'>('submitted')
 
   const isManager = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
 
@@ -239,10 +246,18 @@ export default function DSRHistory() {
     enabled:  viewMode === 'mine',
   })
 
-  // Team pending approvals
+  // Team approvals, filtered by status (Pending/Approved/Rejected tabs)
   const { data: teamPending = [], isLoading: teamLoading } = useQuery({
-    queryKey: ['dsr-team-pending', month, teamScope],
-    queryFn:  () => api.get(`/dsr/team/pending?month=${month}${teamScope === 'direct' ? '&scope=direct' : ''}`).then(r => r.data),
+    queryKey: ['dsr-team-pending', month, teamScope, statusFilter],
+    queryFn:  () => api.get(`/dsr/team/pending?month=${month}&status=${statusFilter}${teamScope === 'direct' ? '&scope=direct' : ''}`).then(r => r.data),
+    enabled:  viewMode === 'team' && isManager,
+  })
+
+  // Pending count for the tab badge — independent of statusFilter so the
+  // "Pending" tab's own count doesn't disappear while looking at another tab.
+  const { data: pendingCountData = [] } = useQuery({
+    queryKey: ['dsr-team-pending', month, teamScope, 'submitted'],
+    queryFn:  () => api.get(`/dsr/team/pending?month=${month}&status=submitted${teamScope === 'direct' ? '&scope=direct' : ''}`).then(r => r.data),
     enabled:  viewMode === 'team' && isManager,
   })
 
@@ -284,8 +299,12 @@ export default function DSRHistory() {
   const displayed = viewMode === 'mine' ? myHistory : teamPending
   const isLoading = viewMode === 'mine' ? myLoading : teamLoading
 
-  // Summary stats
-  const submitted = displayed.filter((d: any) => d.approval_status === 'submitted').length
+  // Summary stats. In Team view, "pending" always reflects the Pending tab's
+  // own count (pendingCountData) regardless of which status tab is active,
+  // so a manager looking at Approved/Rejected still sees how many need action.
+  const submitted = viewMode === 'mine'
+    ? myHistory.filter((d: any) => d.approval_status === 'submitted').length
+    : pendingCountData.length
   const approved  = displayed.filter((d: any) => d.approval_status === 'approved').length
   const avgRigor  = displayed.length
     ? Math.round(displayed.filter((d: any) => d.rigor_score > 0)
@@ -321,11 +340,36 @@ export default function DSRHistory() {
                     ? { background: 'linear-gradient(135deg,#F0115E,#C2005A)' }
                     : {}}>
                   {v.label}
-                  {v.val === 'team' && teamPending.length > 0 && (
+                  {v.val === 'team' && pendingCountData.length > 0 && (
                     <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full bg-white/20">
-                      {submitted}
+                      {pendingCountData.length}
                     </span>
                   )}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Status filter — Pending/Approved/Rejected. Rejected only exists
+              as its own tab because reject now sets a distinct approval_status
+              instead of bouncing straight back to "submitted". */}
+          {isManager && viewMode === 'team' && (
+            <div className="flex rounded-xl overflow-hidden border border-wep-border">
+              {[
+                { val:'submitted', label:'Pending' },
+                { val:'approved',  label:'Approved' },
+                { val:'rejected',  label:'Rejected' },
+              ].map(v => (
+                <button key={v.val}
+                  onClick={() => setStatusFilter(v.val as any)}
+                  className={`px-3 py-2 text-sm font-medium transition-colors ${
+                    statusFilter === v.val
+                      ? 'text-white'
+                      : 'text-wep-muted hover:text-wep-text bg-white'
+                  }`}
+                  style={statusFilter === v.val
+                    ? { background: 'linear-gradient(135deg,#F0115E,#C2005A)' }
+                    : {}}>
+                  {v.label}
                 </button>
               ))}
             </div>
@@ -407,19 +451,26 @@ export default function DSRHistory() {
         <div className="card text-center py-16">
           <div className="text-5xl mb-4">📋</div>
           <p className="font-semibold text-wep-text mb-1">
-            {viewMode === 'mine' ? `No DSRs for ${month}` : 'No pending approvals'}
+            {viewMode === 'mine' ? `No DSRs for ${month}` :
+             statusFilter === 'submitted' ? 'No pending approvals' :
+             statusFilter === 'approved'  ? 'Nothing approved yet this month' :
+                                             'Nothing rejected this month'}
           </p>
           <p className="text-wep-muted text-sm">
             {viewMode === 'mine'
               ? 'Submit your daily DSR from the Submit DSR page.'
-              : 'All DSRs for this month have been reviewed.'}
+              : statusFilter === 'submitted'
+                ? 'All DSRs for this month have been reviewed.'
+                : `Switch tabs above to see ${statusFilter === 'approved' ? 'pending or rejected' : 'pending or approved'} DSRs.`}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
           {viewMode === 'team' && (
             <div className="text-xs text-wep-muted px-1 mb-2">
-              Showing {submitted} pending approval · {approved} already approved this month
+              Showing {teamPending.length} {statusFilter} DSR{teamPending.length === 1 ? '' : 's'} for {month}
+              {statusFilter !== 'submitted' && pendingCountData.length > 0 &&
+                ` · ${pendingCountData.length} still pending your approval`}
             </div>
           )}
           {displayed.map((dsr: any) => (
