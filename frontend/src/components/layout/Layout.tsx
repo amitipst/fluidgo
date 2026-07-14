@@ -1,10 +1,16 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { APP_VERSION } from '@/version'
 import { useAuthStore } from '@/store/authStore'
 import { useIdleLogout } from '@/hooks/useIdleLogout'
+import api from '@/hooks/useApi'
 
 // Field roles only — can submit DSR
 const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
+
+// Roles that can act on DSR edit requests (matches backend require_level(20)
+// gate on GET/POST /dsr/team/edit-requests, and DSRHistory.tsx's isManager).
+const DSR_MANAGER_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin']
 
 const NAV_CORE = [
   { to: '/',              icon: '⚡', label: 'Dashboard',    exact: true },
@@ -23,6 +29,11 @@ const NAV_MANAGER = [
   { to: '/regional', icon: '🗺️', label: 'Regions'  },   // business_head+ only
   { to: '/gamification', icon: '🎮', label: 'Schemes' },
 ]
+// Manager-tier-only DSR review link. Kept separate from NAV_CORE's "My DSR
+// Log" (fieldOnly, hidden from regional_manager/business_head/ceo/super_admin)
+// since those roles otherwise have zero sidebar path to the Team tab where
+// pending edit requests live. Deep-links straight into the Team view.
+const NAV_DSR_APPROVALS = { to: '/dsr/history?view=team', icon: '📝', label: 'DSR Approvals' }
 const NAV_FGA     = { to: '/fga-approval',  icon: '🏆', label: 'FGA Approval' }
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
@@ -56,7 +67,7 @@ function SidebarLogo() {
 }
 
 // ── Sidebar nav link ──────────────────────────────────────────────────────────
-function SideLink({ to, icon, label, exact }: { to:string; icon:string; label:string; exact?:boolean }) {
+function SideLink({ to, icon, label, exact, badge }: { to:string; icon:string; label:string; exact?:boolean; badge?:number }) {
   return (
     <NavLink to={to} end={exact}
       className={({ isActive }) =>
@@ -71,7 +82,13 @@ function SideLink({ to, icon, label, exact }: { to:string; icon:string; label:st
         : {}
       }>
       <span className="text-base w-5 text-center shrink-0 leading-none">{icon}</span>
-      <span className="truncate">{label}</span>
+      <span className="truncate flex-1 min-w-0">{label}</span>
+      {!!badge && badge > 0 && (
+        <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center"
+          style={{ background: '#F0115E' }}>
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
     </NavLink>
   )
 }
@@ -99,7 +116,19 @@ export default function Layout() {
   const isSDM = user?.role === 'service_delivery_manager'
   const { showWarning, secondsLeft, stayLoggedIn, logoutNow } = useIdleLogout()
 
-  const isFieldRole = FIELD_ROLES.includes(user?.role ?? '')
+  const isFieldRole   = FIELD_ROLES.includes(user?.role ?? '')
+  const isDsrManager  = DSR_MANAGER_ROLES.includes(user?.role ?? '')
+
+  // Pending DSR edit-request count, surfaced as a sidebar badge so it
+  // doesn't sit unseen inside DSR History → Team tab. Polled every 60s.
+  const { data: dsrEditRequests = [] } = useQuery({
+    queryKey: ['dsr-edit-requests-badge'],
+    queryFn:  () => api.get('/dsr/team/edit-requests').then(r => r.data),
+    enabled:  isDsrManager,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+  const dsrEditRequestCount = dsrEditRequests.length
 
   // Remove DSR items for non-field roles; remove gamification from core if manager+;
   // Service Delivery doesn't work Sales pipeline concepts (Leads/Pipeline/
@@ -149,7 +178,8 @@ export default function Layout() {
         <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-0.5">
           <NavSection label="My Work" />
           {coreNav.map(item => (
-            <SideLink key={item.to} {...item} />
+            <SideLink key={item.to} {...item}
+              badge={item.to === '/dsr/history' && isDsrManager ? dsrEditRequestCount : undefined} />
           ))}
 
           {isSDM && (
@@ -169,6 +199,11 @@ export default function Layout() {
               {['business_head','ceo','super_admin'].includes(user?.role ?? '') &&
                 <SideLink {...NAV_MANAGER[2]} />}
               {canSeeTeam    && <SideLink {...NAV_MANAGER[3]} />}
+              {/* Regional_manager/bu_head/business_head/ceo/super_admin have no
+                  other sidebar path to DSR Team review since "My DSR Log" above
+                  is fieldOnly and hidden for them. */}
+              {isDsrManager && !isFieldRole &&
+                <SideLink {...NAV_DSR_APPROVALS} badge={dsrEditRequestCount} />}
               {canSeeFGA     && <SideLink {...NAV_FGA} />}
             </>
           )}

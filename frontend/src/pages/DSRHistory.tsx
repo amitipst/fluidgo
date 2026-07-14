@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
@@ -214,8 +215,14 @@ export default function DSRHistory() {
   const { user } = useAuthStore()
   const qc = useQueryClient()
   const today = new Date()
+  const [searchParams] = useSearchParams()
   const [month, setMonth] = useState(format(today, 'yyyy-MM'))
-  const [viewMode, setViewMode] = useState<'mine' | 'team'>('mine')
+  // Deep-link support: sidebar "DSR Approvals" badge links here with
+  // ?view=team so managers land straight on pending edit requests
+  // instead of their own (usually empty) DSR log.
+  const [viewMode, setViewMode] = useState<'mine' | 'team'>(
+    searchParams.get('view') === 'team' ? 'team' : 'mine'
+  )
   // Dual-hat: a business_head/regional_manager/ceo who ALSO personally line-manages a
   // small team (rather than delegating to a separate 'manager' role account)
   // can narrow "Team Approval" down to just their direct reports. Meaningless
