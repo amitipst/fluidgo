@@ -62,8 +62,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/change-password" element={<ChangePassword />} />
             <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<Dashboard />} />
-              {/* DSR */}
-              <Route path="dsr"         element={<DSREntry />} />
+              {/* DSR — field roles only (matches backend DSR_ALLOWED_ROLES).
+                  Previously unguarded: any logged-in role (HR included)
+                  could reach the submit form directly, even though the
+                  backend already 403'd the actual POST. */}
+              <Route path="dsr" element={
+                <ProtectedRoute roles={['rep', 'inside_sales', 'pre_sales', 'manager']}>
+                  <DSREntry />
+                </ProtectedRoute>
+              } />
               <Route path="dsr/history" element={<DSRHistory />} />
               {/* Field activities */}
               <Route path="meetings"      element={<Meetings />} />

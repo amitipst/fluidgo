@@ -45,6 +45,7 @@ class UserUpdate(BaseModel):
     region:     Optional[str] = None
     business:   Optional[BUSINESSES] = None
     manager_id: Optional[str] = None
+    fga_exempt: Optional[bool] = None
 
 class UserStatusUpdate(BaseModel):
     is_active: bool
@@ -62,6 +63,7 @@ def _serialize(u: User, direct_report_counts: Optional[dict] = None) -> dict:
         "business":   u.business,
         "manager_id": str(u.manager_id) if u.manager_id else None,
         "is_active":  u.is_active,
+        "fga_exempt": u.fga_exempt,
         "created_at": u.created_at,
         # Dual-role indicator — true when this person is personally assigned
         # (via manager_id) as someone's manager, regardless of their own
@@ -211,6 +213,8 @@ async def update_user(
     if body.business:   target.business = body.business
     if body.manager_id is not None:
         target.manager_id = uuid.UUID(body.manager_id) if body.manager_id else None
+    if body.fga_exempt is not None:
+        target.fga_exempt = body.fga_exempt
 
     await db.commit()
     await db.refresh(target)

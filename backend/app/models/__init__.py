@@ -28,6 +28,11 @@ class User(Base):
     # POST /auth/change-password, which clears this and stamps password_changed_at.
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     password_changed_at:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # FGA doesn't apply to everyone (e.g. someone in a trial period, or a
+    # role genuinely outside the scoring model). When set, freeze_period
+    # skips this person entirely and HR's BU overview reports them as
+    # "Not Applicable" instead of silently missing/incomplete.
+    fga_exempt:   Mapped[bool]       = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
 # ── Role hierarchy ────────────────────────────────────────────────────────────
 # "BU" (Business Unit) means a BUSINESS LINE at WEP — fluidpro | fluidprint |

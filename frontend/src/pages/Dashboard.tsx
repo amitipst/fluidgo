@@ -154,6 +154,92 @@ function AIPanel({ userId }: { userId: string }) {
 }
 
 
+// ── HR: BU-wise FGA overview ──────────────────────────────────────────────────
+// HR doesn't work sales pipeline concepts and never submits a DSR — their
+// dashboard is a company-wide FGA governance snapshot instead: team size,
+// submission coverage and average score per Business, across ALL businesses
+// (not just their own region), since HR's scope is org-wide by design.
+const BIZ_LABELS: Record<string, string> = {
+  fluidpro: 'fluidPro (IT Infra)', fluidprint: 'fluidPrint (Managed Print)',
+  floxtax: 'floxtax (GST/ASP)', hooks: 'Hooks (POS/Channel)',
+}
+
+function HRDashboard({ selectedMonth }: { selectedMonth: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['hr-bu-overview', selectedMonth],
+    queryFn: () => api.get(`/fga-approval/bu-overview?period=${selectedMonth}`).then(r => r.data),
+  })
+  const businesses = data?.businesses ?? []
+  const totals = data?.totals
+
+  return (
+    <div>
+      {/* Company-wide totals */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <KPICard label="Total Headcount" value={totals?.team_size ?? 0} icon="👥"
+          sub={selectedMonth} accentColor="#1E6FD9" loading={isLoading} />
+        <KPICard label="FGA Applicable" value={totals?.applicable ?? 0} icon="✅"
+          sub={totals?.exempt ? `${totals.exempt} marked N/A` : undefined}
+          accentColor="#0D9488" loading={isLoading} />
+        <KPICard label="FGA Coverage" value={isLoading ? '…' : `${totals?.coverage_pct ?? 0}%`} icon="📊"
+          sub={`${totals?.submitted ?? 0} / ${totals?.applicable ?? 0} submitted`}
+          accentColor={totals?.coverage_pct >= 80 ? '#059669' : totals?.coverage_pct >= 50 ? '#D97706' : '#DC2626'}
+          loading={isLoading} />
+        <KPICard label="Avg FGA Score" value={isLoading ? '…' : (totals?.avg_score != null ? `${totals.avg_score}/100` : '—')} icon="⚡"
+          accentColor="#92278E" loading={isLoading} />
+      </div>
+
+      {/* Per-business breakdown */}
+      <div className="card mb-6">
+        <div className="font-bold text-wep-navy text-sm mb-4">🏢 FGA Coverage by Business</div>
+        {isLoading ? (
+          <div className="skeleton h-24 w-full" />
+        ) : businesses.length === 0 ? (
+          <p className="text-sm text-wep-muted text-center py-6">No active Sales, Pre-Sales or Service Delivery headcount found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[10px] font-bold uppercase tracking-wide text-wep-muted border-b border-wep-border">
+                  <th className="py-2 pr-3">Business</th>
+                  <th className="py-2 pr-3">Team Size</th>
+                  <th className="py-2 pr-3">N/A</th>
+                  <th className="py-2 pr-3">Submitted</th>
+                  <th className="py-2 pr-3">Coverage</th>
+                  <th className="py-2 pr-3">Avg Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {businesses.map((b: any) => (
+                  <tr key={b.business} className="border-b border-wep-border/50">
+                    <td className="py-2.5 pr-3 font-semibold text-wep-navy">{BIZ_LABELS[b.business] ?? b.business}</td>
+                    <td className="py-2.5 pr-3">{b.team_size}</td>
+                    <td className="py-2.5 pr-3 text-wep-muted">{b.exempt > 0 ? b.exempt : '—'}</td>
+                    <td className="py-2.5 pr-3">{b.submitted} / {b.applicable}</td>
+                    <td className="py-2.5 pr-3">
+                      <span className="font-bold" style={{
+                        color: b.coverage_pct >= 80 ? '#059669' : b.coverage_pct >= 50 ? '#D97706' : '#DC2626'
+                      }}>{b.coverage_pct}%</span>
+                    </td>
+                    <td className="py-2.5 pr-3">{b.avg_score != null ? `${b.avg_score}/100` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Quick links */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <QuickTile to="/fga-approval"    icon="🏆" label="FGA Approval"   desc="Review pending scores across Sales, Pre-Sales & Service Delivery" />
+        <QuickTile to="/scheme-winners"  icon="🎉" label="Scheme Winners" desc="Sign off cash-reward scheme payouts" />
+        <QuickTile to="/activity-logs"   icon="🗂️" label="Activity Logs" desc="Rigor scores & submission logs (read-only)" />
+      </div>
+    </div>
+  )
+}
+
 // ── Quick-link tile ───────────────────────────────────────────────────────────
 function QuickTile({ to, icon, label, desc }: { to: string; icon: string; label: string; desc: string }) {
   return (
@@ -175,6 +261,10 @@ export default function Dashboard() {
   const isBU   = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
   const isField = ['rep','inside_sales','pre_sales','manager'].includes(user?.role ?? '')
   const isSDM = user?.role === 'service_delivery_manager'
+  // HR doesn't submit DSR/DOR and doesn't work sales-pipeline concepts —
+  // gets its own company-wide FGA governance dashboard instead (see
+  // HRDashboard below), not the generic rep/BU-head layout.
+  const isHR = user?.role === 'hr'
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'))
   const [quote] = useState(getQuoteOfDay)
@@ -182,7 +272,7 @@ export default function Dashboard() {
   const { data: dash, isLoading } = useQuery({
     queryKey: ['dashboard', user?.id, selectedMonth],
     queryFn: () => api.get(`/analytics/dashboard?month=${selectedMonth}`).then(r => r.data),
-    enabled: !!user?.id && !isSDM,
+    enabled: !!user?.id && !isSDM && !isHR,
   })
 
   // Service Delivery: DOR history for the month, aggregated client-side —
@@ -203,7 +293,7 @@ export default function Dashboard() {
   const { data: todayDSR } = useQuery({
     queryKey: ['dsr-today', today],
     queryFn: () => api.get(`/dsr?date=${today}`).then(r => r.data),
-    enabled: !isSDM,
+    enabled: !isSDM && !isHR,
   })
 
   // Rep's own revenue target vs achievement (field roles that carry a number)
@@ -250,7 +340,7 @@ export default function Dashboard() {
             <MomentumMotif />
           </div>
           <div className="flex items-center gap-2">
-            {isBU && (
+            {(isBU || isHR) && (
               <input type="month" className="form-input py-2 text-sm w-40"
                 value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
             )}
@@ -264,6 +354,12 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* ── HR: company-wide FGA governance view — replaces the rest of the
+          page entirely, since sales KPIs/AI insight/DSR widgets don't apply. ── */}
+      {isHR ? (
+        <HRDashboard selectedMonth={selectedMonth} />
+      ) : (
+      <>
       {/* ── KPI Grid ── */}
       {isSDM ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -423,6 +519,8 @@ export default function Dashboard() {
           <QuickTile to="/opportunities" icon="🧭" label="Opportunities" desc="Deal health & BANT scores" />
           <QuickTile to="/fga-approval"  icon="🏆" label="FGA Approval" desc="Score review & Finance export" />
         </div>
+      )}
+      </>
       )}
     </div>
   )

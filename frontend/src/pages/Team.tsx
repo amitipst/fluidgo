@@ -35,6 +35,14 @@ const TRACKS: Track[] = [
 ]
 const LEADERSHIP_ROLES = ['regional_manager', 'bu_head', 'business_head', 'coo', 'hr', 'finance', 'ceo', 'super_admin']
 
+// Company-level roles — backend's resolve_visible_user_ids ignores
+// business/region entirely for these (hr/finance = "all users org-wide",
+// coo = scope="all" same as ceo/super_admin). Forcing a single Business/
+// Region pick on these roles in the onboarding form is misleading, since
+// it has no effect on what they actually see — the fields are hidden for
+// them instead of asking for a choice that doesn't do anything.
+const COMPANY_WIDE_ROLES = ['hr', 'finance', 'coo', 'ceo', 'super_admin']
+
 const BUSINESSES = [
   { key: 'fluidpro',   label: 'fluidPro (IT Infra)' },
   { key: 'fluidprint', label: 'fluidPrint (Managed Print)' },
@@ -79,6 +87,13 @@ function MemberRow({ u, allUsers, currentUserId, editingId, setEditingId, startE
               style={{ background: '#FDE8F0', color: '#F0115E' }}
               title={`Also personally manages ${u.direct_report_count} ${u.direct_report_count === 1 ? 'person' : 'people'} (dual role)`}>
               🎖️ Dual role · manages {u.direct_report_count}
+            </span>
+          )}
+          {u.fga_exempt && (
+            <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+              style={{ background: '#F1F5F9', color: '#64748B' }}
+              title="Excluded from FGA scoring — shows as Not Applicable to HR">
+              🚫 FGA N/A
             </span>
           )}
           {!u.is_active && <span className="ml-2 text-[10px] font-bold uppercase text-red-500">Exited</span>}
@@ -137,13 +152,30 @@ function MemberRow({ u, allUsers, currentUserId, editingId, setEditingId, startE
                 .map((r: any) => (<option key={r.key} value={r.key}>{r.label}</option>))}
             </select>
           </div>
-          <div>
-            <label className="form-label block mb-1 text-[10px]">Region / BU</label>
-            <select className="form-input" value={editForm.region}
-              onChange={(e: any) => setEditForm((f: any) => ({ ...f, region: e.target.value }))}>
-              {REGIONS.map(r => (<option key={r.key} value={r.key}>{r.label}</option>))}
-            </select>
-          </div>
+          {COMPANY_WIDE_ROLES.includes(editForm.role) ? (
+            <div className="md:col-span-2 flex items-end">
+              <p className="text-[11px] text-wep-muted italic bg-wep-border/30 rounded-lg px-3 py-2">
+                🌐 Company-wide role — sees across all Regions &amp; Businesses, no Region/Business scoping needed.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="form-label block mb-1 text-[10px]">Region / BU</label>
+                <select className="form-input" value={editForm.region}
+                  onChange={(e: any) => setEditForm((f: any) => ({ ...f, region: e.target.value }))}>
+                  {REGIONS.map(r => (<option key={r.key} value={r.key}>{r.label}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="form-label block mb-1 text-[10px]">Business</label>
+                <select className="form-input" value={editForm.business}
+                  onChange={(e: any) => setEditForm((f: any) => ({ ...f, business: e.target.value }))}>
+                  {BUSINESSES.map(b => (<option key={b.key} value={b.key}>{b.label}</option>))}
+                </select>
+              </div>
+            </>
+          )}
           <div>
             <label className="form-label block mb-1 text-[10px]">Reports to (Manager)</label>
             <select className="form-input" value={editForm.manager_id}
@@ -154,12 +186,12 @@ function MemberRow({ u, allUsers, currentUserId, editingId, setEditingId, startE
               ))}
             </select>
           </div>
-          <div>
-            <label className="form-label block mb-1 text-[10px]">Business</label>
-            <select className="form-input" value={editForm.business}
-              onChange={(e: any) => setEditForm((f: any) => ({ ...f, business: e.target.value }))}>
-              {BUSINESSES.map(b => (<option key={b.key} value={b.key}>{b.label}</option>))}
-            </select>
+          <div className="flex items-end pb-1.5">
+            <label className="flex items-center gap-2 text-xs text-wep-muted">
+              <input type="checkbox" checked={!!editForm.fga_exempt}
+                onChange={(e: any) => setEditForm((f: any) => ({ ...f, fga_exempt: e.target.checked }))} />
+              🚫 FGA Not Applicable
+            </label>
           </div>
           <div className="md:col-span-4 flex items-center gap-3">
             <button
@@ -190,8 +222,8 @@ export default function Team() {
   const [form, setForm] = useState(emptyForm)
   const [formError, setFormError] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<{ role: string; region: string; business: string; manager_id: string }>({
-    role: '', region: '', business: '', manager_id: ''
+  const [editForm, setEditForm] = useState<{ role: string; region: string; business: string; manager_id: string; fga_exempt: boolean }>({
+    role: '', region: '', business: '', manager_id: '', fga_exempt: false
   })
   const [editError, setEditError] = useState('')
 
@@ -304,18 +336,25 @@ export default function Team() {
       role: u.role,
       region: u.region || 'India - West',
       business: u.business || 'fluidpro',
-      manager_id: u.manager_id || ''
+      manager_id: u.manager_id || '',
+      fga_exempt: !!u.fga_exempt,
     })
   }
 
   function saveEdit(id: string) {
+    const isCompanyWide = COMPANY_WIDE_ROLES.includes(editForm.role)
     updateUser.mutate({
       id,
       body: {
         role: editForm.role,
-        region: editForm.region,
-        business: editForm.business,
-        manager_id: editForm.manager_id || null
+        // Company-wide roles don't get scoped by region/business at all
+        // (see resolve_visible_user_ids) — send the existing values through
+        // unchanged rather than a value the hidden fields never let the
+        // user actually choose.
+        region: isCompanyWide ? undefined : editForm.region,
+        business: isCompanyWide ? undefined : editForm.business,
+        manager_id: editForm.manager_id || null,
+        fga_exempt: editForm.fga_exempt,
       }
     })
   }
@@ -448,25 +487,35 @@ export default function Team() {
               </select>
               <p className="text-[10px] text-wep-muted mt-0.5">Defaults to the {track.label} tab — change anytime</p>
             </div>
-            <div>
-              <label className="form-label block mb-1">Business *</label>
-              <select className="form-input" value={form.business}
-                onChange={e => setForm(f => ({ ...f, business: e.target.value }))}>
-                {BUSINESSES.map(b => (
-                  <option key={b.key} value={b.key}>{b.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="form-label block mb-1">Region *</label>
-              <select className="form-input" value={form.region}
-                onChange={e => setForm(f => ({ ...f, region: e.target.value }))}>
-                {REGIONS.map(r => (
-                  <option key={r.key} value={r.key}>{r.label}</option>
-                ))}
-              </select>
-              <p className="text-[10px] text-wep-muted mt-0.5">Which India region is this person based in?</p>
-            </div>
+            {COMPANY_WIDE_ROLES.includes(form.role) ? (
+              <div className="md:col-span-2">
+                <p className="text-[11px] text-wep-muted italic bg-wep-surface rounded-lg px-3 py-2.5 mt-5">
+                  🌐 Company-wide role — sees across all Regions &amp; Businesses. Business/Region not needed.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="form-label block mb-1">Business *</label>
+                  <select className="form-input" value={form.business}
+                    onChange={e => setForm(f => ({ ...f, business: e.target.value }))}>
+                    {BUSINESSES.map(b => (
+                      <option key={b.key} value={b.key}>{b.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label block mb-1">Region *</label>
+                  <select className="form-input" value={form.region}
+                    onChange={e => setForm(f => ({ ...f, region: e.target.value }))}>
+                    {REGIONS.map(r => (
+                      <option key={r.key} value={r.key}>{r.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-wep-muted mt-0.5">Which India region is this person based in?</p>
+                </div>
+              </>
+            )}
             <div className="md:col-span-2 lg:col-span-3 flex items-center gap-3">
               <button type="submit" disabled={createUser.isPending} className="btn-primary">
                 {createUser.isPending ? '⏳ Adding...' : '➕ Add Member'}

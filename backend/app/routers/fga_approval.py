@@ -76,7 +76,11 @@ async def freeze_period(body: FreezeRequest, db: AsyncSession = Depends(get_db),
     visible_ids = await resolve_visible_user_ids(db, user)
     q = select(User).where(
         User.is_active == True,
-        User.role.in_(["rep", "inside_sales", "pre_sales", "manager"])
+        User.fga_exempt == False,
+        # service_delivery_manager included — SDM's FGA previously never
+        # computed here, so their scores never reached HR at all. Now part
+        # of the same centralized freeze/approval pipeline as Sales/Pre-Sales.
+        User.role.in_(["rep", "inside_sales", "pre_sales", "manager", "service_delivery_manager"])
     )
     if visible_ids is not None:
         q = q.where(User.id.in_(visible_ids))
@@ -327,6 +331,81 @@ async def export_approved(period: str, db: AsyncSession = Depends(get_db),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=fga_approved_{period}.csv"}
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. BU-wise overview — company-level roles only (HR / Finance / COO / CEO /
+#    super_admin). Deliberately NOT built on resolve_visible_user_ids' scope
+#    branches (those scope business_head/regional_manager to their OWN
+#    business/region) — a company-level role needs every business side by
+#    side in one snapshot, which is the whole point of the view.
+# ─────────────────────────────────────────────────────────────────────────────
+
+COMPANY_WIDE_ROLES = {"hr", "finance", "coo", "ceo", "super_admin"}
+SCOREABLE_ROLES = ["rep", "inside_sales", "pre_sales", "manager", "service_delivery_manager"]
+
+@router.get("/bu-overview")
+async def bu_overview(period: str, db: AsyncSession = Depends(get_db),
+                      user: User = Depends(get_current_user)):
+    """Team size, FGA submission coverage and average score, sliced by
+    business (fluidpro/fluidprint/floxtax/hooks) — the data behind HR's
+    dashboard. fga_exempt people are excluded from the coverage denominator
+    and reported separately as "Not Applicable" rather than looking like a
+    missing submission."""
+    if user.role not in COMPANY_WIDE_ROLES:
+        raise HTTPException(403, "Requires HR, Finance, COO, CEO or Super Admin access")
+
+    from app.models import ScoringResult
+
+    people = (await db.execute(
+        select(User).where(User.is_active == True, User.role.in_(SCOREABLE_ROLES))
+    )).scalars().all()
+
+    results = (await db.execute(
+        select(ScoringResult)
+        .where(ScoringResult.period == period)
+        .order_by(ScoringResult.computed_at.desc())
+    )).scalars().all()
+    scored_by_user: dict = {}
+    for r in results:
+        scored_by_user.setdefault(r.user_id, r)   # most recent wins if a stale dup exists
+
+    by_business: dict[str, dict] = {}
+    for p in people:
+        biz = p.business or "fluidpro"
+        row = by_business.setdefault(biz, {
+            "business": biz, "team_size": 0, "exempt": 0, "applicable": 0,
+            "submitted": 0, "scores": [],
+        })
+        row["team_size"] += 1
+        if p.fga_exempt:
+            row["exempt"] += 1
+            continue
+        row["applicable"] += 1
+        r = scored_by_user.get(p.id)
+        if r:
+            row["submitted"] += 1
+            row["scores"].append(float(r.override_score if r.override_score is not None else r.score))
+
+    out = []
+    for biz, row in by_business.items():
+        scores = row.pop("scores")
+        row["avg_score"] = round(sum(scores) / len(scores), 1) if scores else None
+        row["coverage_pct"] = round(row["submitted"] / row["applicable"] * 100, 1) if row["applicable"] else 0.0
+        out.append(row)
+    out.sort(key=lambda r: r["business"])
+
+    totals = {
+        "team_size": sum(r["team_size"] for r in out),
+        "exempt": sum(r["exempt"] for r in out),
+        "applicable": sum(r["applicable"] for r in out),
+        "submitted": sum(r["submitted"] for r in out),
+    }
+    totals["coverage_pct"] = round(totals["submitted"] / totals["applicable"] * 100, 1) if totals["applicable"] else 0.0
+    avg_scores = [row["avg_score"] for row in out if row["avg_score"] is not None]
+    totals["avg_score"] = round(sum(avg_scores) / len(avg_scores), 1) if avg_scores else None
+
+    return {"period": period, "businesses": out, "totals": totals}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

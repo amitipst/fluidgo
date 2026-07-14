@@ -157,14 +157,18 @@ export default function Layout() {
     rep: 'Sales Rep', inside_sales: 'Inside Sales', pre_sales: 'Pre-Sales',
     manager: 'Manager', service_delivery_manager: 'Service Delivery Manager',
     regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
-    practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', ceo: 'CEO',
+    practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', coo: 'COO', ceo: 'CEO',
     super_admin: 'Super Admin',
   }
 
   // Org label — role-aware, region-aware, never hardcoded
   const orgLabel = (() => {
     const r = user?.role ?? ''
-    if (r === 'ceo' || r === 'super_admin') return 'All Regions · All Businesses'
+    // Company-level roles — resolve_visible_user_ids ignores business/region
+    // entirely for these scopes (hr/finance = "all users", coo = scope="all"
+    // same as ceo/super_admin), so showing a single region/business here
+    // would misrepresent what they actually see.
+    if (['ceo', 'super_admin', 'coo', 'hr', 'finance'].includes(r)) return 'All Regions · All Businesses'
     if (r === 'business_head') return `${user?.business?.toUpperCase() ?? 'fluidPro'} · Global`
     const region = user?.region || user?.bu
     return region ? `${region} · ${user?.business ?? 'fluidPro'}` : 'fluidPro'
