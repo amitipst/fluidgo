@@ -14,6 +14,7 @@ async def list_opportunities(
     practice: Optional[str] = None,
     oem: Optional[str] = None,
     risk_level: Optional[str] = None,
+    include_archived: bool = False,
 ) -> list[PipelineDeal]:
     query = select(PipelineDeal)
     if user_ids is not None:
@@ -24,6 +25,12 @@ async def list_opportunities(
         query = query.where(PipelineDeal.oem == oem)
     if risk_level:
         query = query.where(PipelineDeal.risk_level == risk_level)
+    # Excluded by default for every scope, including user_ids=None
+    # (ceo/coo/super_admin) — that's precisely the case that had NO owner
+    # filter at all, so archived/dummy deals from deactivated accounts used
+    # to show up unfiltered right alongside real data.
+    if not include_archived:
+        query = query.where(PipelineDeal.archived == False)
     query = query.order_by(PipelineDeal.updated_at.desc())
     result = await db.execute(query)
     return list(result.scalars().all())

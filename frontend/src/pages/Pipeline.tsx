@@ -56,6 +56,7 @@ export default function Pipeline() {
   const [closingDeal, setClosingDeal] = useState<any | null>(null)
   const [reassigningId, setReassigningId] = useState<string | null>(null)
   const [reassignTo, setReassignTo] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
 
   const { user } = useAuthStore()
   const canReassign = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
@@ -79,8 +80,15 @@ export default function Pipeline() {
   })
 
   const { data: deals = [], isLoading } = useQuery({
-    queryKey: ['pipeline'],
-    queryFn: () => api.get('/pipeline').then(r => r.data)
+    queryKey: ['pipeline', showArchived],
+    queryFn: () => api.get(`/pipeline${showArchived ? '?include_archived=true' : ''}`).then(r => r.data)
+  })
+
+  const archiveDeal = useMutation({
+    mutationFn: ({ id, archive }: { id: string; archive: boolean }) =>
+      api.post(`/pipeline/${id}/${archive ? 'archive' : 'unarchive'}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pipeline'] }),
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not update deal')),
   })
 
   const addDeal = useMutation({
@@ -247,6 +255,12 @@ export default function Pipeline() {
           <button onClick={() => { setSearch(''); setStageFilter('All'); setPracticeFilter('All practices') }}
             className="btn-outline text-sm py-2">✕ Clear</button>
         )}
+        {canReassign && (
+          <label className="flex items-center gap-1.5 text-xs text-wep-muted px-2">
+            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
+            🗄️ Show archived
+          </label>
+        )}
       </div>
 
       {/* Deals list */}
@@ -340,6 +354,11 @@ export default function Pipeline() {
                           🐌 Stalled ({d.days_since_activity}d)
                         </span>
                       )}
+                      {d.archived && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                          🗄️ Archived
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-wep-muted">
                       {d.closure_eta && `ETA: ${d.closure_eta} · `}
@@ -379,6 +398,18 @@ export default function Pipeline() {
                         className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white hover:opacity-90"
                         style={{ background: 'linear-gradient(135deg,#92278E,#5B1A6E)' }}>
                         🏁 Close
+                      </button>
+                    )}
+                    {canReassign && (
+                      <button
+                        disabled={archiveDeal.isPending}
+                        onClick={() => {
+                          const verb = d.archived ? 'Unarchive' : 'Archive'
+                          if (!window.confirm(`${verb} the deal "${d.company}"? ${d.archived ? 'It will reappear in normal views.' : 'It will be hidden from Pipeline/Opportunities but never deleted — you can unarchive it any time.'}`)) return
+                          archiveDeal.mutate({ id: d.id, archive: !d.archived })
+                        }}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-muted hover:bg-wep-border/60 disabled:opacity-40">
+                        {d.archived ? '♻️ Unarchive' : '🗄️ Archive'}
                       </button>
                     )}
                   </div>

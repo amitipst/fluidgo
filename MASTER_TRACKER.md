@@ -468,6 +468,121 @@ no approve/reject.
 Verified locally (`tsc --noEmit` clean); no migration, pure frontend +
 existing-endpoint reuse; not yet deployed to EC2.
 
+## 2026-07-14 — HR governance dashboard, SDM FGA inclusion, FGA-exempt flag (commit `df0041f`)
+
+Follow-up to HR's trimmed nav: Amit flagged (a) HR could still reach the
+DSR submit form via the Dashboard's leftover "Submit Today's DSR" widget,
+(b) Service Delivery Manager's FGA scores never actually reached HR, (c)
+the sidebar org label lied about HR/Finance/COO's actual (org-wide) scope,
+(d) onboarding a company-wide role still forced a meaningless single
+Business/Region pick, and (e) there was no way to mark someone FGA-exempt
+or to give HR a real dashboard instead of the generic sales one.
+
+- **Root cause of (b)**: `fga_approval.py`'s `freeze_period()` role filter
+  was `["rep","inside_sales","pre_sales","manager"]` — `service_delivery_manager`
+  was never in it, so no `ScoringResult` row was ever created for an SDM,
+  at any point. Fixed by adding it to the same freeze/approval pipeline.
+- **Root cause of (a)**: `Dashboard.tsx`'s "Today's DSR" card was gated
+  `!isBU && !isSDM` — HR is neither, so it rendered by accident. Also the
+  `/dsr` route in `main.tsx` had **no role guard at all** (any logged-in
+  user could open the form directly; only the backend POST was blocked).
+  Fixed both; HR now gets a dedicated `HRDashboard` component instead of
+  the generic layout.
+- **New `GET /fga-approval/bu-overview`** (HR/Finance/COO/CEO/super_admin
+  only): headcount, FGA submission coverage %, avg score — grouped by
+  business, across ALL businesses. Deliberately bypasses
+  `resolve_visible_user_ids`' business-equality branches (which scope
+  business_head/regional_manager to their own business) since a
+  company-level role needs every business side by side.
+- **New `fga_exempt` boolean on `User`** (migration `0025`): freeze skips
+  exempt users; HR's overview excludes them from the coverage denominator
+  and reports them separately rather than as a missing submission. Toggle
+  lives in Team.tsx's edit panel, surfaced as a "🚫 FGA N/A" badge.
+- **orgLabel fix**: `hr`/`finance`/`coo` now show "All Regions · All
+  Businesses" (previously fell through to a region/business string that
+  didn't reflect their actual org-wide scope — only `ceo`/`super_admin`
+  got this before).
+- **Company-wide role onboarding**: Team.tsx's create/edit forms now hide
+  the Business/Region pickers for `hr`/`finance`/`coo`/`ceo`/`super_admin`
+  and show an explanatory note instead, since those fields never affected
+  what the role actually sees (`resolve_visible_user_ids` already ignored
+  them for these scopes — this was a UX-only gap, not a permissions bug).
+
+Scope note: "Service operations" in Amit's request is treated as the same
+role as "Service Delivery" (`service_delivery_manager`) — the only such
+role that exists in the system today. If a genuinely separate ops role is
+needed later, it isn't built yet. COO/CEO were not given the same literal
+`HRDashboard` UI in this pass (only the backend `bu-overview` endpoint,
+which they're already allowlisted for) — flagged as a reasonable next
+step, not done.
+
+Verified: `python -m py_compile` clean on all backend changes, `tsc
+--noEmit` clean on all frontend changes. Migration `0025` not yet applied
+to EC2 — needs `alembic upgrade head` on next deploy.
+
+## 2026-07-15 — Ishaant/Modassir dashboard zeros investigation + soft-delete/archive (migration `0026`)
+
+Ishaant and Modassir (both `rep`) reported their own Dashboard KPI totals
+showing 0 despite having submitted real DSR data, and a resubmit attempt
+that appeared to fail. Investigated live via DB queries run through
+`docker compose exec backend python3 <<'EOF' ... EOF` heredocs (no direct
+DB/SSH access from this side — Amit ran them):
+
+- Confirmed via direct query: both users have a single account each (no
+  duplicate/orphaned user_id), and their DSR rows for July 2026 are fully
+  intact and tied to the correct current user_id — Ishaant 32 calls/4
+  visits/12 follow-ups/3 leads, Modassir 66 calls/0 visits/28 follow-ups/8
+  leads. `bu_dashboard`'s own-scope query (`analytics.py`) matches this
+  exactly when run directly against the DB — so the query logic itself,
+  as it exists in this repo, is correct.
+- Found along the way: Ishaant has `manager_id=None` — no manager
+  assigned at all. Not the cause of this bug, but a separate gap worth
+  fixing (nobody to route his DSR approvals to going forward).
+- **Root cause, most likely**: `git log -1` on EC2 showed the repo pulled
+  up to `df0041f` (this session's latest push), but `docker compose
+  images backend` showed the running image was built **13 hours
+  earlier** — i.e. `git pull` had happened but `docker compose build`
+  had not, so the live site was serving stale code the whole time,
+  unrelated to anything actually wrong in the current repo. Instructed
+  Amit to do a full rebuild (`docker compose build backend frontend` +
+  `up -d` + `alembic upgrade head` to `0026`) and have Ishaant/Modassir
+  hard-refresh to confirm. **Not yet confirmed fixed as of this entry** —
+  if it recurs after a genuine rebuild, the Network-tab response body of
+  `GET /analytics/dashboard?month=2026-07` is the next thing to check
+  (would distinguish a real backend bug from a frontend rendering bug).
+
+Separately, Amit flagged that Pipeline/Opportunities show dummy data left
+behind by deactivated/test accounts when logged in as super_admin, with
+no way to delete it. Root-caused: `resolve_visible_user_ids` returns
+`None` for `scope="all"` (ceo/coo/super_admin) meaning **no owner filter
+at all** gets applied in `pipeline.py`'s `list_deals` or
+`opportunity_repo.list_opportunities` — every deal in the table shows up
+for those roles regardless of the owner's `is_active` status. There was
+also no DELETE endpoint anywhere in the backend for either entity. Asked
+Amit to choose the remedy (soft-delete/archive vs hard delete vs
+hide-only) — chose soft-delete/archive.
+
+- migration `0026`: `archived` (bool, default false) / `archived_at` /
+  `archived_by` added to `pipeline`. Deals never hard-delete — they feed
+  revenue/win-loss/FGA history — archiving just excludes them from every
+  list view by default.
+- `pipeline.py`: `POST /{deal_id}/archive` and `/unarchive`, gated to
+  manager level (20) and above and scoped through
+  `resolve_visible_user_ids` like every other deal action (so a
+  business_head can clean up their own business without needing
+  super_admin). `list_deals` now excludes `archived=True` by default for
+  **every** scope, not just "all" — `include_archived=true` opts back in.
+- `opportunity_repo.list_opportunities` / `opportunities.py`: identical
+  `include_archived` param and default-exclude, since Opportunities reads
+  the same underlying `pipeline` table via `opportunity_repo`.
+- `Pipeline.tsx` / `Opportunities.tsx`: Archive/Unarchive button
+  (manager+ only, with a confirm dialog explaining it's reversible), an
+  "🗄️ Archived" badge on archived cards, and a "Show archived" checkbox
+  for admins.
+
+Verified: `python -m py_compile` and `tsc --noEmit` both clean. Not yet
+deployed — bundled into the same rebuild as the stale-deploy fix above.
+
 ---
 
 *This file supersedes README.md's "Recent Progress" and "Known Issues"

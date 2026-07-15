@@ -324,6 +324,17 @@ class PipelineDeal(Base):
     # without re-running Ollama; see generate_deal_momentum in pipeline.py.
     ai_momentum_summary:      Mapped[str]      = mapped_column(Text, nullable=True)
     ai_momentum_generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ── Archive (soft-delete) ──────────────────────────────────────────────
+    # Deals never hard-delete — they feed revenue/win-loss/FGA history. For
+    # scope="all" roles (ceo/coo/super_admin), resolve_visible_user_ids
+    # returns None (no owner filter at all), so dummy/test deals left behind
+    # by deactivated accounts were showing up right alongside real data with
+    # no way to remove them. archived deals are excluded from every list
+    # endpoint by default (all scopes, not just "all"); include_archived=true
+    # opts back in for admins who need to see them.
+    archived:    Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    archived_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 class PipelineUpdate(Base):
     """Append-only remark history for a pipeline deal. `todays_update`/`next_step`

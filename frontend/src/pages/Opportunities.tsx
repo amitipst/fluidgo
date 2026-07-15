@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import api from '@/hooks/useApi'
+import api, { getErrorMessage } from '@/hooks/useApi'
+import { useAuthStore } from '@/store/authStore'
 
 const healthColor: Record<string, string> = {
   healthy: 'text-teal-600 bg-teal-50', watch: 'text-amber-600 bg-amber-50',
@@ -55,15 +56,28 @@ function StageProgress({ stage }: { stage: string }) {
 
 export default function Opportunities() {
   const qc = useQueryClient()
+  const { user } = useAuthStore()
+  const canArchive = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
   const [practice, setPractice] = useState('')
   const [riskLevel, setRiskLevel] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
   const [healthContent, setHealthContent] = useState<Record<string, string>>({})
 
   const { data: deals = [], isLoading } = useQuery({
-    queryKey: ['opportunities', practice, riskLevel],
+    queryKey: ['opportunities', practice, riskLevel, showArchived],
     queryFn: () => api.get('/opportunities', {
-      params: { practice: practice || undefined, risk_level: riskLevel || undefined }
+      params: { practice: practice || undefined, risk_level: riskLevel || undefined,
+                include_archived: showArchived || undefined }
     }).then(r => r.data)
+  })
+
+  // Archive/unarchive is the same underlying `pipeline` table as Pipeline.tsx
+  // — one soft-delete endpoint, both views stay consistent.
+  const archiveDeal = useMutation({
+    mutationFn: ({ id, archive }: { id: string; archive: boolean }) =>
+      api.post(`/pipeline/${id}/${archive ? 'archive' : 'unarchive'}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['opportunities'] }),
+    onError: (e: any) => alert(getErrorMessage(e, 'Could not update deal')),
   })
 
   const { data: lossData } = useQuery({
@@ -134,6 +148,12 @@ export default function Opportunities() {
             <option value="high">High</option>
             <option value="critical">Critical</option>
           </select>
+          {canArchive && (
+            <label className="flex items-center gap-1.5 text-xs text-wep-muted px-2">
+              <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
+              🗄️ Show archived
+            </label>
+          )}
         </div>
       </div>
 
@@ -257,6 +277,11 @@ export default function Opportunities() {
                     🩺 {d.ai_deal_health}/100
                   </span>
                 )}
+                {d.archived && (
+                  <span className="text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-500">
+                    🗄️ Archived
+                  </span>
+                )}
               </div>
             </div>
 
@@ -277,16 +302,30 @@ export default function Opportunities() {
               </div>
             )}
 
-            <div className="mt-3 flex items-center justify-between">
+            <div className="mt-3 flex items-center justify-between flex-wrap gap-2">
               <button
                 onClick={() => checkHealth.mutate(d.id)}
                 disabled={checkHealth.isPending}
                 className="text-xs text-wep-accent hover:text-wep-electric transition-colors font-medium disabled:opacity-50">
                 {checkHealth.isPending && checkHealth.variables === d.id ? '⏳ Checking...' : '✨ AI Deal Health Coaching'}
               </button>
-              {closurePct != null && (
-                <span className="text-[11px] text-wep-muted">Closure likelihood: <strong className="text-wep-text">{closurePct}%</strong></span>
-              )}
+              <div className="flex items-center gap-3">
+                {closurePct != null && (
+                  <span className="text-[11px] text-wep-muted">Closure likelihood: <strong className="text-wep-text">{closurePct}%</strong></span>
+                )}
+                {canArchive && (
+                  <button
+                    disabled={archiveDeal.isPending}
+                    onClick={() => {
+                      const verb = d.archived ? 'Unarchive' : 'Archive'
+                      if (!window.confirm(`${verb} the deal "${d.company}"? ${d.archived ? 'It will reappear in normal views.' : 'It will be hidden from Pipeline/Opportunities but never deleted — you can unarchive it any time.'}`)) return
+                      archiveDeal.mutate({ id: d.id, archive: !d.archived })
+                    }}
+                    className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-wep-surface text-wep-muted hover:bg-wep-border/60 disabled:opacity-40">
+                    {d.archived ? '♻️ Unarchive' : '🗄️ Archive'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {healthContent[d.id] && (

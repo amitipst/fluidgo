@@ -18,12 +18,13 @@ def _serialize(d) -> dict:
 
 @router.get("")
 async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] = None,
-                             risk_level: Optional[str] = None,
+                             risk_level: Optional[str] = None, include_archived: bool = False,
                              db: AsyncSession = Depends(get_db),
                              user: User = Depends(get_current_user)):
     visible = await resolve_visible_user_ids(db, user)
     deals = await opportunity_repo.list_opportunities(db, user_ids=visible, practice=practice,
-                                                        oem=oem, risk_level=risk_level)
+                                                        oem=oem, risk_level=risk_level,
+                                                        include_archived=include_archived)
     # Compute the rule-based deal-health score up front for any deal missing it,
     # so the Opportunities cards always show a health indicator (the AI *coaching*
     # text still only generates on demand via /health — that's the slow part).

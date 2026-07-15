@@ -80,7 +80,8 @@ async def create_deal(body: DealIn, db: AsyncSession = Depends(get_db),
     return {"id": str(deal.id), **body.model_dump()}
 
 @router.get("")
-async def list_deals(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def list_deals(include_archived: bool = False,
+                     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """Scoped the same way Opportunities already is: reps see their own
     deals, manager/regional_manager/business_head see their whole visible
     hierarchy via resolve_visible_user_ids (business_head = all regions in
@@ -88,12 +89,20 @@ async def list_deals(db: AsyncSession = Depends(get_db), user: User = Depends(ge
     silently showing just the actor's own deals regardless of role, while
     Opportunities (same underlying `pipeline` table) showed the correct
     scoped set. That's why a Business Head's Pipeline view looked like a
-    handful of personal deals instead of the whole BU."""
+    handful of personal deals instead of the whole BU.
+
+    Archived deals are excluded by default for every scope — including
+    scope="all" (ceo/coo/super_admin), where `visible is None` means no
+    owner filter applies at all, so dummy/test deals left behind by
+    deactivated accounts used to show up unfiltered. include_archived=true
+    opts back in for admins who need to see what was archived."""
     from app.services.permission_service import resolve_visible_user_ids
     visible = await resolve_visible_user_ids(db, user)
     q = select(PipelineDeal)
     if visible is not None:
         q = q.where(PipelineDeal.user_id.in_(visible))
+    if not include_archived:
+        q = q.where(PipelineDeal.archived == False)
     q = q.order_by(PipelineDeal.updated_at.desc())
     result = await db.execute(q)
     now = datetime.now(timezone.utc)
@@ -108,6 +117,48 @@ async def list_deals(db: AsyncSession = Depends(get_db), user: User = Depends(ge
         )
         rows.append(row)
     return rows
+
+@router.post("/{deal_id}/archive")
+async def archive_deal(deal_id: str, db: AsyncSession = Depends(get_db),
+                       user: User = Depends(get_current_user)):
+    """Soft-delete — never a hard DELETE, since deals feed revenue/win-loss/
+    FGA history. Manager level and above, within their visible scope, so a
+    business_head can clean up dummy/test deals under their own business
+    without needing super_admin. Owner alone (a rep on their own deal) is
+    NOT enough — accidental self-archival of a real deal would silently
+    drop it from the rep's own Pipeline with no easy way to notice."""
+    from app.services.permission_service import resolve_visible_user_ids
+    if role_level(user.role) < 20:
+        raise HTTPException(403, "Archiving requires Manager level or above")
+    deal = (await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))).scalar_one_or_none()
+    if not deal:
+        raise HTTPException(404, "Deal not found")
+    visible = await resolve_visible_user_ids(db, user)
+    if visible is not None and deal.user_id not in visible:
+        raise HTTPException(403, "You cannot archive a deal outside your scope")
+    deal.archived = True
+    deal.archived_at = datetime.now(timezone.utc)
+    deal.archived_by = user.id
+    await db.commit()
+    return {"id": deal_id, "archived": True}
+
+@router.post("/{deal_id}/unarchive")
+async def unarchive_deal(deal_id: str, db: AsyncSession = Depends(get_db),
+                         user: User = Depends(get_current_user)):
+    from app.services.permission_service import resolve_visible_user_ids
+    if role_level(user.role) < 20:
+        raise HTTPException(403, "Unarchiving requires Manager level or above")
+    deal = (await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))).scalar_one_or_none()
+    if not deal:
+        raise HTTPException(404, "Deal not found")
+    visible = await resolve_visible_user_ids(db, user)
+    if visible is not None and deal.user_id not in visible:
+        raise HTTPException(403, "You cannot unarchive a deal outside your scope")
+    deal.archived = False
+    deal.archived_at = None
+    deal.archived_by = None
+    await db.commit()
+    return {"id": deal_id, "archived": False}
 
 @router.patch("/{deal_id}")
 async def update_deal(deal_id: str, body: DealIn, request: Request,
