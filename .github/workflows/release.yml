@@ -154,7 +154,7 @@ jobs:
       (github.ref == 'refs/heads/main' && github.event_name != 'pull_request')
     environment:
       name: production
-      url: https://uat.dsr.fluidpro.in
+      url: https://fluidgo.wepsol.com
 
     steps:
       - name: Deploy via SSH
@@ -231,5 +231,5 @@ jobs:
 # Environment (Settings → Environments → production):
 #   Required reviewers: add yourself (amit@wepsol.com) — this is the manual
 #   approval gate before every deploy actually runs, even on auto push to main.
-#   URL: https://uat.dsr.fluidpro.in (rename here once the domain changes)
+#   URL: https://fluidgo.wepsol.com
 # ══════════════════════════════════════════════════════════════════════════════
