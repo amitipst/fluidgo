@@ -307,6 +307,14 @@ async def get_pending_approvals(
     for dsr in dsrs:
         rigor   = calculate_rigor_score(dsr)
         rep     = (await db.execute(select(User).where(User.id == dsr.user_id))).scalar_one_or_none()
+        # Only hide deactivated reps from the actionable "submitted" queue —
+        # a stuck submission for someone no longer with the company just
+        # clutters the approval queue with nothing anyone can do about it.
+        # Historical views (approved/rejected/all, e.g. HR's Activity Logs
+        # page) deliberately keep showing every rep, active or not, so past
+        # records aren't erased from the audit trail.
+        if status == "submitted" and rep and not rep.is_active:
+            continue
         row     = _serialize_dsr(dsr, rigor)
         row["rep_name"]  = rep.name  if rep else "Unknown"
         row["rep_email"] = rep.email if rep else ""
@@ -428,6 +436,11 @@ async def get_edit_requests(
         if dsr.edit_granted_until and datetime.now(timezone.utc) < _aware(dsr.edit_granted_until):
             continue
         rep = (await db.execute(select(User).where(User.id == dsr.user_id))).scalar_one_or_none()
+        # Purely an actionable queue (no history mode) — a deactivated rep's
+        # edit request can never actually be granted to anyone, so it should
+        # never surface here.
+        if not rep or not rep.is_active:
+            continue
         results.append({
             "dsr_id": str(dsr.id), "date": dsr.date.isoformat(),
             "rep_name": rep.name if rep else "Unknown",

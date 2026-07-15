@@ -390,6 +390,12 @@ async def list_winners(status: Literal["pending_hr", "approved", "rejected", "al
         if visible is not None and w.user_id not in visible:
             continue
         rep = (await db.execute(select(User).where(User.id == w.user_id))).scalar_one_or_none()
+        # Only hide deactivated reps from the actionable "pending_hr" queue —
+        # HR can't sign off a cash reward for someone no longer employed, so
+        # a stale row here is dead weight. approved/rejected/all stay
+        # unfiltered so payout history and HR's audit trail stay intact.
+        if status == "pending_hr" and rep and not rep.is_active:
+            continue
         sch = (await db.execute(select(IncentiveScheme).where(IncentiveScheme.id == w.scheme_id))).scalar_one_or_none()
         out.append(_serialize_winner(w, rep.name if rep else "Unknown", sch.name if sch else "Unknown scheme"))
     return out

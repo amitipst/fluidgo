@@ -188,6 +188,17 @@ async def list_pending(period: str, db: AsyncSession = Depends(get_db),
         rep = (await db.execute(select(User).where(User.id == r.user_id))).scalar_one_or_none()
         if not rep:
             continue
+        # A rep can be deactivated AFTER their score was frozen (still
+        # pending_manager/hr/vp) — that row is now orphaned: nobody can
+        # meaningfully act on it and it never leaves the queue. Excluding
+        # inactive reps here matches the freeze step's own is_active filter,
+        # so the "Requires Your Action" queue and status tally cards (which
+        # the frontend derives from this same list) never show dummy/
+        # deactivated-user entries. Historical exports (export_approved)
+        # deliberately do NOT apply this filter — payroll needs the record
+        # even for someone who left mid-period.
+        if not rep.is_active:
+            continue
         # Scope by permission_service instead of raw bu equality
         if visible_ids is not None and rep.id not in visible_ids:
             continue
