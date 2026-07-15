@@ -10,6 +10,84 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.0.5] — 2026-07-15
+
+> **Production promotion release.** The existing UAT environment is promoted
+> to production on **1 August 2026** at this version. From this point, `main`
+> is the stable line — only patch releases (`v1.0.6`, `v1.0.7`, ...) land on
+> it. New feature work happens on `develop` and ships as `v1.1.0` when ready.
+> Full day-by-day detail for everything below lives in `MASTER_TRACKER.md`.
+
+### Added
+- **HR governance dashboard** — company-wide FGA coverage snapshot for HR
+  (team size, submission coverage %, avg score per Business), replacing the
+  generic sales dashboard HR previously saw. New `GET /fga-approval/bu-overview`
+  endpoint (HR/Finance/COO/CEO/super_admin).
+- **FGA-exempt flag** — per-user opt-out of FGA scoring (e.g. trial period),
+  excluded from freeze and reported as "Not Applicable" rather than a missing
+  submission.
+- **Service Delivery Manager included in FGA freeze** — SDM scores previously
+  never computed at all; now part of the same centralized approval pipeline
+  as Sales/Pre-Sales.
+- **DOR (Service Delivery) approval workflow** — simple approve/reject,
+  deliberately no edit-lock window (SDM can always resubmit).
+- **Scheme Winner validation** — HR sign-off gate before cash-reward scheme
+  payouts; points/badges auto-approve. First code path that actually credits
+  `PointsLedger`/`UserBadge`.
+- **Soft-delete/archive for Pipeline & Opportunity deals** — deals never
+  hard-delete (they feed revenue/win-loss/FGA history); archived deals are
+  excluded from every list view by default, recoverable any time.
+- **AI deal trend analysis** — stall detection (pure SQL) + on-demand AI
+  momentum summary on Pipeline deal cards.
+- **Password policy** — forced password change on first login and after
+  admin reset; self-service change-password flow.
+- **DSR status filtering** (pending/approved/rejected tabs) and a manager
+  sidebar badge for pending edit requests.
+- **Read-only Activity Logs page** for HR/Finance — rigor scores and
+  submission logs without action affordances.
+
+### Fixed
+- Pipeline showing "0 of 0 deals" for BU-head+ roles (was hardcoded to the
+  actor's own deals only; also a naive/aware datetime `TypeError` regression
+  introduced by the stall-detection feature, since fixed).
+- DSR entries not clearing from a manager's pending queue after rejection
+  (rejection was resetting status back to `submitted`, the exact value the
+  queue filters on).
+- HR nav showing sales-only sections (Leads/Pipeline/Opportunities/Analytics)
+  that don't apply to the role; `/dsr` route was completely unguarded and
+  reachable by any logged-in role.
+- Sidebar org label showing a misleading single region/business for
+  HR/Finance/COO, who are actually scoped org-wide.
+- Dummy/test data from deactivated accounts appearing unfiltered in
+  Pipeline/Opportunities for super_admin/CEO/COO (`scope="all"` applied no
+  owner filter at all) — root cause of the archive feature above.
+- AI insight truncation (token cap too low) and a deal-stage `Literal`
+  missing `qualification`/`on_hold`/`dropped`.
+
+### Infrastructure
+- `.github/workflows/release.yml` rewritten to match actual deploy practice
+  — single EC2 host (git pull + `docker compose build` in place over SSH),
+  not the original two-host GHCR-image design, which had never actually
+  been wired up (confirmed via Actions history: every run failed, either on
+  a missing `EC2_HOST` secret or a stale test suite).
+- `.github/workflows/deploy.yml` retired — superseded by `release.yml`, and
+  running both risked concurrent/conflicting deploys.
+- `vertical_slice_test.py` test gate marked non-blocking (`continue-on-error`)
+  — it had drifted out of sync with the current RBAC/schema (34 failing
+  checks against a live app that works correctly in manual QA). Tracked as
+  follow-up work to bring back in sync; it should never have been silently
+  ignored, so it's flagged here rather than just switched off quietly.
+
+### Known gaps (tracked, not yet done)
+- `vertical_slice_test.py` / `seed_v3.py` need a real pass to match the
+  current app before the test gate can be trusted again.
+- COO/CEO have backend access to the new `bu-overview` endpoint but not yet
+  the same dashboard UI as HR.
+- No second UAT/staging environment — `develop` branch work has nowhere to
+  deploy for pre-production testing until one is provisioned.
+
+---
+
 ## [1.0.0-uat] — 2026-07-03
 
 > **UAT Release** — First production-grade release of fluidGo for WEP Solutions.
@@ -122,30 +200,47 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## Version Guide
 
 ```
-v1.0.0-uat   → UAT release (this version)
-v1.0.0       → Production promotion after UAT sign-off (target: 10 July 2026)
-v1.0.1       → First hotfix release
-v1.1.0       → Next feature sprint (Manager coaching notes, DSR reminder,
-                Revenue targets UI, Multiple BU support)
+v1.0.0-uat   → UAT release
+v1.0.5       → Production promotion (1 August 2026) — the existing UAT box
+                becomes production at this version. `main` is now the
+                stable line.
+v1.0.6, .7…  → Patch releases on `main` — bugfixes only, no new features.
+v1.1.0       → Next feature release, developed on `develop` and merged to
+                `main` only when ready to ship.
 v2.0.0       → Multi-business release (fluidPrint, floxtax, Hooks)
 ```
+
+**Branching model** (from v1.0.5 onward):
+- `main` — always deployable, always production. Receives patch commits
+  only (`v1.0.x`) until the next minor is ready to merge.
+- `develop` — active feature development for the next minor release
+  (`v1.1.0`). Never deployed automatically; merges to `main` via PR when a
+  feature set is ready to ship, at which point it's tagged `v1.1.0` and
+  `main` resumes patch-only releases from there.
 
 ---
 
 ## Release Process
 
 ```
-Feature branch → PR to main
-    ↓ (automated)
-Full test suite (vertical_slice_test.py — 75 checks)
+Feature branch → PR to develop → merge when ready
+    ↓
+develop accumulates the next minor release (v1.1.0)
+    ↓ (when ready to ship)
+PR develop → main
+    ↓ (automated, non-blocking)
+Test suite runs (informational — see Known gaps re: vertical_slice_test.py)
 TypeScript compilation check
-    ↓ (if all pass)
-Merge to main → Auto-deploy to UAT
-    ↓ (manual: 5-7 day UAT period)
-git tag v1.0.0 && git push origin v1.0.0
-    ↓ (automated CI)
-Build production Docker images
-    ↓ (manual: GitHub Environment approval gate)
-Deploy to Production
-Create GitHub Release with auto-generated notes
+    ↓
+Merge to main → auto-deploy to the single production host
+    ↓ (manual: GitHub Environment "production" approval gate)
+Deploy runs: git pull + docker compose build/up + alembic upgrade head
+    ↓
+git tag v1.0.x (or v1.1.0) && git push origin <tag>
+    ↓ (automated)
+GitHub Release created with auto-generated notes (no redeploy — the
+commit was already deployed via the main-branch push above)
 ```
+
+For a small, isolated **patch** (e.g. a hotfix that doesn't need the full
+`develop` cycle): commit directly to `main`, same auto-deploy + tag flow.
