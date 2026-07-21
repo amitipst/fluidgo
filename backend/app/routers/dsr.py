@@ -17,6 +17,15 @@ router = APIRouter()
 SELF_EDIT_WINDOW = timedelta(hours=24)
 GRANTED_EDIT_WINDOW = timedelta(hours=24)  # duration of a manager-granted exception
 
+# "Second chance" backfill window — a rep who forgot to log a day can still
+# create (not just edit) a DSR for any of the last N calendar days. Before
+# this existed, submit_dsr had NO date-range check at all: any past OR
+# future date was silently accepted. This both plugs that hole and gives
+# reps a bounded, self-serve way to catch up on missed days. Beyond the
+# window, a rep needs to go through their manager (same edit-request/
+# grant path already used for the 24h self-edit window above).
+BACKFILL_WINDOW_DAYS = 7
+
 # Roles permitted to submit a DSR (field + direct management only)
 DSR_ALLOWED_ROLES = {
     "rep", "inside_sales", "pre_sales", "manager"
@@ -112,6 +121,14 @@ def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None) -> dict:
     d["lock_reason"]     = lock.get("reason")
     d["lock_message"]    = lock.get("message")
     d["self_edit_ends_at"] = lock.get("self_edit_ends_at")
+    # Backfill visibility — a DSR first submitted after the day it covers
+    # (i.e. via the second-chance window, not same-day) is flagged here so
+    # the Mine/Team approval views can surface it distinctly rather than
+    # looking identical to an on-time entry. Derived from existing columns
+    # (submitted_at vs date) — no separate "is_backfilled" column needed.
+    days_late = (_aware(dsr.submitted_at).date() - dsr.date).days
+    d["submitted_late"] = days_late > 0
+    d["days_late"]      = max(days_late, 0)
     if self_score:
         d["self_scores"] = {
             c.name: getattr(self_score, c.name)
@@ -148,6 +165,21 @@ async def submit_dsr(
                                     DSRDaily.date == body.date))
     )
     dsr = result.scalar_one_or_none()
+
+    # Date-range guard. No future dates, ever. A brand-new (never-submitted)
+    # DSR can only be backfilled within BACKFILL_WINDOW_DAYS — this is the
+    # "second chance" window. An EXISTING row older than the window is left
+    # alone here; its own edit lock (24h / approval / manager-grant) below
+    # already governs whether it can still be changed, and that path
+    # shouldn't get any looser just because backfill now exists.
+    today = datetime.now(timezone.utc).date()
+    if body.date > today:
+        raise HTTPException(status_code=400,
+            detail="Cannot submit a DSR for a future date.")
+    if dsr is None and (today - body.date).days > BACKFILL_WINDOW_DAYS:
+        raise HTTPException(status_code=400,
+            detail=f"DSR can only be backfilled for the last {BACKFILL_WINDOW_DAYS} days. "
+                    "For an older missed day, ask your manager to log it or grant an exception.")
 
     # Block editing if approved, or if the 24h self-edit window has closed
     # (unless a manager has explicitly granted a temporary exception).
@@ -188,6 +220,7 @@ async def submit_dsr(
         request=request
     )
 
+    is_backfill = body.date != today
     return {
         "id":              str(dsr.id),
         "rigor_score":     rigor,
@@ -195,7 +228,22 @@ async def submit_dsr(
         "dsr_type":        dsr_type,
         "approval_status": "submitted",
         "is_update":       is_update,
+        "is_backfill":     is_backfill,
         "message":         f"DSR {'updated' if is_update else 'submitted'} successfully for {body.date}"
+                            + (" (backfilled)" if is_backfill and not is_update else "")
+    }
+
+# ── Backfill window bounds ────────────────────────────────────────────────────
+@router.get("/backfill-window")
+async def get_backfill_window(user: User = Depends(get_current_user)):
+    """Tells the client the allowed date range for a NEW DSR submission, so
+    the date picker's min/max stays driven by one source of truth (this
+    constant) instead of being duplicated/hardcoded on the frontend."""
+    today = datetime.now(timezone.utc).date()
+    return {
+        "min_date":    (today - timedelta(days=BACKFILL_WINDOW_DAYS)).isoformat(),
+        "max_date":    today.isoformat(),
+        "window_days": BACKFILL_WINDOW_DAYS,
     }
 
 # ── Get single DSR for a date ─────────────────────────────────────────────────
@@ -223,8 +271,11 @@ async def get_my_history(
     user: User = Depends(get_current_user)
 ):
     """Returns all DSR rows for the current user, newest first.
-    Optional month filter: ?month=2026-07"""
-    q = select(DSRDaily).where(DSRDaily.user_id == user.id)
+    Optional month filter: ?month=2026-07
+    Seeded rows (see migration 0027) are always excluded here — there's no
+    legitimate reason a rep's own DSR log should show fake seed_v3.py data
+    attached to their account."""
+    q = select(DSRDaily).where(DSRDaily.user_id == user.id, DSRDaily.is_seed == False)
     if month:
         try:
             yr, mo = int(month[:4]), int(month[5:7])
@@ -260,7 +311,7 @@ async def get_team_dsr(
         visible = await resolve_direct_report_ids(db, user)
     else:
         visible = await resolve_visible_user_ids(db, user)
-    q = select(DSRDaily).where(DSRDaily.date == date)
+    q = select(DSRDaily).where(DSRDaily.date == date, DSRDaily.is_seed == False)
     if visible is not None:
         q = q.where(DSRDaily.user_id.in_(visible))
     dsrs = (await db.execute(q)).scalars().all()
@@ -272,6 +323,7 @@ async def get_pending_approvals(
     month: Optional[str] = None,
     scope: Optional[str] = None,   # "direct" — see /team above
     status: Literal["submitted", "approved", "rejected", "all"] = "submitted",
+    include_seed: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_level(20))
 ):
@@ -281,13 +333,22 @@ async def get_pending_approvals(
     back into "submitted", so a rejected DSR correctly drops out of the
     default pending view instead of reappearing in the same queue the
     manager just acted on - that was the "reject doesn't remove it from the
-    list" bug. status=all removes the filter entirely."""
+    list" bug. status=all removes the filter entirely.
+    Seeded rows (migration 0027) are excluded by default even in historical
+    (approved/rejected/all) views, unlike genuinely deactivated-rep history
+    which is deliberately kept — seed rows aren't real audit trail, they're
+    fake data. include_seed=true (business_head+ only) opts back in for
+    verifying the cleanup itself."""
     from app.services.permission_service import resolve_visible_user_ids, resolve_direct_report_ids
+    from app.models import role_level
+    show_seed = include_seed and role_level(user.role) >= 40
     if scope == "direct":
         visible = await resolve_direct_report_ids(db, user)
     else:
         visible = await resolve_visible_user_ids(db, user)
     q = select(DSRDaily)
+    if not show_seed:
+        q = q.where(DSRDaily.is_seed == False)
     if status != "all":
         q = q.where(DSRDaily.approval_status == status)
     if visible is not None:

@@ -51,6 +51,13 @@ function DSRCard({ dsr, canApprove, onApprove, showRequestEdit, onRequestEdit, o
               {format(new Date(dsr.date), 'EEE, d MMM yyyy')}
             </span>
             <StatusBadge status={dsr.approval_status} />
+            {dsr.submitted_late && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full"
+                style={{ background: '#FEF3C7', color: '#92400E' }}
+                title="Filed after the day it covers — submitted via the second-chance backfill window">
+                🕒 Backfilled{dsr.days_late > 1 ? ` (${dsr.days_late}d late)` : ''}
+              </span>
+            )}
             {isLocked && (
               <span className="text-[10px] text-wep-muted" title={dsr.lock_message}>
                 🔒 {dsr.lock_reason === 'approved' ? 'Locked (approved)' : 'Edit window closed'}
