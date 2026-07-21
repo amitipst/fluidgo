@@ -59,10 +59,14 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
     """Compute a single metric value for a user in a given period."""
     from app.services.scoring_engine import _period_bounds
     start, end = _period_bounds(period)
+    # Seed rows excluded — otherwise fake seed_v3.py activity dated within
+    # the scheme period would silently inflate a real rep's incentive
+    # achievement (this feeds actual payable incentive calculations).
     dsrs = (await db.execute(
         select(DSRDaily).where(
             DSRDaily.user_id == user.id,
-            DSRDaily.date >= start, DSRDaily.date <= end
+            DSRDaily.date >= start, DSRDaily.date <= end,
+            DSRDaily.is_seed == False
         )
     )).scalars().all()
 
@@ -81,7 +85,8 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
                 Meeting.user_id == user.id,
                 Meeting.date >= start, Meeting.date <= end,
                 Meeting.bant_budget == True, Meeting.bant_authority == True,
-                Meeting.bant_need == True, Meeting.bant_timeline == True
+                Meeting.bant_need == True, Meeting.bant_timeline == True,
+                Meeting.is_seed == False
             )
         )).scalars().all()
         return float(len(meetings))

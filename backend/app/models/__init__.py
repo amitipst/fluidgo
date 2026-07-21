@@ -189,6 +189,12 @@ class DSRDaily(Base):
     edit_request_reason: Mapped[str]      = mapped_column(String(500), nullable=True)
     edit_requested_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     edit_granted_until:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ── Seed-data marker ──────────────────────────────────────────────────────
+    # True for rows created by seed_v3.py/seed.py (or backfilled true for
+    # anything dated before the 2026-07-04 go-live cutoff). Default-excluded
+    # from Analytics/DSR list & approval queries; recoverable via
+    # include_seed=true for admins. See migration 0027.
+    is_seed:          Mapped[bool]        = mapped_column(Boolean, default=False, server_default="false")
 
 class SelfScore(Base):
     __tablename__ = "self_scores"
@@ -230,6 +236,8 @@ class Meeting(Base):
     status:               Mapped[str]       = mapped_column(String(20), default="logged", server_default="logged")
     converted_to_lead_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Seed-data marker — see DSRDaily.is_seed above and migration 0027.
+    is_seed:          Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
 
 class Lead(Base):
     __tablename__ = "leads"

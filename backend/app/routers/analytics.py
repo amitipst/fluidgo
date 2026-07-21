@@ -14,8 +14,17 @@ from app.services.scoring_engine import _period_bounds
 
 router = APIRouter()
 
+# Rows dated before real usage began (seed_v3.py-generated, attached to real
+# accounts — see migration 0027) are excluded from Analytics by default.
+# include_seed=true opts back in, gated to business_head+ so a rep/manager
+# can't accidentally re-pollute their own view, but an admin verifying the
+# cleanup can still see the raw data.
+def _can_view_seed(user: User) -> bool:
+    from app.models import role_level
+    return role_level(user.role) >= 40
+
 @router.get("/rep/{user_id}")
-async def rep_analytics(user_id: str, scope: str = "auto",
+async def rep_analytics(user_id: str, scope: str = "auto", include_seed: bool = False,
                         db: AsyncSession = Depends(get_db),
                         user: User = Depends(get_current_user)):
     """Returns per-day DSR rows with rigor scores.
@@ -23,18 +32,21 @@ async def rep_analytics(user_id: str, scope: str = "auto",
     - Manager/BH viewing their own id with scope=auto: if they have no DSRs of
       their own (they don't log DSRs), automatically returns their TEAM's daily
       rows aggregated by date, so the Analytics charts aren't empty for them.
-    - scope=self forces own-only; scope=team forces team aggregate."""
+    - scope=self forces own-only; scope=team forces team aggregate.
+    - include_seed=true (business_head+ only) opts back into seeded rows that
+      are excluded by default (see migration 0027)."""
     from app.models import role_level
     is_manager = role_level(user.role) >= 20
     if not is_manager and str(user.id) != user_id:
         from fastapi import HTTPException
         raise HTTPException(403, "You can only view your own analytics")
+    show_seed = include_seed and _can_view_seed(user)
 
     async def own_rows(uid):
-        res = await db.execute(
-            select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(uid))
-            .order_by(DSRDaily.date.asc())
-        )
+        q = select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(uid))
+        if not show_seed:
+            q = q.where(DSRDaily.is_seed == False)
+        res = await db.execute(q.order_by(DSRDaily.date.asc()))
         return res.scalars().all()
 
     dsrs = await own_rows(user_id)
@@ -47,6 +59,8 @@ async def rep_analytics(user_id: str, scope: str = "auto",
         from app.services.permission_service import resolve_visible_user_ids
         visible = await resolve_visible_user_ids(db, user)
         q = select(DSRDaily).order_by(DSRDaily.date.asc())
+        if not show_seed:
+            q = q.where(DSRDaily.is_seed == False)
         if visible is not None:
             q = q.where(DSRDaily.user_id.in_(visible))
         team_dsrs = (await db.execute(q)).scalars().all()
@@ -88,12 +102,15 @@ async def rep_analytics(user_id: str, scope: str = "auto",
     ]
 
 @router.get("/team")
-async def team_analytics(include_inactive: bool = False, db: AsyncSession = Depends(get_db),
+async def team_analytics(include_inactive: bool = False, include_seed: bool = False,
+                         db: AsyncSession = Depends(get_db),
                          user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "inside_sales", "ceo", "super_admin"))):
     """Team performance matrix — scoped by role/BU automatically.
-    Exited reps (is_active=False) excluded by default; include_inactive=true shows them."""
+    Exited reps (is_active=False) excluded by default; include_inactive=true shows them.
+    Seeded rows excluded by default; include_seed=true (business_head+ only)."""
     # Use permission_service for consistent scope resolution across all roles
     visible_ids = await resolve_visible_user_ids(db, user)
+    show_seed = include_seed and _can_view_seed(user)
 
     query = select(User)
     if not include_inactive:
@@ -106,9 +123,10 @@ async def team_analytics(include_inactive: bool = False, db: AsyncSession = Depe
 
     out = []
     for u in users:
-        dsrs_result = await db.execute(
-            select(DSRDaily).where(DSRDaily.user_id == u.id)
-        )
+        dsr_q = select(DSRDaily).where(DSRDaily.user_id == u.id)
+        if not show_seed:
+            dsr_q = dsr_q.where(DSRDaily.is_seed == False)
+        dsrs_result = await db.execute(dsr_q)
         dsrs = dsrs_result.scalars().all()
         working = [d for d in dsrs if d.status == "working"]
         avg_rigor = calculate_avg_rigor(dsrs)  # ← uses fixed formula, excludes exempt days
@@ -172,7 +190,8 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
             select(DSRDaily).where(
                 DSRDaily.user_id.in_(user_ids),
                 DSRDaily.date >= month_start,
-                DSRDaily.date <= month_end
+                DSRDaily.date <= month_end,
+                DSRDaily.is_seed == False
             )
         )).scalars().all()
         pending_today = len([u for u in bu_users
@@ -183,7 +202,8 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
             select(DSRDaily).where(
                 DSRDaily.user_id == user.id,
                 DSRDaily.date >= month_start,
-                DSRDaily.date <= month_end
+                DSRDaily.date <= month_end,
+                DSRDaily.is_seed == False
             )
         )).scalars().all()
         pending_today = 0
@@ -462,6 +482,7 @@ async def performance_comparison(
                 DSRDaily.user_id.in_(team_ids),
                 DSRDaily.date >= start,
                 DSRDaily.date <= end,
+                DSRDaily.is_seed == False,
             )
         )).scalars().all()
         deals = (await db.execute(
@@ -819,11 +840,14 @@ async def rollover_preview(
 
 
 @router.get("/funnel")
-async def funnel_analytics(db: AsyncSession = Depends(get_db),
+async def funnel_analytics(include_seed: bool = False,
+                           db: AsyncSession = Depends(get_db),
                            user: User = Depends(get_current_user)):
     """Conversion funnel: Meetings → Leads → Deals → Won, with conversion rates.
     Scoped to the caller's visible users (own for reps, team for managers).
-    This is the business-insight view a Business Head actually wants."""
+    This is the business-insight view a Business Head actually wants.
+    Seeded meetings excluded by default (see migration 0027);
+    include_seed=true opts back in for business_head+."""
     from app.models import Meeting, Lead, role_level
     from sqlalchemy import func
 
@@ -832,9 +856,13 @@ async def funnel_analytics(db: AsyncSession = Depends(get_db),
         visible = await resolve_visible_user_ids(db, user)
     else:
         visible = [user.id]
+    show_seed = include_seed and _can_view_seed(user)
 
     def _scoped(q, col):
-        return q.where(col.in_(visible)) if visible is not None else q
+        q = q.where(col.in_(visible)) if visible is not None else q
+        if col is Meeting.user_id and not show_seed:
+            q = q.where(Meeting.is_seed == False)
+        return q
 
     meetings_total = (await db.execute(_scoped(
         select(func.count(Meeting.id)), Meeting.user_id))).scalar() or 0
