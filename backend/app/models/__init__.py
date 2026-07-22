@@ -548,3 +548,25 @@ class PasswordResetToken(Base):
     expires_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=False)
     used_at:    Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class Feedback(Base):
+    """In-app 'Report an issue / suggest an idea' capture. Always saves and
+    always alerts super_admin/ceo by email — Jira filing is a bonus on top
+    when JIRA_* settings are configured (see config.jira_configured); if not,
+    this table alone is the system of record and the admin inbox (GET
+    /api/feedback) is how issues get triaged."""
+    __tablename__ = "feedback"
+    id:              Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    role:            Mapped[str]       = mapped_column(String(30))           # snapshot of reporter's role at time of filing
+    category:        Mapped[str]       = mapped_column(String(20))           # bug | idea | question | other
+    message:         Mapped[str]       = mapped_column(Text)
+    page_context:    Mapped[str]       = mapped_column(String(120), nullable=True)  # e.g. "Submit DSR" — which screen they were on
+    status:          Mapped[str]       = mapped_column(String(20), default="open", server_default="open")  # open | in_progress | resolved | wont_fix
+    jira_issue_key:  Mapped[str]       = mapped_column(String(30), nullable=True)   # e.g. "FGO-42"
+    jira_issue_url:  Mapped[str]       = mapped_column(String(255), nullable=True)
+    jira_sync_error: Mapped[str]       = mapped_column(Text, nullable=True)         # set if Jira filing failed — feedback itself is never lost
+    created_at:      Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    reviewed_at:     Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by:     Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)

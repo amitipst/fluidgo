@@ -4,6 +4,7 @@ import { APP_VERSION } from '@/version'
 import { useAuthStore } from '@/store/authStore'
 import { useIdleLogout } from '@/hooks/useIdleLogout'
 import api from '@/hooks/useApi'
+import FeedbackWidget from '@/components/FeedbackWidget'
 
 // Field roles only — can submit DSR
 const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
@@ -11,6 +12,10 @@ const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
 // Roles that can act on DSR edit requests (matches backend require_level(20)
 // gate on GET/POST /dsr/team/edit-requests, and DSRHistory.tsx's isManager).
 const DSR_MANAGER_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin']
+
+// Who can see the Feedback inbox — matches backend feedback.py's REVIEW_LEVEL
+// (role_level >= 40: business_head/practice_head and above).
+const FEEDBACK_ADMIN_ROLES = ['business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
 
 const NAV_CORE = [
   { to: '/',              icon: '⚡', label: 'Dashboard',    exact: true },
@@ -43,6 +48,7 @@ const NAV_SCHEME_WINNERS = { to: '/scheme-winners', icon: '🎉', label: 'Scheme
 const NAV_ACTIVITY_LOGS = { to: '/activity-logs', icon: '🗂️', label: 'Activity Logs' }
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
+const NAV_FEEDBACK = { to: '/feedback', icon: '💬', label: 'Feedback Inbox' }
 
 // ── fluidGo compact logo for sidebar header ──────────────────────────────────
 function SidebarLogo() {
@@ -137,6 +143,19 @@ export default function Layout() {
   })
   const dsrEditRequestCount = dsrEditRequests.length
 
+  const canSeeFeedbackInbox = FEEDBACK_ADMIN_ROLES.includes(user?.role ?? '')
+
+  // Open-feedback count for the sidebar badge — same 60s-poll pattern as
+  // the DSR edit-request badge above.
+  const { data: feedbackPending } = useQuery({
+    queryKey: ['feedback-badge'],
+    queryFn:  () => api.get('/feedback/pending-count').then(r => r.data),
+    enabled:  canSeeFeedbackInbox,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+  const feedbackPendingCount = feedbackPending?.count ?? 0
+
   const isHR = user?.role === 'hr'
 
   // Remove DSR items for non-field roles; remove gamification from core if manager+;
@@ -226,6 +245,7 @@ export default function Layout() {
               {canSeeFGA     && <SideLink {...NAV_FGA} />}
               {canSeeFGA     && <SideLink {...NAV_SCHEME_WINNERS} />}
               {canSeeActivityLogs && <SideLink {...NAV_ACTIVITY_LOGS} />}
+              {canSeeFeedbackInbox && <SideLink {...NAV_FEEDBACK} badge={feedbackPendingCount} />}
             </>
           )}
 
@@ -332,6 +352,9 @@ export default function Layout() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Global feedback capture — every logged-in role, every screen */}
+      <FeedbackWidget />
 
       {showWarning && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4"
