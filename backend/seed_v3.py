@@ -249,7 +249,8 @@ async def seed():
                     next_step="Follow up with decision maker",
                     roadblock=random.random() < 0.15,
                     ai_closure_pct={"cold":10,"warm":40,"hot":70,
-                                    "closed_won":100,"closed_lost":0,"dropped":0}.get(stage,50)
+                                    "closed_won":100,"closed_lost":0,"dropped":0}.get(stage,50),
+                    is_seed=True,
                 )
                 db.add(deal)
                 deal_count += 1
@@ -308,7 +309,8 @@ async def seed():
                     next_action="Follow up with proposal",
                     next_action_date=dt + timedelta(days=random.randint(3,14)),
                     ai_lead_score=random.randint(40,95),
-                    status=random.choice(["new","qualified","proposal","closed_won"])
+                    status=random.choice(["new","qualified","proposal","closed_won"]),
+                    is_seed=True,
                 ))
                 lead_count += 1
         await db.commit()

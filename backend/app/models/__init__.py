@@ -257,6 +257,10 @@ class Lead(Base):
     source_meeting_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # meeting this lead came from
     converted_to_deal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # deal this lead became
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # See migration 0029 — same is_seed pattern as DSRDaily/Meeting (0027).
+    # seed_v3.py creates placeholder leads too; this excludes them from
+    # funnel/analytics counts by default.
+    is_seed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 class PipelineDeal(Base):
     """Doubles as the 'Opportunity' entity for v2 — extended in place rather than
@@ -343,6 +347,11 @@ class PipelineDeal(Base):
     archived:    Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     archived_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
     archived_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # ── Seed-data flag (see migration 0029 — same pattern as DSRDaily/Meeting,
+    # migration 0027). Distinct from `archived`: archived is an admin action on
+    # a real deal; is_seed marks a deal seed_v3.py created that was never real
+    # in the first place. Both get excluded from analytics/scoring by default.
+    is_seed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 class PipelineUpdate(Base):
     """Append-only remark history for a pipeline deal. `todays_update`/`next_step`

@@ -95,7 +95,8 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
             select(PipelineDeal).where(
                 PipelineDeal.user_id == user.id,
                 PipelineDeal.stage == "closed_won",
-                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end
+                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+                PipelineDeal.archived == False, PipelineDeal.is_seed == False
             )
         )).scalars().all()
         return float(sum(float(d.deal_value or 0) for d in deals))

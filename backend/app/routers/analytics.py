@@ -232,9 +232,15 @@ async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(ge
     p = period or f"{today.year}-{today.month:02d}"
     start, end = _period_bounds(p)
 
-    # Won revenue in the period (this user only)
+    # Won revenue in the period (this user only). Archived/seeded deals
+    # excluded unconditionally — no legitimate reason a rep's own revenue
+    # dashboard should include fake seed_v3.py deals (see migration 0029;
+    # same reasoning already applied to DSR/Meetings in migration 0027).
     deals = (await db.execute(
-        select(PipelineDeal).where(PipelineDeal.user_id == user.id)
+        select(PipelineDeal).where(
+            PipelineDeal.user_id == user.id,
+            PipelineDeal.archived == False, PipelineDeal.is_seed == False,
+        )
     )).scalars().all()
     won = [d for d in deals if d.stage == "closed_won"
            and d.closure_eta and start <= d.closure_eta <= end]
@@ -284,8 +290,14 @@ async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Dep
     bu_users = (await db.execute(q)).scalars().all()
     bu_user_ids = [u.id for u in bu_users]
 
+    # Same unconditional archived/seed exclusion as my_revenue() above —
+    # Revenue Intelligence is management-facing, no legitimate reason to
+    # include fake seed_v3.py deals here either.
     deals = (await db.execute(
-        select(PipelineDeal).where(PipelineDeal.user_id.in_(bu_user_ids))
+        select(PipelineDeal).where(
+            PipelineDeal.user_id.in_(bu_user_ids),
+            PipelineDeal.archived == False, PipelineDeal.is_seed == False,
+        )
     )).scalars().all()
 
     won       = [d for d in deals if d.stage == "closed_won"
@@ -490,7 +502,10 @@ async def performance_comparison(
                 PipelineDeal.user_id.in_(team_ids),
                 PipelineDeal.closure_eta >= start,
                 PipelineDeal.closure_eta <= end,
-                PipelineDeal.stage == "closed_won"
+                PipelineDeal.stage == "closed_won",
+                # Matches the DSRDaily.is_seed filter just above — this query
+                # was the one left out of the original migration-0027 pass.
+                PipelineDeal.archived == False, PipelineDeal.is_seed == False,
             )
         )).scalars().all()
         targets = (await db.execute(
@@ -858,10 +873,23 @@ async def funnel_analytics(include_seed: bool = False,
         visible = [user.id]
     show_seed = include_seed and _can_view_seed(user)
 
+    # Applies visibility scope + seed exclusion (Meeting/Lead) uniformly, and
+    # additionally archived + seed exclusion for PipelineDeal — previously
+    # this helper only special-cased Meeting, so Lead and PipelineDeal rows
+    # got zero exclusion (Lead didn't even have an is_seed column until
+    # migration 0029; PipelineDeal's existing `archived` flag wasn't applied
+    # here either, despite being correctly applied in pipeline.py's
+    # list_deals()). See the 2026-07-22 seed-data-leakage audit.
     def _scoped(q, col):
         q = q.where(col.in_(visible)) if visible is not None else q
         if col is Meeting.user_id and not show_seed:
             q = q.where(Meeting.is_seed == False)
+        elif col is Lead.user_id and not show_seed:
+            q = q.where(Lead.is_seed == False)
+        elif col is PipelineDeal.user_id:
+            q = q.where(PipelineDeal.archived == False)
+            if not show_seed:
+                q = q.where(PipelineDeal.is_seed == False)
         return q
 
     meetings_total = (await db.execute(_scoped(
@@ -876,6 +904,18 @@ async def funnel_analytics(include_seed: bool = False,
         Lead.user_id))).scalar() or 0
     deals_total = (await db.execute(_scoped(
         select(func.count(PipelineDeal.id)), PipelineDeal.user_id))).scalar() or 0
+    # Deals-with-lead-ancestry — NOT the same as deals_total. PipelineDeal can
+    # be created directly (no Lead involved at all, e.g. service_delivery-
+    # sourced farming deals), so deals_total is not a subset of leads_total.
+    # Using deals_total/leads_total as "Leads → Deals conversion" (the
+    # pre-existing bug — see finding #2 in the project tracker doc, showed
+    # 225% in a real observed case) implied a subset relationship that
+    # doesn't exist. deals_from_leads is the correct numerator for that
+    # specific conversion rate; deals_total remains the real overall count,
+    # shown separately rather than implied to be leads-derived.
+    deals_from_leads = (await db.execute(_scoped(
+        select(func.count(PipelineDeal.id)).where(PipelineDeal.source_lead_id.isnot(None)),
+        PipelineDeal.user_id))).scalar() or 0
     deals_won = (await db.execute(_scoped(
         select(func.count(PipelineDeal.id)).where(PipelineDeal.stage == "closed_won"),
         PipelineDeal.user_id))).scalar() or 0
@@ -916,8 +956,14 @@ async def funnel_analytics(include_seed: bool = False,
             {"label": "Meetings",  "count": meetings_total,   "value": None},
             {"label": "Leads",     "count": leads_total,      "value": None,
              "conv_from_prev": pct(leads_total, meetings_total)},
+            # count = every open/closed deal (deals can be created directly,
+            # not just from a lead — see deals_from_leads above). The
+            # conversion rate compares like with like: deals that actually
+            # descended from a lead, over total leads — not deals_total,
+            # which isn't a subset of leads_total.
             {"label": "Deals",     "count": deals_total,      "value": float(open_value),
-             "conv_from_prev": pct(deals_total, leads_total)},
+             "deals_from_leads": deals_from_leads,
+             "conv_from_prev": pct(deals_from_leads, leads_total)},
             {"label": "Won",       "count": deals_won,        "value": float(won_value),
              "conv_from_prev": pct(deals_won, deals_total)},
         ],
