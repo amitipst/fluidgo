@@ -50,7 +50,7 @@ const TRACKS: Track[] = [
   { key: 'presales',   label: '🔧 Pre-Sales',   roles: ['pre_sales'] },
   { key: 'operations', label: '🛠️ Operations',  roles: ['service_delivery_manager'] },
 ]
-const LEADERSHIP_ROLES = ['regional_manager', 'bu_head', 'business_head', 'coo', 'hr', 'finance', 'ceo', 'super_admin']
+const LEADERSHIP_ROLES = ['regional_manager', 'bu_head', 'business_head', 'coo', 'hr', 'finance', 'ceo', 'super_admin', 'governance']
 
 // Company-level roles — backend's resolve_visible_user_ids ignores
 // business/region entirely for these (hr/finance = "all users org-wide",
