@@ -7,7 +7,7 @@ from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
 from app.models import User, DSRDaily, SelfScore
-from app.services.deps import get_current_user, require_level
+from app.services.deps import get_current_user, require_level, deny_governance
 from app.services.rigor_service import calculate_rigor_score, rigor_label
 from app.services.audit_service import audit
 
@@ -109,8 +109,14 @@ def _edit_lock_state(dsr: DSRDaily) -> dict:
             "message": "The 24-hour self-edit window has closed. "
                        "Use 'Request Edit' to ask your manager for an exception."}
 
-def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None) -> dict:
+def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None, viewer_role: Optional[str] = None) -> dict:
     d = {c.name: getattr(dsr, c.name) for c in dsr.__table__.columns}
+    # Governance validates completeness/timeliness, not deal size — strip
+    # the one money-adjacent field this table carries so a governance
+    # viewer never sees it, even though their org-wide scope reaches this
+    # endpoint (see can_see_financials() / deny_governance() design note).
+    if viewer_role == "governance":
+        d.pop("proposal_value", None)
     d["rigor_score"]     = rigor
     d["rigor_label"]     = rigor_label(rigor)
     d["id"]              = str(d["id"])
@@ -315,7 +321,7 @@ async def get_team_dsr(
     if visible is not None:
         q = q.where(DSRDaily.user_id.in_(visible))
     dsrs = (await db.execute(q)).scalars().all()
-    return [_serialize_dsr(d, calculate_rigor_score(d)) for d in dsrs]
+    return [_serialize_dsr(d, calculate_rigor_score(d), viewer_role=user.role) for d in dsrs]
 
 # ── Team DSR History (manager view — for approval) ────────────────────────────
 @router.get("/team/pending")
@@ -376,11 +382,82 @@ async def get_pending_approvals(
         # records aren't erased from the audit trail.
         if status == "submitted" and rep and not rep.is_active:
             continue
-        row     = _serialize_dsr(dsr, rigor)
+        row     = _serialize_dsr(dsr, rigor, viewer_role=user.role)
         row["rep_name"]  = rep.name  if rep else "Unknown"
         row["rep_email"] = rep.email if rep else ""
         results.append(row)
     return results
+
+# ── Monthly team DSR export (CSV) ─────────────────────────────────────────────
+# Confirmed missing in the 2026-07-26 report/export audit: no download
+# existed anywhere for the Monthly DSR report for teams (Team.tsx/
+# DSRHistory.tsx had zero export code). One row per DSR entry for the
+# scoped team in a month — same scoping (resolve_visible_user_ids) and the
+# same blob-download pattern already proven in FGAApproval.tsx's CSV export.
+@router.get("/team/export")
+async def export_team_dsr(
+    month: str,   # "2026-07"
+    scope: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_level(20)),
+):
+    from fastapi.responses import StreamingResponse
+    import csv, io
+    from app.services.permission_service import resolve_visible_user_ids, resolve_direct_report_ids
+
+    if scope == "direct":
+        visible = await resolve_direct_report_ids(db, user)
+    else:
+        visible = await resolve_visible_user_ids(db, user)
+
+    yr, mo = int(month[:4]), int(month[5:7])
+    from calendar import monthrange
+    start, end = date(yr, mo, 1), date(yr, mo, monthrange(yr, mo)[1])
+
+    q = select(DSRDaily).where(
+        DSRDaily.date >= start, DSRDaily.date <= end, DSRDaily.is_seed == False,
+    )
+    if visible is not None:
+        q = q.where(DSRDaily.user_id.in_(visible))
+    dsrs = (await db.execute(q.order_by(DSRDaily.date.asc()))).scalars().all()
+
+    is_governance = user.role == "governance"
+    rows = []
+    for dsr in dsrs:
+        rep = (await db.execute(select(User).where(User.id == dsr.user_id))).scalar_one_or_none()
+        lateness = _serialize_dsr(dsr, 0)
+        row = {
+            "date": dsr.date.isoformat(),
+            "rep_name": rep.name if rep else "Unknown",
+            "rep_email": rep.email if rep else "",
+            "role": rep.role if rep else "",
+            "status": dsr.status,
+            "calls": dsr.calls, "visits": dsr.visits, "followups": dsr.followups,
+            "new_leads": dsr.new_leads, "proposals": dsr.proposals,
+            "approval_status": dsr.approval_status,
+            "submitted_late": lateness["submitted_late"],
+            "days_late": lateness["days_late"],
+        }
+        # No proposal_value column for governance — same rule as
+        # _serialize_dsr's viewer_role param, applied here since this export
+        # builds its own row dict rather than calling that helper directly.
+        if not is_governance:
+            row["proposal_value"] = float(dsr.proposal_value) if dsr.proposal_value is not None else None
+        rows.append(row)
+
+    if not rows:
+        return {"month": month, "count": 0, "data": []}
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=team_dsr_{month}.csv"}
+    )
 
 # ── Approve / Reject DSR ──────────────────────────────────────────────────────
 @router.post("/{dsr_id}/approve")
@@ -395,7 +472,12 @@ async def approve_dsr(
     """Manager approves or rejects a submitted DSR.
     - approved → rep cannot edit
     - rejected → rep can re-edit and resubmit
-    """
+
+    Governance is explicitly blocked here even though its org-wide scope
+    passes require_level(20) — approval authority stays with the manager
+    chain. Governance validates via POST /governance/dsr/{id}/review
+    instead, which never touches approval_status."""
+    deny_governance(user)
     from app.services.permission_service import resolve_visible_user_ids
 
     dsr = (await db.execute(
@@ -522,7 +604,10 @@ async def grant_edit(
     user: User = Depends(require_level(20))
 ):
     """Manager explicitly reopens a locked DSR for 24h. Every grant is
-    audited with who/when/why — nothing changes on a past DSR silently."""
+    audited with who/when/why — nothing changes on a past DSR silently.
+    Governance is blocked here too — granting an edit exception is a
+    management decision, not a validation action."""
+    deny_governance(user)
     from app.services.permission_service import resolve_visible_user_ids
     dsr = (await db.execute(
         select(DSRDaily).where(DSRDaily.id == uuid.UUID(dsr_id))

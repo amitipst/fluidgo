@@ -7,7 +7,7 @@ from typing import Optional
 import uuid
 from app.database import get_db
 from app.models import User, DSRDaily, PipelineDeal, RevenueTarget
-from app.services.deps import get_current_user, require_role
+from app.services.deps import get_current_user, require_role, deny_governance
 from app.services.rigor_service import calculate_rigor_score, calculate_avg_rigor, rigor_label
 from app.services.permission_service import resolve_visible_user_ids
 from app.services.scoring_engine import _period_bounds
@@ -35,6 +35,11 @@ async def rep_analytics(user_id: str, scope: str = "auto", include_seed: bool = 
     - scope=self forces own-only; scope=team forces team aggregate.
     - include_seed=true (business_head+ only) opts back into seeded rows that
       are excluded by default (see migration 0027)."""
+    # This returns per-day proposal_value/new_leads/etc for ANY user_id once
+    # is_manager is true — governance's org-wide scope would otherwise let
+    # it read any rep's raw activity via this route. Governance validates
+    # completeness via /api/compliance and /api/governance/*, not this.
+    deny_governance(user)
     from app.models import role_level
     is_manager = role_level(user.role) >= 20
     if not is_manager and str(user.id) != user_id:
@@ -162,6 +167,7 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
     - Rep/Inside Sales: their own totals for the selected month (default: current month)
     - Manager/BU Head: their BU's aggregated totals for the selected month
     month param format: YYYY-MM (e.g. 2026-05)"""
+    deny_governance(user)
     today = date.today()
     if month:
         year_s, mon_s = month.split("-")
@@ -228,6 +234,7 @@ async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(ge
     """The CALLER's own revenue target vs achievement — visible to every role
     (a rep can see their own numbers). Revenue and Order Booking kept separate.
     Supports monthly ('2026-07'), quarterly ('2026-Q2') and yearly ('2026')."""
+    deny_governance(user)
     today = date.today()
     p = period or f"{today.year}-{today.month:02d}"
     start, end = _period_bounds(p)
@@ -417,6 +424,7 @@ async def regional_performance(
     """Regional performance dashboard — business_head and above only.
     Returns performance KPIs sliced by India region.
     Optional ?region=India+-+West to drill into one region."""
+    deny_governance(user)
     from app.models import role_level
     from app.services.permission_service import get_region_summary, resolve_visible_user_ids
 
@@ -466,6 +474,10 @@ async def performance_comparison(
     India FY: April 1 → March 31
     Quarters: Q1=Apr-Jun, Q2=Jul-Sep, Q3=Oct-Dec, Q4=Jan-Mar
     """
+    # Revenue/target KPIs org-wide once scope="all" resolves visible_ids to
+    # None below — governance's org-wide scope would otherwise expose this
+    # exact data despite passing no other role gate here.
+    deny_governance(user)
     from app.models import role_level
     from app.services.period_service import parse_period
     from app.services.permission_service import resolve_visible_user_ids
@@ -599,6 +611,84 @@ async def performance_comparison(
             "mom":      mom_kpis,
         }
     }
+
+
+@router.get("/performance/export")
+async def export_performance(
+    period: str,   # "2026-07"
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("business_head", "practice_head", "coo", "ceo", "super_admin")),
+):
+    """CSV download of monthly per-rep performance — one of the three report/
+    export gaps confirmed missing in the 2026-07-26 audit (Analytics/
+    RevenueIntelligence/RegionalPerformance had zero export code). Gated
+    business_head+ to match those screens' own visibility, same reasoning
+    as the include_seed=40+ gate elsewhere in this file. Contains revenue
+    figures, so this is business_head+ only — governance is level 35 and
+    role_level(...) < 40 already excludes it without needing a separate
+    deny_governance() call (unlike the ungated endpoints above)."""
+    from fastapi.responses import StreamingResponse
+    import csv, io
+
+    start, end = _period_bounds(period)
+    visible_ids = await resolve_visible_user_ids(db, user)
+    q = select(User).where(User.is_active == True,
+                          User.role.in_(["rep", "inside_sales", "pre_sales", "manager"]))
+    if visible_ids is not None:
+        q = q.where(User.id.in_(visible_ids))
+    reps = (await db.execute(q)).scalars().all()
+
+    rows = []
+    for rep in reps:
+        dsrs = (await db.execute(
+            select(DSRDaily).where(
+                DSRDaily.user_id == rep.id, DSRDaily.is_seed == False,
+                DSRDaily.date >= start, DSRDaily.date <= end,
+            )
+        )).scalars().all()
+        deals = (await db.execute(
+            select(PipelineDeal).where(
+                PipelineDeal.user_id == rep.id,
+                PipelineDeal.archived == False, PipelineDeal.is_seed == False,
+                PipelineDeal.stage == "closed_won",
+                PipelineDeal.closure_eta.isnot(None),
+                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+            )
+        )).scalars().all()
+        targets = (await db.execute(
+            select(RevenueTarget).where(
+                RevenueTarget.user_id == rep.id, RevenueTarget.period == period,
+                RevenueTarget.target_type == "revenue",
+            )
+        )).scalars().all()
+        target_amount = sum(float(t.target_amount) for t in targets)
+        closed_won_value = sum(float(d.deal_value or 0) for d in deals)
+
+        rows.append({
+            "name": rep.name, "email": rep.email, "role": rep.role,
+            "region": rep.region, "business": rep.business,
+            "calls": sum(d.calls for d in dsrs), "visits": sum(d.visits for d in dsrs),
+            "followups": sum(d.followups for d in dsrs), "new_leads": sum(d.new_leads for d in dsrs),
+            "proposals": sum(d.proposals for d in dsrs),
+            "avg_rigor": calculate_avg_rigor(dsrs),
+            "closed_won_value": closed_won_value,
+            "target_amount": target_amount,
+            "achievement_pct": round(closed_won_value / target_amount * 100, 1) if target_amount else None,
+        })
+
+    if not rows:
+        return {"period": period, "count": 0, "data": []}
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=performance_{period}.csv"}
+    )
 
 
 @router.get("/revenue/team-targets")
@@ -863,6 +953,7 @@ async def funnel_analytics(include_seed: bool = False,
     This is the business-insight view a Business Head actually wants.
     Seeded meetings excluded by default (see migration 0027);
     include_seed=true opts back in for business_head+."""
+    deny_governance(user)
     from app.models import Meeting, Lead, role_level
     from sqlalchemy import func
 

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from app.database import get_db
 from app.models import User
-from app.services.deps import get_current_user
+from app.services.deps import get_current_user, deny_governance
 from app.services.permission_service import resolve_visible_user_ids
 from app.services.deal_health_service import calculate_deal_health, deal_health_label
 from app.services.ai_service import analyse
@@ -22,6 +22,10 @@ async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] 
                              include_seed: bool = False,
                              db: AsyncSession = Depends(get_db),
                              user: User = Depends(get_current_user)):
+    # Same reasoning as pipeline.py's list_deals — deal_value on every row,
+    # org-wide once scope="all" resolves. Not part of what governance
+    # validates, so blocked outright.
+    deny_governance(user)
     from app.models import role_level
     visible = await resolve_visible_user_ids(db, user)
     # Seed-data opt-in gated to business_head+ — matches list_meetings()'s
@@ -49,6 +53,7 @@ async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] 
 @router.get("/{deal_id}/health")
 async def opportunity_health(deal_id: str, db: AsyncSession = Depends(get_db),
                              user: User = Depends(get_current_user)):
+    deny_governance(user)
     deal = await opportunity_repo.get_opportunity(db, deal_id)
     if not deal:
         raise HTTPException(404, "Opportunity not found")

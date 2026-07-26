@@ -7,6 +7,22 @@ import { format } from 'date-fns'
 const rigorColor = (s: number) =>
   s >= 80 ? 'text-wep-teal' : s >= 60 ? 'text-wep-amber' : s > 0 ? 'text-red-500' : 'text-wep-muted'
 
+// Blob-download pattern — a plain <a href> can't carry the Authorization
+// header the API needs, so this goes through the authenticated `api`
+// instance and builds a temporary object URL, same as FGAApproval.tsx's
+// downloadCSV and SystemHealth.tsx's audit-log export.
+async function downloadCSV(path: string, filename: string) {
+  try {
+    const res = await api.get(path, { responseType: 'blob' })
+    const url = URL.createObjectURL(new Blob([res.data as any], { type: 'text/csv' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = filename
+    link.click(); URL.revokeObjectURL(url)
+  } catch {
+    alert('Nothing to export for this selection.')
+  }
+}
+
 // v3 role definitions — matches backend ROLE_HIERARCHY
 const V3_ROLES = [
   { key: 'rep',           label: '💼 Salesperson (Rep)',       level: 10 },
@@ -19,6 +35,7 @@ const V3_ROLES = [
   { key: 'coo',           label: '🎯 COO',                     level: 45 },
   { key: 'hr',            label: '👥 HR',                     level: 25 },
   { key: 'finance',       label: '💰 Finance',                level: 25 },
+  { key: 'governance',    label: '🛡️ Governance',             level: 35 },
   { key: 'ceo',           label: '👑 CEO',                    level: 50 },
   { key: 'super_admin',   label: '⚙️ Super Admin',            level: 99 },
 ]
@@ -428,7 +445,21 @@ export default function Team() {
               : `${today} · ${todayDSRs.filter((d: any) => trackTeamData.some((m: any) => m.user_id === d.user_id)).length}/${trackTeamData.length} DSRs submitted today`}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {canManageUsers && (
+            <button className="btn-outline text-sm"
+              onClick={() => downloadCSV(`/dsr/team/export?month=${currentMonth}`, `team_dsr_${currentMonth}.csv`)}
+              title="Monthly DSR report for this team">
+              ⬇️ Export Monthly DSR
+            </button>
+          )}
+          {canManageUsers && (
+            <button className="btn-outline text-sm"
+              onClick={() => downloadCSV(`/compliance/export?period=${currentMonth}`, `compliance_${currentMonth}.csv`)}
+              title="Submission-rate compliance by rep">
+              ⬇️ Export Compliance
+            </button>
+          )}
           {canManageUsers && (
             <button onClick={() => setShowManage(v => !v)} className="btn-outline">
               {showManage ? 'Close' : '👤 Manage Team'}

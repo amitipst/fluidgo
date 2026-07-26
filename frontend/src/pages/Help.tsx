@@ -18,7 +18,7 @@ const ROLE_LABELS: Record<string, string> = {
   manager: 'Manager', service_delivery_manager: 'Service Delivery Manager',
   regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
   practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', coo: 'COO', ceo: 'CEO',
-  super_admin: 'Super Admin',
+  super_admin: 'Super Admin', governance: 'Governance',
 }
 
 function Section({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {
@@ -72,9 +72,11 @@ export default function Help() {
   const isSDM = role === 'service_delivery_manager'
   const isHR = role === 'hr'
   const isFinance = role === 'finance'
+  const isGovernance = role === 'governance'
   // Sales funnel concepts (Leads/Pipeline/Opportunities/Analytics/Schemes)
-  // don't apply to Service Delivery or HR — matches Layout.tsx's salesOnly filter.
-  const seesSalesFunnel = !isSDM && !isHR
+  // don't apply to Service Delivery, HR, or Governance — matches
+  // Layout.tsx's salesOnly filter (governance has its own dedicated nav).
+  const seesSalesFunnel = !isSDM && !isHR && !isGovernance
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
@@ -103,6 +105,30 @@ export default function Help() {
           your own quick reference — not a manual for the whole app.
         </p>
       </Section>
+
+      {isGovernance && (
+        <Section icon="🛡️" title="Governance — validating DSR/DMR/DOR and FGA compliance">
+          <p>
+            Your role is <strong>validation only</strong> — you never submit a DSR/DMR/DOR
+            yourself, and you have no approval authority over the manager/HR/VP chain. Your job
+            is checking that submissions are complete and on time, and flagging anything that
+            isn't for the manager or HR to actually act on.
+          </p>
+          <p className="text-wep-muted">
+            By design, you have <strong>no visibility into revenue, incentive amounts, or FGA
+            scores</strong> anywhere in fluidGo — every screen you can reach shows submission
+            status (submitted / on-time / late / pending) and counts, never money.
+          </p>
+          <Step n={1}><strong>DSR/DMR/DOR Compliance</strong> — org-wide submission-rate table,
+            worst compliance first, with an "At risk" flag for anyone below 70% or who's missed
+            3+ business days in a row. Export to CSV from the same screen.</Step>
+          <Step n={2}><strong>FGA Submission Status</strong> — which stage each score is at
+            (manager/HR/VP review) and whether it's been reviewed — never the score itself.</Step>
+          <Step n={3}>Use <strong>Review</strong> on any row to mark it <strong>✓ Validated</strong>
+            or <strong>🚩 Flag</strong> with a note. This never changes approval_status or
+            payout — it's a parallel record for whoever does have that authority.</Step>
+        </Section>
+      )}
 
       {isField && (
         <Section icon="✏️" title="Submit DSR — your daily routine (2 minutes)">

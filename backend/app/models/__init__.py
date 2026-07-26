@@ -57,6 +57,24 @@ ROLE_HIERARCHY: dict[str, dict] = {
     # data/integrations using this string keep working. Do not assign this
     # role to new users; use "regional_manager" instead.
     "bu_head":            {"level": 30, "scope": "region"},
+    # Governance — validates DSR/DMR/DOR/FGA submission compliance org-wide
+    # (scope="all", same visibility reach as coo/ceo/super_admin below) but
+    # is deliberately given NO visibility into money: `can_see_financials`
+    # is the first entry in ROLE_HIERARCHY to actually be set to False (see
+    # can_see_financials() below — every other role defaults to True via
+    # .get(), so this is a pure opt-out, zero behavior change for anyone
+    # else). This decouples "whose records can I see" (scope/level) from
+    # "can I see revenue/incentive/target numbers" (can_see_financials) —
+    # before this role existed those two were the same axis everywhere in
+    # the codebase (see 2026-07-26 audit, fluidgo-data-quality doc §8.2).
+    # Governance never submits its own DSR/DOR/FGA and never has approval
+    # authority over them — those are enforced as explicit role checks in
+    # the relevant routers (dsr.py, dor.py, fga_approval.py, incentives.py,
+    # analytics.py), NOT by this level number, precisely because a single
+    # numeric threshold can't express "can view broadly, can't approve,
+    # can't see money" all at once. Level 35 (between regional_manager/30
+    # and business_head/40) is descriptive of seniority only.
+    "governance":         {"level": 35, "scope": "all", "can_see_financials": False},
     # business_head == practice_head (same level, same scope) — heads ONE
     # business line (fluidpro/fluidprint/floxtax/hooks) across ALL its regions.
     "business_head":  {"level": 40, "scope": "business"},
@@ -73,6 +91,13 @@ def can_manage_targets(role: str) -> bool: return role_level(role) >= 20
 def can_see_team(role: str) -> bool: return role_level(role) >= 20 or role in ("hr","finance")
 def can_see_all_bu(role: str) -> bool: return role_level(role) >= 30
 def is_cross_org(role: str) -> bool: return role_level(role) >= 45
+# Independent of role_level/scope on purpose — see the "governance" entry's
+# comment above. Every role defaults to True (.get(..., True)) so adding
+# this axis changes nothing for any existing role; only "governance" opts
+# out. Callers that return revenue/incentive/target/score figures should
+# gate on this, not on role_level, since level also controls unrelated
+# visibility scope.
+def can_see_financials(role: str) -> bool: return ROLE_HIERARCHY.get(role, {}).get("can_see_financials", True)
 
 # ── Gamification models ───────────────────────────────────────────────────────
 class IncentiveScheme(Base):
@@ -195,6 +220,12 @@ class DSRDaily(Base):
     # from Analytics/DSR list & approval queries; recoverable via
     # include_seed=true for admins. See migration 0027.
     is_seed:          Mapped[bool]        = mapped_column(Boolean, default=False, server_default="false")
+    # ── Governance review (parallel compliance checkpoint, not an approval
+    # stage — see migration 0030) ────────────────────────────────────────────
+    governance_reviewed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    governance_reviewed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    governance_flag:        Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    governance_comment:     Mapped[str]       = mapped_column(Text, nullable=True)
 
 class SelfScore(Base):
     __tablename__ = "self_scores"
@@ -475,6 +506,11 @@ class DORDaily(Base):
     approved_by:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     approved_at:            Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
     manager_comment:        Mapped[str]       = mapped_column(String(500), nullable=True)
+    # ── Governance review — see DSRDaily's identical block + migration 0030 ──
+    governance_reviewed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    governance_reviewed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    governance_flag:        Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    governance_comment:     Mapped[str]       = mapped_column(Text, nullable=True)
 
 class Account(Base):
     """CSG Phase 1 — the persistent customer identity that Sales pipeline
@@ -518,6 +554,14 @@ class ScoringResult(Base):
     manager_reviewed_at:   Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
     hr_reviewed_at:        Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
     vp_reviewed_at:        Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
+    # ── Governance review — see DSRDaily's identical block + migration 0030.
+    # Deliberately separate from the manager/HR/VP approval chain above:
+    # governance validates that a score was submitted/reviewed on time, not
+    # the score itself (which it never sees — see can_see_financials()). ──
+    governance_reviewed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    governance_reviewed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    governance_flag:        Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    governance_comment:     Mapped[str]       = mapped_column(Text, nullable=True)
 
 class RevenueTarget(Base):
     """Config-driven targets — no hardcoded target values anywhere in code.

@@ -28,6 +28,7 @@ import Help from '@/pages/Help'
 import FeedbackInbox from '@/pages/FeedbackInbox'
 import DOREntry from '@/pages/DOREntry'
 import ManualKPIEntry from '@/pages/ManualKPIEntry'
+import Governance from '@/pages/Governance'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Toaster from '@/components/Toaster'
 import './index.css'
@@ -139,6 +140,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="system-health" element={
                 <ProtectedRoute roles={['super_admin']}>
                   <SystemHealth />
+                </ProtectedRoute>
+              } />
+              {/* Governance — validation-only, no data entry, no financial
+                  visibility (see backend can_see_financials()/deny_governance()) */}
+              <Route path="governance" element={
+                <ProtectedRoute roles={['governance', 'super_admin']}>
+                  <Governance />
                 </ProtectedRoute>
               } />
             </Route>

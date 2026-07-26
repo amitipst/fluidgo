@@ -49,6 +49,7 @@ const NAV_ACTIVITY_LOGS = { to: '/activity-logs', icon: '🗂️', label: 'Activ
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
 const NAV_FEEDBACK = { to: '/feedback', icon: '💬', label: 'Feedback Inbox' }
+const NAV_GOVERNANCE = { to: '/governance', icon: '🛡️', label: 'Governance' }
 
 // ── fluidGo compact logo for sidebar header ──────────────────────────────────
 function SidebarLogo() {
@@ -131,6 +132,10 @@ export default function Layout() {
   const isFieldRole   = FIELD_ROLES.includes(user?.role ?? '')
   const isDsrManager  = DSR_MANAGER_ROLES.includes(user?.role ?? '')
   const canSeeActivityLogs = ['hr', 'finance'].includes(user?.role ?? '')
+  // Validation-only role — sees none of the Sales/Revenue/Team nav (no
+  // financial visibility by design, see can_see_financials() on the
+  // backend), just its own dedicated Governance queue.
+  const isGovernance = user?.role === 'governance'
 
   // Pending DSR edit-request count, surfaced as a sidebar badge so it
   // doesn't sit unseen inside DSR History → Team tab. Polled every 60s.
@@ -163,7 +168,7 @@ export default function Layout() {
   // Pipeline/Opportunities/Analytics/Schemes) — Meetings stays, since
   // client meetings are just as real for delivery as for sales, and isn't
   // tagged salesOnly in the first place.
-  const coreNav = NAV_CORE.filter(n => {
+  const coreNav = isGovernance ? [] : NAV_CORE.filter(n => {
     if ((n as any).fieldOnly && !isFieldRole) return false
     if ((n as any).salesOnly && (isSDM || isHR)) return false
     if (n.to === '/gamification' && canSeeTeam) return false
@@ -177,7 +182,7 @@ export default function Layout() {
     manager: 'Manager', service_delivery_manager: 'Service Delivery Manager',
     regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
     practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', coo: 'COO', ceo: 'CEO',
-    super_admin: 'Super Admin',
+    super_admin: 'Super Admin', governance: 'Governance',
   }
 
   // Org label — role-aware, region-aware, never hardcoded
@@ -187,7 +192,7 @@ export default function Layout() {
     // entirely for these scopes (hr/finance = "all users", coo = scope="all"
     // same as ceo/super_admin), so showing a single region/business here
     // would misrepresent what they actually see.
-    if (['ceo', 'super_admin', 'coo', 'hr', 'finance'].includes(r)) return 'All Regions · All Businesses'
+    if (['ceo', 'super_admin', 'coo', 'hr', 'finance', 'governance'].includes(r)) return 'All Regions · All Businesses'
     if (r === 'business_head') return `${user?.business?.toUpperCase() ?? 'fluidPro'} · Global`
     const region = user?.region || user?.bu
     return region ? `${region} · ${user?.business ?? 'fluidPro'}` : 'fluidPro'
@@ -209,6 +214,17 @@ export default function Layout() {
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-0.5">
+          {isGovernance ? (
+            // Governance sees ONLY its own validation queue — no Dashboard/
+            // Sales/Revenue/Team nav at all, since none of it applies (no
+            // data entry) and several of those screens carry the exact
+            // financial figures this role must never see.
+            <>
+              <NavSection label="Validation" />
+              <SideLink {...NAV_GOVERNANCE} />
+            </>
+          ) : (
+          <>
           <NavSection label="My Work" />
           {coreNav.map(item => (
             <SideLink key={item.to} {...item}
@@ -261,6 +277,8 @@ export default function Layout() {
               <NavSection label="Admin" />
               <SideLink {...NAV_HEALTH} />
             </>
+          )}
+          </>
           )}
         </nav>
 
@@ -341,8 +359,8 @@ export default function Layout() {
       ══════════════════════════════════════════════════════════════ */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-wep-border flex overflow-x-auto z-40"
         style={{ boxShadow: '0 -2px 16px rgba(26,11,46,0.10)' }}>
-        {coreNav.slice(0, 5).map(item => (
-          <NavLink key={item.to} to={item.to} end={'exact' in item ? item.exact : undefined}
+        {(isGovernance ? [NAV_GOVERNANCE] : coreNav.slice(0, 5)).map(item => (
+          <NavLink key={item.to} to={item.to} end={'exact' in item ? (item as any).exact : undefined}
             className={({ isActive }) =>
               `flex-1 min-w-[60px] shrink-0 flex flex-col items-center py-2 gap-0.5 text-[10px] font-medium transition-colors
                ${isActive ? 'text-brand-pink' : 'text-wep-muted'}`

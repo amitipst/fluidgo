@@ -7,7 +7,7 @@ from typing import Optional, Literal
 import uuid
 from app.database import get_db
 from app.models import PipelineDeal, User, role_level, PipelineUpdate
-from app.services.deps import get_current_user
+from app.services.deps import get_current_user, deny_governance
 from app.services.audit_service import audit
 
 router = APIRouter()
@@ -102,7 +102,13 @@ async def list_deals(include_archived: bool = False, include_seed: bool = False,
     worse leak than the analytics widgets fixed in the same pass: a manager
     scrolling their pipeline would see fake placeholder companies mixed in
     with real deals. include_seed=true opts back in, gated to business_head+
-    (matching list_meetings()'s and loss_analysis()'s convention)."""
+    (matching list_meetings()'s and loss_analysis()'s convention).
+
+    Governance is blocked outright (deny_governance) rather than redacted
+    field-by-field — deal_value appears on every row, and Pipeline isn't
+    part of what governance validates (DSR/DMR/DOR/FGA) in the first
+    place."""
+    deny_governance(user)
     from app.services.permission_service import resolve_visible_user_ids
     from app.models import role_level
     visible = await resolve_visible_user_ids(db, user)
