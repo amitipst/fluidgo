@@ -1282,3 +1282,76 @@ with To/Cc pre-filled from attendee emails.
 revisions endpoints → export/send endpoints → `meeting_mom.txt` prompt
 update → frontend build. Not yet started — design/architecture phase only
 so far, per Amit's own "use Rambo Commander" instruction before building.
+
+## 2026-08-04 (cont'd) — MOM feature: built, tested live, shipped end to end
+
+Amit: "ok keep the implementation" → built the full design+architecture
+above in sequence, exactly as planned, each step verified live against the
+dev stack before moving to the next. Also gave an explicit standing verdict
+mid-build: **multi-tenancy stays out of scope for now, but every new piece
+of architecture must keep the door open for it** — applied concretely as a
+new `APP_NAME` setting (config.py) used in export/email content instead of
+a hardcoded org string, no premature `tenant_id` column added since nothing
+else in the schema has one yet. This is now the standing rule for all
+future work, not a one-off note.
+
+**1. RBAC fix (commit `bb967b7`):** `deny_governance()` added to
+`create_meeting`/`generate_mom`/`update_mom` — closed the P0 gap flagged
+in the architecture doc. Live-verified: governance gets 403 on writes,
+200 on reads.
+
+**2. Migration 0032 (commit `dc8f46f`):** `meetings.discussion_points`
+JSONB + new `meeting_mom_revisions` table + index. Applied and schema-
+verified live against the dev Postgres.
+
+**3. Detail/revisions endpoints (commit `6231962`):** `GET/PATCH
+/meetings/{id}`, `GET /meetings/{id}/revisions`. Live end-to-end tested —
+create with attendees → normalize → PATCH discussion_points → persisted →
+revision logged with correct actor name; governance read-allowed,
+write-blocked.
+
+**4. Export + send (commit `45b6d52`):** new `mom_export_service.py`
+(xlsx via openpyxl, pdf via reportlab, docx via python-docx — all pure-
+Python, zero system deps, per the architecture doc's ADR-3). `GET
+/meetings/{id}/export?format=`, `POST /meetings/{id}/send`. Extended
+`email_service.send_email()` for multi-To/Cc/attachment (MIME mixed vs
+alternative depending on attachment presence). Caught and fixed a
+regression this signature change would have caused in `feedback.py` (was
+passing a bare string where a list is now required) before it shipped.
+Live-verified: xlsx/pdf/docx all produce valid non-trivial output (pdf
+confirmed via `%PDF-1.4` magic bytes), send logs instead of failing when
+SMTP is unconfigured, empty-To send correctly 400s.
+
+**5. AI prompt update (commit `6218f7c`):** `generate_mom()` now builds a
+"Structured discussion points (owner, due date, status)" block from
+`discussion_points` when present and feeds it to Ollama; `meeting_mom.txt`
+updated to treat it as authoritative for Key Discussion Points/Action
+Items rather than re-deriving from free text. Live-verified: a meeting
+with 2 discussion_points + free-text notes produced a MOM that correctly
+carried forward the structured owner/side/due-date/status for both.
+
+**6. Frontend `/meetings/:id` page (commit `0e12610`):** the full
+Rambo-UIUX spec built out — attendee chip inputs (Us/Customer, comma/
+Enter commit, "Name \<email\>" paste parsing, missing-email warning),
+discussion-points repeater, the AI MOM flow moved here full-width,
+collapsible revision history with per-entry diff, export dropdown
+(blob download), Send-to-Customer modal (To/Cc pre-filled from attendee
+emails). Governance renders the same route read-only. Closed the
+"governance has zero nav access to Meetings" gap flagged in the UIUX
+spec §7 — added a read-only nav link (backend already allowed the reads;
+this was a missing link, not a missing permission). List card's inline
+MOM accordion removed in favor of a status-chip link into the new page,
+per the spec's IA decision. `tsc --noEmit` clean; live-tested that `GET
+/meetings/{id}` returns the new `rep_name` field the header needs.
+
+**Test data hygiene:** every test meeting created during this build
+(`Export Test Co`, `Prompt Test Co`, `Detail Page Test Co`, plus the
+earlier `MOM Test Co`) and its revision rows were deleted from the dev DB
+immediately after each verification pass — none of this is in the dev
+database now. Scratch PowerShell test scripts were deleted from the repo
+root after use, never committed.
+
+**Status:** MOM feature (CSG Phase 2 extension) is code-complete on
+`feature/csg-phase2-frontend`, all 6 commits pushed. Not yet merged to
+`develop`/`main` or deployed — that's Amit's call on timing, not assumed
+here.
