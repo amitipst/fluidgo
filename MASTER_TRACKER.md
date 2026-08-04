@@ -1189,3 +1189,49 @@ already-loaded JS bundle — only a hard refresh/new tab does. Restarted the
 frontend container to rule out a dev-server-side staleness too. **Asked
 Amit to hard-refresh (Ctrl+F5) and retest** rather than assuming the code
 is broken; will revisit if it reproduces after a clean reload.
+
+## 2026-08-04 (cont'd) — Manual KPI Entry: fixed company-wide dropdown leak
+
+**Report (Amit, screenshot of Test SDM login on `/kpi-entry`):** the
+manager-target dropdown showed all 17 active org users (sales reps,
+inside sales, pre-sales, other SDMs) instead of being scoped to the
+logged-in manager's own reportees. Explicit spec from Amit: "person who
+is logged can be able to fill his KPIs only and if he had a manager role
+than he can approve for his reportees" — i.e. no dropdown at all unless
+you actually have bound reportees.
+
+**Root cause:** `ManualKPIEntry.tsx` called the general `GET /users`
+(visibility-scoped via `resolve_visible_user_ids`). For a `service_delivery_manager`
+(scope="team") with no `manager_id` reports bound yet, that resolver's
+"team" branch deliberately falls back to "everyone in my region+business"
+— a reasonable default for read-only dashboards, but wrong for an entry
+screen where the action is a WRITE on someone else's behalf. Confirmed via
+DB query that real managers with bound reports today (Vikram Nair,
+Rajesh Sharma, Sunita Patil) are all role=`manager`, not
+`service_delivery_manager` — so this same gap exists for the real
+production Hemant Mathurkar account today, not just the Test SDM one.
+
+**Fix (pushed to PR #12, commit b6e87a6):**
+- `GET /users` gains `direct_reports_only=true`, which uses the existing
+  `resolve_direct_report_ids()` (own manager_id chain only, already used
+  by `/users/me` and DSR approval flows — no new resolver logic, reused
+  as-is) instead of the region-fallback resolver. Empty list, not
+  everyone, when zero reports are bound.
+- `ManualKPIEntry.tsx` now calls that instead of the unfiltered list, and
+  only renders the target picker when the resulting reportee list is
+  non-empty. A manager-tier role with no bound reports now sees the exact
+  same self-only view as an individual contributor — matches the spec
+  exactly.
+
+**Verified:** `tsc --noEmit` clean, backend `ast.parse` clean, live curl
+against Test SDM: old `/users` = 17, new `/users?direct_reports_only=true`
+= 0 (correct — Test SDM has no bound reportees). Did not have credentials
+to click-through a manager account that DOES have reports (Vikram/Rajesh/
+Sunita), but `resolve_direct_report_ids` is proven code already in use
+elsewhere, so relying on that rather than re-verifying it end-to-end here.
+
+**Follow-up note for Amit:** this means Hemant Mathurkar (real SDM) will
+see an empty picker in production too, until his delivery technicians are
+actually bound to him via Team page → "Reports to (Manager)" — the fix is
+correct but exposes that the org-chart data isn't filled in yet for that
+role.
