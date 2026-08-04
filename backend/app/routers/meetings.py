@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date, datetime
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
-from app.models import Meeting, Lead, DSRDaily, DORDaily
+from app.models import Meeting, Lead, DSRDaily, DORDaily, MeetingMomRevision
 from app.services.deps import get_current_user, deny_governance
 from app.services.rigor_service import bant_score, score_lead
 from app.services.audit_service import audit
@@ -15,6 +15,54 @@ from app.services import ai_service
 from app.models import User
 
 router = APIRouter()
+
+
+# ── MOM extension — attendees (grown) + discussion points (new) ──────────────
+# migration 0032. JSONB is schemaless so neither needed DDL for the shape
+# change — validation lives here, at the Pydantic boundary, matching this
+# codebase's existing convention (nullable-with-default at the DB layer,
+# enforcement at the API layer). See fluidgo-mom-architecture-lld.md §3.1/3.2.
+class Attendee(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    title: Optional[str] = None
+    side: Literal["us", "customer"]
+    # Legacy field from the pre-0032 shape — kept so anything still reading
+    # it doesn't break; _normalize_attendees() derives it from `side` at
+    # both write and read time, callers never need to set it themselves.
+    is_external: Optional[bool] = None
+
+
+class DiscussionPoint(BaseModel):
+    point: str
+    responsibility_side: Literal["us", "customer"]
+    responsibility_name: str
+    # Plain ISO string (YYYY-MM-DD), not a `date` type — this column is
+    # JSONB, and a python date object doesn't round-trip through it as
+    # cleanly as through a real Date column; keeping it a string here
+    # sidesteps that entirely and matches what a frontend date input
+    # naturally produces anyway.
+    target_date: Optional[str] = None
+    status: Literal["open", "done", "slipped"] = "open"
+
+
+def _normalize_attendees(raw: Optional[list]) -> Optional[list]:
+    """Derives `side`/`is_external` for each other from whichever one is
+    present. Handles both directions: new writes (Attendee requires `side`,
+    may omit `is_external`) and old rows written before migration 0032
+    (only had {name, title, is_external}, no `side`/`email` at all)."""
+    if not raw:
+        return raw
+    out = []
+    for a in raw:
+        a = dict(a)
+        if not a.get("side"):
+            a["side"] = "customer" if a.get("is_external") else "us"
+        if a.get("is_external") is None:
+            a["is_external"] = a["side"] == "customer"
+        out.append(a)
+    return out
+
 
 class MeetingIn(BaseModel):
     date: date
@@ -31,7 +79,8 @@ class MeetingIn(BaseModel):
     # ── CSG Phase 2 ─────────────────────────────────────────────────────────
     source: Literal["sales", "service_delivery"] = "sales"
     meeting_purpose: Optional[str] = None  # defaults per-source below if omitted
-    attendees: Optional[list] = None
+    attendees: Optional[List[Attendee]] = None
+    discussion_points: Optional[List[DiscussionPoint]] = None
 
 @router.post("")
 async def create_meeting(body: MeetingIn, db: AsyncSession = Depends(get_db),
@@ -52,6 +101,7 @@ async def create_meeting(body: MeetingIn, db: AsyncSession = Depends(get_db),
     data = body.model_dump()
     if not data.get("meeting_purpose"):
         data["meeting_purpose"] = "sales_discovery" if body.source == "sales" else "delivery_review"
+    data["attendees"] = _normalize_attendees(data.get("attendees"))
 
     account = await get_or_create_account(db, body.company, business=user.business or "fluidpro")
 
@@ -129,6 +179,7 @@ async def list_meetings(
             name_map = {u.id: u.name for u in reps}
     for m in meetings:
         d = {c.name: getattr(m, c.name) for c in m.__table__.columns}
+        d["attendees"] = _normalize_attendees(d.get("attendees"))
         d["bant"] = bant_score(m) if m.source == "sales" else None
         if scope == "team":
             d["rep_name"] = name_map.get(m.user_id, "Unknown")
@@ -214,6 +265,97 @@ async def _get_meeting_or_404(meeting_id: str, db: AsyncSession, user: User) -> 
     return m
 
 
+def _serialize_meeting_detail(m: Meeting) -> dict:
+    d = {c.name: getattr(m, c.name) for c in m.__table__.columns}
+    d["attendees"] = _normalize_attendees(d.get("attendees"))
+    d["bant"] = bant_score(m) if m.source == "sales" else None
+    return d
+
+
+@router.get("/{meeting_id}")
+async def get_meeting(meeting_id: str, db: AsyncSession = Depends(get_db),
+                       user: User = Depends(get_current_user)):
+    """Single meeting, full detail — the /meetings/:id detail page's data
+    source (list_meetings only returns the list-card fields today). Same
+    visibility check as every other per-meeting action, including
+    governance: read-only, org-wide is fine here — Meeting carries no money
+    field to redact (unlike DSR/DOR's proposal_value), so unlike
+    _serialize_dsr there's no viewer_role stripping needed, just the same
+    _get_meeting_or_404 gate everything else already uses."""
+    m = await _get_meeting_or_404(meeting_id, db, user)
+    return _serialize_meeting_detail(m)
+
+
+class MeetingPatchIn(BaseModel):
+    attendees: Optional[List[Attendee]] = None
+    discussion_points: Optional[List[DiscussionPoint]] = None
+
+
+@router.patch("/{meeting_id}")
+async def patch_meeting(meeting_id: str, body: MeetingPatchIn, request: Request,
+                         background_tasks: BackgroundTasks,
+                         db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Partial update for the structured minutes fields (attendees,
+    discussion points) — deliberately separate from PATCH .../mom below,
+    which is the AI-generated summary text, a different concern. Only
+    fields actually provided change. Writes a meeting_mom_revisions row per
+    changed field group — this is what makes "update the minutes in the
+    tracker" mean something a governance viewer can actually see, not just
+    a silent overwrite (ADR-2, fluidgo-mom-architecture-lld.md).
+
+    Governance is a viewer only — see generate_mom's deny_governance note."""
+    deny_governance(user)
+    m = await _get_meeting_or_404(meeting_id, db, user)
+
+    if body.attendees is not None:
+        before = m.attendees
+        after = _normalize_attendees([a.model_dump() for a in body.attendees])
+        m.attendees = after
+        db.add(MeetingMomRevision(meeting_id=m.id, actor_id=user.id,
+                                   action="attendees_updated", before=before, after=after))
+
+    if body.discussion_points is not None:
+        before = m.discussion_points
+        after = [p.model_dump() for p in body.discussion_points]
+        m.discussion_points = after
+        db.add(MeetingMomRevision(meeting_id=m.id, actor_id=user.id,
+                                   action="discussion_points_updated", before=before, after=after))
+
+    await db.commit()
+    background_tasks.add_task(
+        audit, db, user, "UPDATE_MEETING", "meeting", meeting_id,
+        f"{m.company}: attendees/discussion points updated", request=request
+    )
+    return _serialize_meeting_detail(m)
+
+
+@router.get("/{meeting_id}/revisions")
+async def list_meeting_revisions(meeting_id: str, db: AsyncSession = Depends(get_db),
+                                  user: User = Depends(get_current_user)):
+    """Newest first. Same visibility check as the meeting itself, governance
+    included — this IS the point of governance's read access into Meetings:
+    confirming records actually get kept current over time, not just
+    looking at whatever the latest state happens to be."""
+    m = await _get_meeting_or_404(meeting_id, db, user)
+    result = await db.execute(
+        select(MeetingMomRevision)
+        .where(MeetingMomRevision.meeting_id == m.id)
+        .order_by(MeetingMomRevision.created_at.desc())
+    )
+    revisions = result.scalars().all()
+    actor_ids = {r.actor_id for r in revisions}
+    names = {}
+    if actor_ids:
+        actors = (await db.execute(select(User).where(User.id.in_(actor_ids)))).scalars().all()
+        names = {a.id: a.name for a in actors}
+    return [{
+        "id": str(r.id), "action": r.action,
+        "actor_name": names.get(r.actor_id, "Unknown"),
+        "before": r.before, "after": r.after,
+        "created_at": r.created_at.isoformat(),
+    } for r in revisions]
+
+
 @router.post("/{meeting_id}/generate-mom")
 async def generate_mom(meeting_id: str, request: Request, background_tasks: BackgroundTasks,
                         db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
@@ -239,12 +381,17 @@ async def generate_mom(meeting_id: str, request: Request, background_tasks: Back
         f"Meeting purpose: {m.meeting_purpose or 'not specified'}\n"
         f"Meeting type: {m.meeting_type}\n"
         f"Attendees: {m.attendees if m.attendees else 'not listed'}\n"
+        f"Discussion points: {m.discussion_points if m.discussion_points else 'not listed'}\n"
         f"Notes:\n{m.discussion}"
     )
+    before_summary = m.ai_mom_summary
     summary = await ai_service.analyse(context, prompt_type="meeting_mom")
     m.ai_mom_summary = summary
     m.ai_mom_generated_at = datetime.utcnow()
     m.mom_status = "generated"
+    db.add(MeetingMomRevision(meeting_id=m.id, actor_id=user.id, action="generated",
+                               before={"ai_mom_summary": before_summary},
+                               after={"ai_mom_summary": summary}))
     await db.commit()
 
     background_tasks.add_task(
@@ -270,8 +417,12 @@ async def update_mom(meeting_id: str, body: MomUpdateIn, request: Request, backg
     Governance is a viewer only — see generate_mom's deny_governance note."""
     deny_governance(user)
     m = await _get_meeting_or_404(meeting_id, db, user)
+    before_summary = m.ai_mom_summary
     m.ai_mom_summary = body.ai_mom_summary
     m.mom_status = "finalized" if body.finalize else "edited"
+    db.add(MeetingMomRevision(meeting_id=m.id, actor_id=user.id, action=m.mom_status,
+                               before={"ai_mom_summary": before_summary},
+                               after={"ai_mom_summary": body.ai_mom_summary}))
     await db.commit()
 
     background_tasks.add_task(
