@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -6,12 +7,14 @@ from datetime import date, datetime
 from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
+from app.config import settings
 from app.models import Meeting, Lead, DSRDaily, DORDaily, MeetingMomRevision
 from app.services.deps import get_current_user, deny_governance
 from app.services.rigor_service import bant_score, score_lead
 from app.services.audit_service import audit
 from app.services.account_service import get_or_create_account
-from app.services import ai_service
+from app.services import ai_service, email_service
+from app.services import mom_export_service as export_svc
 from app.models import User
 
 router = APIRouter()
@@ -430,3 +433,95 @@ async def update_mom(meeting_id: str, body: MomUpdateIn, request: Request, backg
         f"{m.company}: MOM {m.mom_status}", request=request
     )
     return {"id": str(m.id), "mom_status": m.mom_status}
+
+
+# ── Export & Send-to-Customer (2026-08-04) ────────────────────────────────────
+@router.get("/{meeting_id}/export")
+async def export_meeting(meeting_id: str, format: Literal["xlsx", "pdf", "docx"] = "pdf",
+                          db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Downloads the minutes in the requested format — one canonical document
+    assembled once (mom_export_service.build_minutes_document), three thin
+    renderers so the formats can't drift out of sync with each other.
+    Read-only — governance included, downloading isn't writing."""
+    m = await _get_meeting_or_404(meeting_id, db, user)
+    render_fn, mimetype, ext = export_svc.EXPORT_RENDERERS[format]
+    doc = export_svc.build_minutes_document(m)
+    content = render_fn(doc)
+    filename = f"MOM_{m.company.replace(' ', '_')}_{m.date}.{ext}"
+    return StreamingResponse(
+        iter([content]), media_type=mimetype,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _render_send_body(doc) -> tuple[str, str]:
+    text = (
+        f"Minutes of Meeting — {doc.company} ({doc.date})\n\n"
+        f"{doc.ai_mom_summary or '(no summary generated yet — see attached document for details)'}\n\n"
+        f"— {settings.APP_NAME}"
+    )
+    html = f"""\
+<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1A0B2E">
+  <div style="background:linear-gradient(135deg,#F0115E,#92278E);padding:18px 22px;border-radius:12px 12px 0 0">
+    <div style="color:#fff;font-size:16px;font-weight:700">Minutes of Meeting</div>
+    <div style="color:rgba(255,255,255,0.85);font-size:12px">{doc.company} · {doc.date} · {doc.purpose}</div>
+  </div>
+  <div style="border:1px solid #eee;border-top:none;padding:20px;border-radius:0 0 12px 12px;font-size:14px;line-height:1.5">
+    {(doc.ai_mom_summary or '(no summary generated yet — see attached document for details)').replace(chr(10), '<br>')}
+    <p style="color:#999;font-size:11px;border-top:1px solid #eee;padding-top:10px;margin-top:16px">
+      Sent via {settings.APP_NAME}
+    </p>
+  </div>
+</div>"""
+    return html, text
+
+
+class SendMeetingIn(BaseModel):
+    to: List[EmailStr]
+    cc: List[EmailStr] = []
+    subject: Optional[str] = None
+    attach_as: Literal["pdf", "docx", "inline"] = "pdf"
+
+
+@router.post("/{meeting_id}/send")
+async def send_meeting(meeting_id: str, body: SendMeetingIn, request: Request,
+                        background_tasks: BackgroundTasks,
+                        db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Sends the minutes directly to the customer. To/Cc come from the
+    request body, not re-derived from the meeting's attendee list server-
+    side — the frontend pre-fills them from attendee emails (UIUX spec
+    §4.5), but the human reviewing the send modal is the actual authority
+    on who receives it, so this endpoint trusts what's sent rather than
+    silently overriding it.
+
+    Governance never sends anything to a customer — viewer only."""
+    deny_governance(user)
+    if not body.to:
+        raise HTTPException(400, "At least one recipient (To) is required.")
+    m = await _get_meeting_or_404(meeting_id, db, user)
+    doc = export_svc.build_minutes_document(m)
+    subject = body.subject or f"Minutes of Meeting — {m.company} — {m.date}"
+
+    attachment = None
+    if body.attach_as in ("pdf", "docx"):
+        render_fn, mimetype, ext = export_svc.EXPORT_RENDERERS[body.attach_as]
+        content = render_fn(doc)
+        filename = f"MOM_{m.company.replace(' ', '_')}_{m.date}.{ext}"
+        attachment = (filename, content, mimetype)
+
+    html_body, text_body = _render_send_body(doc)
+    sent = await email_service.send_email(
+        to_emails=[str(e) for e in body.to],
+        cc_emails=[str(e) for e in body.cc],
+        subject=subject, html_body=html_body, text_body=text_body,
+        attachment=attachment,
+    )
+
+    background_tasks.add_task(
+        audit, db, user, "SEND_MOM", "meeting", meeting_id,
+        f"{m.company}: minutes sent to {', '.join(str(e) for e in body.to)}"
+        + (f" (cc: {', '.join(str(e) for e in body.cc)})" if body.cc else ""),
+        request=request
+    )
+    return {"sent": sent, "to": body.to, "cc": body.cc,
+            "message": "Sent." if sent else "SMTP not configured — logged instead of sent (dev mode)."}
