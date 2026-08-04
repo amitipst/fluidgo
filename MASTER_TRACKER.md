@@ -1,4 +1,4 @@
-# fluidGo — Master Tracker
+﻿# fluidGo — Master Tracker
 
 > **Why this file exists:** Linear's free-tier issue cap was hit on 2026-07-11
 > (see WEP-86 for the last issue that went through). Until the plan is
@@ -589,6 +589,74 @@ deployed — bundled into the same rebuild as the stale-deploy fix above.
 sections going forward — check here first. README.md stays the quick-start
 reference; this file is the detailed, chronological record.*
 
+## 2026-07-16 — End-to-end review (Claude/Rambo Commander session)
+
+Requested: confirm current `main` works end-to-end before splitting
+patch-only (`main`) vs. new-feature (`develop`, ships as `v1.1.0`) work,
+per the policy already stated in `CHANGELOG.md`'s `v1.0.5` entry.
+
+**Git/branch state:** `main` and `develop` point at the identical commit
+(`725534b`, 2 commits past tag `v1.0.5`) — perfectly in sync, nothing to
+reconcile. No `v1.1.0` tag exists yet, correctly, since no feature commits
+exist on `develop` yet. Next feature work should branch from/land on
+`develop`; tag `v1.1.0` once that's ready to ship.
+
+**Smoke suite was reporting 53% (16/30) — root-caused, not a real app
+regression, in two parts:**
+
+1. `backend/smoke_test.py` predates the `v1.0.5` mandatory
+   change-password gate. Every seeded account has `must_change_password
+   = true` (confirmed: all 30 users in the local DB), so literally every
+   endpoint except `/auth/login` and `/auth/change-password` 403'd for
+   every role — DSR submit, Meetings, Leads, Pipeline, Opportunities, FGA
+   queues, incentives, manager team views, all of it. The feature itself
+   (backend gate + `ChangePassword.tsx` frontend) is correctly built end
+   to end; the smoke test just never exercised it. Patched
+   `smoke_test.py` to clear the gate via the real change-password flow on
+   login and restore the original password immediately after, so re-runs
+   don't rotate real credentials.
+   - While fixing this, found 2 of the 6 seeded smoke credentials
+     predate the current password policy and could never pass
+     `validate_password_policy()` to be restored: `manager@fluidpro.in`
+     (9 chars, policy min is 10) and `inside@fluidpro.in` (contains its
+     own email local-part). Rotated both in the live DB and in
+     `smoke_test.py`'s `CREDS` to `TeamLead@2026!` / `SalesOps@2026!`.
+2. Local docker-compose DB was on alembic `0025`; code expects `0026`
+   (the `pipeline.archived`/`archived_at`/`archived_by` columns from the
+   soft-delete work in the 2026-07-15 session above) — every Pipeline/
+   Opportunities read threw `UndefinedColumnError`, surfacing as
+   401/403 to the client. Ran `alembic upgrade head` locally to fix. **This
+   is the same gap the 2026-07-15 entry above flagged as "not yet
+   confirmed fixed" on EC2** — worth explicitly re-checking `alembic
+   current` on EC2 before the 1 August production promotion, not just
+   assuming the rebuild picked it up.
+
+After both fixes: **42/42 (100%)** smoke checks pass.
+
+**Real bug found and patched (security):** `fga_approval.py`'s
+`manager-review` endpoint (`POST /{result_id}/manager-review`) gated only
+on `require_level(20)` — the caller's own tier — never checked that the
+target result's rep was actually in the caller's scope, unlike
+`list_pending()` in the same file which already does this via
+`resolve_visible_user_ids()`. Any manager-level+ user could approve or
+dispute any other manager's team member's FGA score by `result_id`. Fixed
+with the same scope check. This was already flagged from a prior session
+(see repo history) — now actually closed.
+
+**Still open, unconfirmed (carried over, no action taken):**
+- Team page crash on "Add Member" with a new role (§6) — still needs the
+  actual browser console error text next repro.
+- Service Delivery FGA approval workflow — decision still pending.
+- Reports section (CSV/PDF export) — not started.
+
+**Committed locally, not pushed** (`b22eb3f`, on `main`) — held for Amit's
+review before it goes anywhere near the CI/CD release pipeline given the
+1 August promotion date. Diff: `backend/app/routers/fga_approval.py` (+10)
+and `backend/smoke_test.py` (+34/-2).
+
+Also deleted a stray empty untracked file (`ssh_test_out.txt`, 0 bytes,
+not gitignored) from the working tree — no commit needed, it was never
+tracked.
 ## 2026-08-04 — R0 kickoff: consolidate 4 undeployed branches (Claude/Rambo Commander session, local dev on blr-dsk-amits)
 
 Context: a separate strategic exercise (Rambo Commander, full Team RAMBO

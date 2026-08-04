@@ -235,6 +235,16 @@ async def manager_review(result_id: str, body: ReviewAction,
     r = await _get_result(db, result_id)
     if r.approval_status != "pending_manager":
         raise HTTPException(400, f"Cannot action: status is '{r.approval_status}'")
+    # Scope check — require_level(20) only verifies the caller's own
+    # permission tier, not that the target rep is actually in their team.
+    # Without this, any manager-level+ user could approve/dispute any other
+    # manager's team member's FGA score just by guessing/enumerating
+    # result_id. Mirrors the same resolve_visible_user_ids() scoping used
+    # by list_pending() above — super_admin/business_head still see
+    # everything via visible_ids is None.
+    visible_ids = await resolve_visible_user_ids(db, user)
+    if visible_ids is not None and r.user_id not in visible_ids:
+        raise HTTPException(403, "This result is outside your team's scope")
     r.approval_status = "pending_hr" if body.action == "approve" else "disputed"
     r.manager_comment = body.comment
     r.reviewed_by_manager_id = user.id

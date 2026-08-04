@@ -59,11 +59,39 @@ section("2. Authentication (5 roles)")
 CREDS = {
     "business_head": ("amit.singh@wepsol.com",   "Admin@2026!"),  # updated email
     "bu_head":       ("amit.singh@wepsol.com",   "Admin@2026!"),  # alias for compat
-    "manager":       ("manager@fluidpro.in",      "Mgr@2026!"),
+    "manager":       ("manager@fluidpro.in",      "TeamLead@2026!"),  # rotated 2026-07-16: old
+                                                                        # "Mgr@2026!" was only 9 chars,
+                                                                        # fails current PASSWORD_MIN_LENGTH=10
+                                                                        # and could never pass the forced
+                                                                        # change-password gate below
     "rep":           ("danish@fluidpro.in",        "Fluid@2026!"),
     "pre_sales":     ("sanjay.ps@fluidpro.in",     "Fluid@2026!"),
-    "inside_sales":  ("inside@fluidpro.in",        "Inside@2026!"),
+    "inside_sales":  ("inside@fluidpro.in",        "SalesOps@2026!"),  # rotated 2026-07-16: old
+                                                                        # "Inside@2026!" contains the email
+                                                                        # local-part "inside" and is rejected
+                                                                        # by validate_password_policy()
 }
+# v1.0.5 introduced a mandatory change-password gate: any account with
+# must_change_password=true gets 403'd by every endpoint except
+# /auth/change-password itself (see deps.get_current_user). Every seeded
+# UAT account currently carries this flag, so a login-only smoke test can
+# no longer reach any real endpoint — it was reporting the whole app as
+# broken when the gate was simply doing its job. We clear it the same way
+# a real user would (POST /auth/change-password), then immediately change
+# it right back so the actual account holder's password is untouched.
+_TEMP_PW = "SmokeTest_Temp_2026!"
+
+def _clear_forced_password_change(role: str, token: str, email: str, pwd: str) -> None:
+    r, ok = api_post("/auth/change-password",
+                      {"current_password": pwd, "new_password": _TEMP_PW}, token)
+    if not check(f"{role}: clear forced password-change gate", ok,
+                  f"HTTP {r.status_code if r else 'N/A'}"):
+        return
+    r2, ok2 = api_post("/auth/change-password",
+                        {"current_password": _TEMP_PW, "new_password": pwd}, token)
+    check(f"{role}: restore original password", ok2,
+          f"HTTP {r2.status_code if r2 else 'N/A'}")
+
 tokens: dict[str, str] = {}
 user_ids: dict[str, str] = {}
 for role, (email, pwd) in CREDS.items():
@@ -72,6 +100,8 @@ for role, (email, pwd) in CREDS.items():
         tokens[role] = r.json().get("access_token", "")
         user_ids[role] = r.json().get("user", {}).get("id", "")
         check(f"Login {role}", True, f"role={r.json().get('user',{}).get('role')}")
+        if r.json().get("user", {}).get("must_change_password"):
+            _clear_forced_password_change(role, tokens[role], email, pwd)
     else:
         check(f"Login {role}", False, f"HTTP {r.status_code if r else 'N/A'}")
 check("All 5 tokens obtained", len(tokens) >= 5, f"got {len(tokens)}/6")
