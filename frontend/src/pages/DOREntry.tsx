@@ -1,7 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import api from '@/hooks/useApi'
+import { toast } from '@/store/toastStore'
+import { timeAgo } from '@/lib/time'
 
 const STATUS_OPTS = [
   { val: 'on_track', label: '🟢 On Track' },
@@ -35,6 +38,12 @@ export default function DOREntry() {
   const qc = useQueryClient()
   const [form, setForm] = useState<any>(emptyForm)
   const [saved, setSaved] = useState(false)
+  // Persists past the 2s button flash — the flash alone is easy to miss if
+  // you're not looking right at the button, especially since this form
+  // never closes/resets after saving (unlike DSR's one-and-done flow, DOR
+  // is meant to stay open for same-day resubmission). This is the backup
+  // confirmation for anyone who scrolled away or saved without watching.
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
   const [showFlag, setShowFlag] = useState(false)
   const [flagNotes, setFlagNotes] = useState('')
   const [flagValue, setFlagValue] = useState('')
@@ -56,6 +65,12 @@ export default function DOREntry() {
         client_account: todayRow.client_account ?? '',
         blockers_notes: todayRow.blockers_notes ?? '',
       })
+      // A row already exists for this date (e.g. reopening the page later
+      // in the day) — reflect that in the "last saved" line too, instead
+      // of it reading as unsaved until the next edit.
+      setLastSavedAt(todayRow.submitted_at ?? null)
+    } else {
+      setLastSavedAt(null)
     }
   }, [history, form.date])
 
@@ -69,8 +84,12 @@ export default function DOREntry() {
     onSuccess: () => {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+      const now = new Date().toISOString()
+      setLastSavedAt(now)
+      toast.success(`✅ Daily Ops Report saved for ${format(new Date(form.date), 'd MMM')}`)
       qc.invalidateQueries({ queryKey: ['dor-history'] })
     },
+    onError: () => toast.error('Could not save the Daily Ops Report — please try again.'),
   })
 
   const flagOpportunity = useMutation({
@@ -82,6 +101,17 @@ export default function DOREntry() {
       setFlagResult(r.data)
       setFlagNotes(''); setFlagValue('')
     },
+  })
+
+  // CSG Phase 2 — "Client meetings held" above is a manually-typed count;
+  // this shows what's actually logged behind it (Meeting rows linked via
+  // dor_id, auto-resolved server-side when a meeting is saved for this
+  // user+date), same fix as the DSR↔Meeting disconnect. Fetches only once
+  // this DOR row has an id (i.e. after first save).
+  const { data: linkedMeetings = [] } = useQuery({
+    queryKey: ['dor-linked-meetings', form.id],
+    queryFn: () => api.get(`/meetings?dor_id=${form.id}`).then(r => r.data),
+    enabled: !!form.id,
   })
 
   return (
@@ -178,12 +208,36 @@ export default function DOREntry() {
             placeholder="Anything blocking delivery today..." className="form-input" />
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button onClick={() => submit.mutate()} disabled={submit.isPending} className="btn-primary">
-            {submit.isPending ? '⏳ Saving...' : saved ? '✅ Saved' : '💾 Save DOR'}
+            {submit.isPending ? '⏳ Saving...' : saved ? '✅ Saved' : form.id ? '💾 Update DOR' : '💾 Save DOR'}
           </button>
+          {/* Persistent confirmation — the button label above reverts after
+              2s, but this stays until the next edit, so scrolling away or
+              glancing back later still shows the save actually happened. */}
+          {lastSavedAt && !submit.isPending && (
+            <span className="text-xs font-medium text-emerald-600 flex items-center gap-1">
+              ✅ Saved · {timeAgo(lastSavedAt)}
+            </span>
+          )}
         </div>
       </div>
+
+      {form.id && (
+        <div className="card mt-4 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="font-semibold text-sm text-wep-navy">🤝 Client Meetings</div>
+            <div className="text-xs text-wep-muted">
+              {linkedMeetings.length} logged{form.client_meetings_held > linkedMeetings.length &&
+                ` (${form.client_meetings_held} claimed above — log them to back that number up, and to get an AI MOM for each)`}
+            </div>
+          </div>
+          <Link to={`/meetings?source=service_delivery&open=1${form.client_account ? `&company=${encodeURIComponent(form.client_account)}` : ''}`}
+            className="btn-outline text-xs px-3 py-1.5 shrink-0">
+            + Log a meeting
+          </Link>
+        </div>
+      )}
 
       {form.id && (
         <div className="card mt-4">

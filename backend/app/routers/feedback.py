@@ -124,7 +124,7 @@ async def _file_jira_and_alert(feedback_id: str, reporter_name: str, reporter_em
             + (f"Jira: {jira_result['url']}\n" if jira_result else "Not filed in Jira.\n")
         )
         for admin in admins:
-            await send_email(admin.email, subject, html_body, text_body)
+            await send_email([admin.email], subject, html_body, text_body)
 
 
 @router.post("")
