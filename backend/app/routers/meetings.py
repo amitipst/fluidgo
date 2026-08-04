@@ -7,7 +7,7 @@ from typing import Optional, Literal
 import uuid
 from app.database import get_db
 from app.models import Meeting, Lead, DSRDaily, DORDaily
-from app.services.deps import get_current_user
+from app.services.deps import get_current_user, deny_governance
 from app.services.rigor_service import bant_score, score_lead
 from app.services.audit_service import audit
 from app.services.account_service import get_or_create_account
@@ -41,7 +41,14 @@ async def create_meeting(body: MeetingIn, db: AsyncSession = Depends(get_db),
     flag-opportunity already uses) and links back to that day's DSR (source=
     sales) or DOR (source=service_delivery) row, if one exists yet. Doesn't
     force-create an empty DSR/DOR just to attach a meeting to it — DSR/DOR
-    have their own independent submission workflow."""
+    have their own independent submission workflow.
+
+    Governance never logs a meeting — it's a validation-only role with no
+    approval or authoring authority anywhere else in this codebase (see
+    deny_governance() design note in deps.py); this endpoint had no role
+    gate at all until now, which is the one place that principle wasn't
+    enforced."""
+    deny_governance(user)
     data = body.model_dump()
     if not data.get("meeting_purpose"):
         data["meeting_purpose"] = "sales_discovery" if body.source == "sales" else "delivery_review"
@@ -217,7 +224,12 @@ async def generate_mom(meeting_id: str, request: Request, background_tasks: Back
     Re-running this overwrites the previous AI draft; once a human edits or
     finalizes it (see PATCH .../mom below) that's a deliberate action, not
     something this endpoint should silently clobber — callers should check
-    mom_status before calling this again."""
+    mom_status before calling this again.
+
+    Governance is a viewer only (deny_governance) — _get_meeting_or_404's
+    org-wide visibility for scope="all" roles previously let governance
+    reach this write action too; that's the gap this call closes."""
+    deny_governance(user)
     m = await _get_meeting_or_404(meeting_id, db, user)
     if not m.discussion or not m.discussion.strip():
         raise HTTPException(400, "This meeting has no notes to generate a MOM from — add discussion notes first.")
@@ -253,7 +265,10 @@ async def update_mom(meeting_id: str, body: MomUpdateIn, request: Request, backg
                       db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """Human review/correction checkpoint for the AI draft — required before
     an AI-generated MOM should be treated as authoritative (Constitution: AI
-    output must be validated before it's acted on)."""
+    output must be validated before it's acted on).
+
+    Governance is a viewer only — see generate_mom's deny_governance note."""
+    deny_governance(user)
     m = await _get_meeting_or_404(meeting_id, db, user)
     m.ai_mom_summary = body.ai_mom_summary
     m.mom_status = "finalized" if body.finalize else "edited"
