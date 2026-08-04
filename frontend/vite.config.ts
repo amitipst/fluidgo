@@ -44,6 +44,20 @@ export default defineConfig({
     hmr: {
       clientPort: 80,
     },
+    // Docker Desktop on Windows doesn't reliably forward native filesystem
+    // change events from a bind-mounted volume into the Linux container's
+    // inotify — native fs.watch silently misses edits made from the Windows
+    // side (e.g. any editor/tool writing to the bind-mounted path), so HMR
+    // can go stale without any error. Polling is slightly heavier on CPU
+    // but is the standard, reliable fix for this class of bug on Windows
+    // bind mounts. A full page reload always serves current disk content
+    // regardless (Vite transforms modules per-request, not from a startup
+    // snapshot) — this fix is specifically for *live* auto-reload without
+    // a manual refresh.
+    watch: {
+      usePolling: true,
+      interval: 300,
+    },
   },
   resolve: { alias: { '@': '/src' } }
 })
