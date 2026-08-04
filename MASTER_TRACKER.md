@@ -1235,3 +1235,50 @@ see an empty picker in production too, until his delivery technicians are
 actually bound to him via Team page → "Reports to (Manager)" — the fix is
 correct but exposes that the org-chart data isn't filled in yet for that
 role.
+
+## 2026-08-04 (cont'd) — MOM feature: UI/UX spec + Architecture LLD delivered
+
+Amit's spec for Minutes of Meeting (structured attendees w/ email on both
+sides, discussion points w/ owner+date, governance visibility, Excel/PDF/
+Word export, direct send-to-customer w/ CC) was run through Rambo-UIUX then
+Rambo-AI-Architect. Both docs delivered to Amit and saved to the fluidGo
+Claude Project (`claude/fluidgo-mom-uiux-spec.md`,
+`claude/fluidgo-mom-architecture-lld.md`) — full detail there, summary here.
+
+**Design (Rambo-UIUX):** promotes MOM to its own `/meetings/:id` detail
+page (existing inline accordion has no room for this) — same route for
+governance in a read-only render mode, not a parallel screen. Attendee
+chip input (not raw comma text) so each person still carries a real email
+for the CC step. Discussion points as a repeater table (point/owner/date/
+status incl. "Slipped", not just done/not-done). Collapsed revision-history
+timeline. Download dropdown (xlsx/pdf/docx) + a Send-to-Customer modal
+with To/Cc pre-filled from attendee emails.
+
+**Architecture (Rambo-AI-Architect) — grounded directly in the current
+`meetings.py`/`Meeting` model, not assumed:**
+- **P0 finding, independent of this feature:** governance can currently
+  WRITE to any meeting org-wide (`create`/`generate-mom`/`update-mom` never
+  got the `deny_governance()` guard every other domain — dsr/dor/fga/
+  incentives/analytics — already uses). Scheduled to close in the same PR.
+- `discussion_points`: new JSONB column on `meetings` (ADR — matches
+  `attendees`' own precedent, not a child table; revisit if CSG Phase 4
+  ever needs to query commitments across meetings).
+- Revision history: NEW table `meeting_mom_revisions` — deliberately NOT
+  JSONB (ADR — append-only/unbounded growth is the wrong shape for a
+  column that gets rewritten on every edit).
+- No `GET /meetings/{id}` exists today — required new endpoint, the detail
+  page has nothing to fetch from otherwise.
+- `email_service.py` only sends to one recipient, no Cc, no attachments —
+  needs extending (stdlib `smtplib`/`email.mime` already sufficient, no
+  new dependency).
+- No xlsx/pdf/docx libraries installed. Recommended: `openpyxl` +
+  `python-docx` (no real alternative) + `reportlab` for PDF (scored
+  against weasyprint/fpdf2 — reportlab wins on zero system deps, matters
+  on the single-EC2-box Docker Compose deploy; weasyprint needs Cairo/
+  Pango in the image).
+- Migration 0032, additive-only, same convention as 0031.
+
+**Sequencing:** RBAC fix first (ships alone) → migration 0032 + detail/
+revisions endpoints → export/send endpoints → `meeting_mom.txt` prompt
+update → frontend build. Not yet started — design/architecture phase only
+so far, per Amit's own "use Rambo Commander" instruction before building.
