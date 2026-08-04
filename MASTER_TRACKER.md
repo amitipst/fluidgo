@@ -934,3 +934,37 @@ either done or explicitly deferred with a reason:
 `fluidgo-services-intelligence-platform-assessment.md`), proven first
 against the DSR↔Meeting structural link (finding #3, open since
 2026-07-21).
+
+## 2026-08-04 (same day, continued 4) — Correction: billing lock is NOT resolved; release/branch cleanup
+
+**Correction to the "GitHub Actions billing lock confirmed resolved" claim
+two entries above — that was wrong, caught by Amit spotting red check
+status on the GitHub branches page and asking about it.** The earlier
+conclusion was drawn only from `develop`-branch and PR-triggered runs
+succeeding; the `v1.2.0` tag push (both attempts, including the corrected
+one) hit the identical `"The job was not started because your account is
+locked due to a billing issue"` error the original 2026-07-21 finding
+documented. So: PR/`develop` workflow runs are succeeding, but `main`-branch
+pushes and tag pushes are still hitting the billing lock, at least
+intermittently. **Do not treat this as resolved — re-verify against an
+actual `main` push before relying on it.**
+
+Practical consequence: the `v1.2.0` git tag itself is fine (tags don't
+need Actions), but its GitHub Release page was never auto-created (the
+`tag-release` job never started). Created it manually via `gh release
+create v1.2.0 --generate-notes --target main` — same "bypass Actions via
+the API/CLI directly" pattern already used for deploys.
+
+**Also cleaned up, prompted by Amit sharing the GitHub branches list:**
+confirmed via `git merge-base --is-ancestor` that all 4 of the original
+undeployed feature branches (`dsr-backfill-and-seed-cleanup`,
+`feedback-and-help-guide`, `seed-data-pipeline-fix`,
+`compliance-export-governance`) are fully merged into `main` (ahead: 0 on
+GitHub's own branch list) — deleted all 4 from origin, along with the 5
+short-lived PR branches from today's PRs #2/#3/#4/#6/#7 (already deleted
+by `gh pr merge --delete-branch` at merge time, confirmed via `git fetch
+--prune`). Repo is now down to just `main` + `develop`, both current.
+
+R0 status unchanged otherwise — still functionally closed, with this one
+correction: the billing lock item goes back to ⛔ open/unconfirmed rather
+than ✅.
