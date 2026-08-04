@@ -33,7 +33,14 @@ async def create_lead(body: LeadIn, db: AsyncSession = Depends(get_db),
 
 @router.get("")
 async def list_leads(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    result = await db.execute(select(Lead).where(Lead.user_id == user.id).order_by(Lead.date.desc()))
+    """Always own-only (no team scope on this endpoint) — so unlike
+    list_deals()/list_meetings(), there's no admin verification use case for
+    an include_seed toggle here. Seeded leads (seed_v3.py, see migration
+    0029) are excluded unconditionally, same reasoning as dsr.py's /history."""
+    result = await db.execute(
+        select(Lead).where(Lead.user_id == user.id, Lead.is_seed == False)
+        .order_by(Lead.date.desc())
+    )
     return [{c.name: getattr(l, c.name) for c in l.__table__.columns} for l in result.scalars().all()]
 
 

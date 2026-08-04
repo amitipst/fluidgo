@@ -17,7 +17,7 @@ import uuid
 from app.database import get_db
 from app.models import (User, IncentiveScheme, PointsLedger, UserBadge, SchemeWinner,
                          DSRDaily, Meeting, PipelineDeal, role_level)
-from app.services.deps import get_current_user, require_level
+from app.services.deps import get_current_user, require_level, deny_governance
 from app.services.permission_service import resolve_visible_user_ids
 from app.services.rigor_service import calculate_rigor_score, bant_score
 
@@ -59,10 +59,14 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
     """Compute a single metric value for a user in a given period."""
     from app.services.scoring_engine import _period_bounds
     start, end = _period_bounds(period)
+    # Seed rows excluded — otherwise fake seed_v3.py activity dated within
+    # the scheme period would silently inflate a real rep's incentive
+    # achievement (this feeds actual payable incentive calculations).
     dsrs = (await db.execute(
         select(DSRDaily).where(
             DSRDaily.user_id == user.id,
-            DSRDaily.date >= start, DSRDaily.date <= end
+            DSRDaily.date >= start, DSRDaily.date <= end,
+            DSRDaily.is_seed == False
         )
     )).scalars().all()
 
@@ -81,7 +85,8 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
                 Meeting.user_id == user.id,
                 Meeting.date >= start, Meeting.date <= end,
                 Meeting.bant_budget == True, Meeting.bant_authority == True,
-                Meeting.bant_need == True, Meeting.bant_timeline == True
+                Meeting.bant_need == True, Meeting.bant_timeline == True,
+                Meeting.is_seed == False
             )
         )).scalars().all()
         return float(len(meetings))
@@ -90,7 +95,8 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
             select(PipelineDeal).where(
                 PipelineDeal.user_id == user.id,
                 PipelineDeal.stage == "closed_won",
-                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end
+                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+                PipelineDeal.archived == False, PipelineDeal.is_seed == False
             )
         )).scalars().all()
         return float(sum(float(d.deal_value or 0) for d in deals))
@@ -117,6 +123,7 @@ async def list_schemes(period: Optional[str] = None, db: AsyncSession = Depends(
     A scheme is visible if it's in the user's business AND either targets the
     user's specific BU or is a business-wide scheme (bu='Global'). This is why
     a rep in 'North' still sees a 'Global'-scoped scheme created by a BU head."""
+    deny_governance(user)
     from sqlalchemy import or_
     query = select(IncentiveScheme).where(
         IncentiveScheme.business == user.business,
@@ -136,6 +143,7 @@ async def list_schemes(period: Optional[str] = None, db: AsyncSession = Depends(
 async def create_scheme(body: SchemeCreate, db: AsyncSession = Depends(get_db),
                         user: User = Depends(require_level(20))):
     """Manager/BU Head creates an incentive scheme."""
+    deny_governance(user)
     s = IncentiveScheme(
         created_by=user.id, bu=user.bu, business=user.business,
         scope=body.scope, name=body.name, description=body.description,
@@ -151,6 +159,7 @@ async def create_scheme(body: SchemeCreate, db: AsyncSession = Depends(get_db),
 async def update_scheme(scheme_id: str, body: SchemeUpdate,
                         db: AsyncSession = Depends(get_db),
                         user: User = Depends(require_level(20))):
+    deny_governance(user)
     s = (await db.execute(
         select(IncentiveScheme).where(IncentiveScheme.id == uuid.UUID(scheme_id))
     )).scalar_one_or_none()
@@ -168,6 +177,7 @@ async def update_scheme(scheme_id: str, body: SchemeUpdate,
 async def leaderboard(period: str, db: AsyncSession = Depends(get_db),
                       user: User = Depends(get_current_user)):
     """Points leaderboard for the BU in this period."""
+    deny_governance(user)
     # Sum points per user in this period within this BU
     # Leaderboard only includes field roles — exclude HR, Finance, and support
     FIELD_ROLES = {"rep", "inside_sales", "pre_sales", "manager"}
@@ -207,6 +217,7 @@ async def leaderboard(period: str, db: AsyncSession = Depends(get_db),
 async def my_progress(period: str, db: AsyncSession = Depends(get_db),
                       user: User = Depends(get_current_user)):
     """Returns this rep's progress against all active schemes in the period."""
+    deny_governance(user)
     from sqlalchemy import or_
     schemes = (await db.execute(
         select(IncentiveScheme).where(
@@ -260,6 +271,7 @@ async def award_badge(user_id: str, badge_key: str, period: str,
                       db: AsyncSession = Depends(get_db),
                       actor: User = Depends(require_level(20))):
     """Manually award a badge (manager+). Idempotent."""
+    deny_governance(actor)
     if badge_key not in BADGES:
         raise HTTPException(400, f"Unknown badge: {badge_key}")
     badge_info = BADGES[badge_key]
@@ -316,6 +328,7 @@ async def detect_winners(scheme_id: str, db: AsyncSession = Depends(get_db),
     Points/badge/recognition credit immediately (low-stakes, auto-approved);
     cash stops at status='pending_hr' — see review_winner below. Same
     same-BU-or-above-level authorization as update_scheme."""
+    deny_governance(user)
     s = (await db.execute(select(IncentiveScheme).where(IncentiveScheme.id == uuid.UUID(scheme_id)))).scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Scheme not found")
@@ -379,6 +392,7 @@ async def list_winners(status: Literal["pending_hr", "approved", "rejected", "al
     payout. Scoped the same way every other team-facing endpoint is
     (resolve_visible_user_ids; HR's scope='hr' already grants org-wide
     visibility, same as FGA audit)."""
+    deny_governance(user)
     q = select(SchemeWinner)
     if status != "all":
         q = q.where(SchemeWinner.status == status)
@@ -408,6 +422,10 @@ async def review_winner(winner_id: str, body: WinnerReviewIn,
     """HR sign-off gate before a cash reward is treated as payable — same
     HR_ALLOWED shape as fga_approval.hr_review (HR, or manager-tier+, or
     super_admin)."""
+    # Explicit allow-list, not a level threshold — governance isn't in it,
+    # so this is already safe, but deny_governance is added anyway for the
+    # same auditability reason as everywhere else in this router.
+    deny_governance(user)
     HR_ALLOWED = {"hr", "super_admin", "manager", "regional_manager", "bu_head",
                   "business_head", "practice_head", "ceo"}
     if user.role not in HR_ALLOWED:
@@ -430,6 +448,7 @@ async def mark_winner_paid(winner_id: str, db: AsyncSession = Depends(get_db),
                            user: User = Depends(require_level(20))):
     """Terminal step for an approved cash winner — confirms the money
     actually moved. Only valid from status='approved'."""
+    deny_governance(user)
     w = (await db.execute(select(SchemeWinner).where(SchemeWinner.id == uuid.UUID(winner_id)))).scalar_one_or_none()
     if not w:
         raise HTTPException(404, "Winner record not found")

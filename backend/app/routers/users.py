@@ -17,7 +17,8 @@ router = APIRouter()
 # any existing data; new assignments should use "regional_manager")
 V3_ROLES = Literal[
     "rep", "inside_sales", "pre_sales", "manager", "service_delivery_manager",
-    "regional_manager", "bu_head", "business_head", "coo", "hr", "finance", "ceo", "super_admin"
+    "regional_manager", "bu_head", "business_head", "coo", "hr", "finance", "ceo", "super_admin",
+    "governance"
 ]
 BUSINESSES = Literal["fluidpro", "fluidprint", "floxtax", "hooks"]
 

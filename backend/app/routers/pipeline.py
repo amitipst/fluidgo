@@ -7,7 +7,7 @@ from typing import Optional, Literal
 import uuid
 from app.database import get_db
 from app.models import PipelineDeal, User, role_level, PipelineUpdate
-from app.services.deps import get_current_user
+from app.services.deps import get_current_user, deny_governance
 from app.services.audit_service import audit
 
 router = APIRouter()
@@ -80,7 +80,7 @@ async def create_deal(body: DealIn, db: AsyncSession = Depends(get_db),
     return {"id": str(deal.id), **body.model_dump()}
 
 @router.get("")
-async def list_deals(include_archived: bool = False,
+async def list_deals(include_archived: bool = False, include_seed: bool = False,
                      db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """Scoped the same way Opportunities already is: reps see their own
     deals, manager/regional_manager/business_head see their whole visible
@@ -95,14 +95,31 @@ async def list_deals(include_archived: bool = False,
     scope="all" (ceo/coo/super_admin), where `visible is None` means no
     owner filter applies at all, so dummy/test deals left behind by
     deactivated accounts used to show up unfiltered. include_archived=true
-    opts back in for admins who need to see what was archived."""
+    opts back in for admins who need to see what was archived.
+
+    Seeded deals (seed_v3.py, see migration 0029) are excluded by default
+    too — this is the actual working Pipeline screen, so it was arguably a
+    worse leak than the analytics widgets fixed in the same pass: a manager
+    scrolling their pipeline would see fake placeholder companies mixed in
+    with real deals. include_seed=true opts back in, gated to business_head+
+    (matching list_meetings()'s and loss_analysis()'s convention).
+
+    Governance is blocked outright (deny_governance) rather than redacted
+    field-by-field — deal_value appears on every row, and Pipeline isn't
+    part of what governance validates (DSR/DMR/DOR/FGA) in the first
+    place."""
+    deny_governance(user)
     from app.services.permission_service import resolve_visible_user_ids
+    from app.models import role_level
     visible = await resolve_visible_user_ids(db, user)
+    show_seed = include_seed and role_level(user.role) >= 40
     q = select(PipelineDeal)
     if visible is not None:
         q = q.where(PipelineDeal.user_id.in_(visible))
     if not include_archived:
         q = q.where(PipelineDeal.archived == False)
+    if not show_seed:
+        q = q.where(PipelineDeal.is_seed == False)
     q = q.order_by(PipelineDeal.updated_at.desc())
     result = await db.execute(q)
     now = datetime.now(timezone.utc)
@@ -524,10 +541,16 @@ async def get_postmortem(deal_id: str, db: AsyncSession = Depends(get_db),
 
 
 @router.get("/loss-analysis")
-async def loss_analysis(db: AsyncSession = Depends(get_db),
+async def loss_analysis(include_seed: bool = False,
+                        db: AsyncSession = Depends(get_db),
                         user: User = Depends(get_current_user)):
     """Aggregate win-loss summary + AI pattern analysis across the caller's
-    visible deals. Rep sees own; manager sees team."""
+    visible deals. Rep sees own; manager sees team.
+    Archived and seeded deals (seed_v3.py, see migration 0029) are excluded
+    by default — this is the same class of leakage fixed for DSR/Meetings in
+    migration 0027; PipelineDeal was missed in that pass. include_seed=true
+    opts back in for business_head+ verification, matching the convention
+    used elsewhere (analytics.py, meetings.py)."""
     from app.models import role_level
     from app.services.permission_service import resolve_visible_user_ids
     from sqlalchemy import func
@@ -536,8 +559,11 @@ async def loss_analysis(db: AsyncSession = Depends(get_db),
         visible = await resolve_visible_user_ids(db, user)
     else:
         visible = [user.id]
+    show_seed = include_seed and role_level(user.role) >= 40
 
-    q = select(PipelineDeal)
+    q = select(PipelineDeal).where(PipelineDeal.archived == False)
+    if not show_seed:
+        q = q.where(PipelineDeal.is_seed == False)
     if visible is not None:
         q = q.where(PipelineDeal.user_id.in_(visible))
     deals = (await db.execute(q)).scalars().all()
@@ -593,6 +619,7 @@ async def win_back_alerts(db: AsyncSession = Depends(get_db),
         PipelineDeal.reengage_at.isnot(None),
         PipelineDeal.reengage_done == False,
         PipelineDeal.reengage_at <= date.today(),
+        PipelineDeal.archived == False,
     )
     if visible is not None:
         q = q.where(PipelineDeal.user_id.in_(visible))

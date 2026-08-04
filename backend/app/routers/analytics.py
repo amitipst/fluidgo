@@ -7,15 +7,24 @@ from typing import Optional
 import uuid
 from app.database import get_db
 from app.models import User, DSRDaily, PipelineDeal, RevenueTarget
-from app.services.deps import get_current_user, require_role
+from app.services.deps import get_current_user, require_role, deny_governance
 from app.services.rigor_service import calculate_rigor_score, calculate_avg_rigor, rigor_label
 from app.services.permission_service import resolve_visible_user_ids
 from app.services.scoring_engine import _period_bounds
 
 router = APIRouter()
 
+# Rows dated before real usage began (seed_v3.py-generated, attached to real
+# accounts — see migration 0027) are excluded from Analytics by default.
+# include_seed=true opts back in, gated to business_head+ so a rep/manager
+# can't accidentally re-pollute their own view, but an admin verifying the
+# cleanup can still see the raw data.
+def _can_view_seed(user: User) -> bool:
+    from app.models import role_level
+    return role_level(user.role) >= 40
+
 @router.get("/rep/{user_id}")
-async def rep_analytics(user_id: str, scope: str = "auto",
+async def rep_analytics(user_id: str, scope: str = "auto", include_seed: bool = False,
                         db: AsyncSession = Depends(get_db),
                         user: User = Depends(get_current_user)):
     """Returns per-day DSR rows with rigor scores.
@@ -23,18 +32,26 @@ async def rep_analytics(user_id: str, scope: str = "auto",
     - Manager/BH viewing their own id with scope=auto: if they have no DSRs of
       their own (they don't log DSRs), automatically returns their TEAM's daily
       rows aggregated by date, so the Analytics charts aren't empty for them.
-    - scope=self forces own-only; scope=team forces team aggregate."""
+    - scope=self forces own-only; scope=team forces team aggregate.
+    - include_seed=true (business_head+ only) opts back into seeded rows that
+      are excluded by default (see migration 0027)."""
+    # This returns per-day proposal_value/new_leads/etc for ANY user_id once
+    # is_manager is true — governance's org-wide scope would otherwise let
+    # it read any rep's raw activity via this route. Governance validates
+    # completeness via /api/compliance and /api/governance/*, not this.
+    deny_governance(user)
     from app.models import role_level
     is_manager = role_level(user.role) >= 20
     if not is_manager and str(user.id) != user_id:
         from fastapi import HTTPException
         raise HTTPException(403, "You can only view your own analytics")
+    show_seed = include_seed and _can_view_seed(user)
 
     async def own_rows(uid):
-        res = await db.execute(
-            select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(uid))
-            .order_by(DSRDaily.date.asc())
-        )
+        q = select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(uid))
+        if not show_seed:
+            q = q.where(DSRDaily.is_seed == False)
+        res = await db.execute(q.order_by(DSRDaily.date.asc()))
         return res.scalars().all()
 
     dsrs = await own_rows(user_id)
@@ -47,6 +64,8 @@ async def rep_analytics(user_id: str, scope: str = "auto",
         from app.services.permission_service import resolve_visible_user_ids
         visible = await resolve_visible_user_ids(db, user)
         q = select(DSRDaily).order_by(DSRDaily.date.asc())
+        if not show_seed:
+            q = q.where(DSRDaily.is_seed == False)
         if visible is not None:
             q = q.where(DSRDaily.user_id.in_(visible))
         team_dsrs = (await db.execute(q)).scalars().all()
@@ -88,12 +107,15 @@ async def rep_analytics(user_id: str, scope: str = "auto",
     ]
 
 @router.get("/team")
-async def team_analytics(include_inactive: bool = False, db: AsyncSession = Depends(get_db),
+async def team_analytics(include_inactive: bool = False, include_seed: bool = False,
+                         db: AsyncSession = Depends(get_db),
                          user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "inside_sales", "ceo", "super_admin"))):
     """Team performance matrix — scoped by role/BU automatically.
-    Exited reps (is_active=False) excluded by default; include_inactive=true shows them."""
+    Exited reps (is_active=False) excluded by default; include_inactive=true shows them.
+    Seeded rows excluded by default; include_seed=true (business_head+ only)."""
     # Use permission_service for consistent scope resolution across all roles
     visible_ids = await resolve_visible_user_ids(db, user)
+    show_seed = include_seed and _can_view_seed(user)
 
     query = select(User)
     if not include_inactive:
@@ -106,9 +128,10 @@ async def team_analytics(include_inactive: bool = False, db: AsyncSession = Depe
 
     out = []
     for u in users:
-        dsrs_result = await db.execute(
-            select(DSRDaily).where(DSRDaily.user_id == u.id)
-        )
+        dsr_q = select(DSRDaily).where(DSRDaily.user_id == u.id)
+        if not show_seed:
+            dsr_q = dsr_q.where(DSRDaily.is_seed == False)
+        dsrs_result = await db.execute(dsr_q)
         dsrs = dsrs_result.scalars().all()
         working = [d for d in dsrs if d.status == "working"]
         avg_rigor = calculate_avg_rigor(dsrs)  # ← uses fixed formula, excludes exempt days
@@ -144,6 +167,7 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
     - Rep/Inside Sales: their own totals for the selected month (default: current month)
     - Manager/BU Head: their BU's aggregated totals for the selected month
     month param format: YYYY-MM (e.g. 2026-05)"""
+    deny_governance(user)
     today = date.today()
     if month:
         year_s, mon_s = month.split("-")
@@ -172,7 +196,8 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
             select(DSRDaily).where(
                 DSRDaily.user_id.in_(user_ids),
                 DSRDaily.date >= month_start,
-                DSRDaily.date <= month_end
+                DSRDaily.date <= month_end,
+                DSRDaily.is_seed == False
             )
         )).scalars().all()
         pending_today = len([u for u in bu_users
@@ -183,7 +208,8 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
             select(DSRDaily).where(
                 DSRDaily.user_id == user.id,
                 DSRDaily.date >= month_start,
-                DSRDaily.date <= month_end
+                DSRDaily.date <= month_end,
+                DSRDaily.is_seed == False
             )
         )).scalars().all()
         pending_today = 0
@@ -208,13 +234,20 @@ async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(ge
     """The CALLER's own revenue target vs achievement — visible to every role
     (a rep can see their own numbers). Revenue and Order Booking kept separate.
     Supports monthly ('2026-07'), quarterly ('2026-Q2') and yearly ('2026')."""
+    deny_governance(user)
     today = date.today()
     p = period or f"{today.year}-{today.month:02d}"
     start, end = _period_bounds(p)
 
-    # Won revenue in the period (this user only)
+    # Won revenue in the period (this user only). Archived/seeded deals
+    # excluded unconditionally — no legitimate reason a rep's own revenue
+    # dashboard should include fake seed_v3.py deals (see migration 0029;
+    # same reasoning already applied to DSR/Meetings in migration 0027).
     deals = (await db.execute(
-        select(PipelineDeal).where(PipelineDeal.user_id == user.id)
+        select(PipelineDeal).where(
+            PipelineDeal.user_id == user.id,
+            PipelineDeal.archived == False, PipelineDeal.is_seed == False,
+        )
     )).scalars().all()
     won = [d for d in deals if d.stage == "closed_won"
            and d.closure_eta and start <= d.closure_eta <= end]
@@ -264,8 +297,14 @@ async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Dep
     bu_users = (await db.execute(q)).scalars().all()
     bu_user_ids = [u.id for u in bu_users]
 
+    # Same unconditional archived/seed exclusion as my_revenue() above —
+    # Revenue Intelligence is management-facing, no legitimate reason to
+    # include fake seed_v3.py deals here either.
     deals = (await db.execute(
-        select(PipelineDeal).where(PipelineDeal.user_id.in_(bu_user_ids))
+        select(PipelineDeal).where(
+            PipelineDeal.user_id.in_(bu_user_ids),
+            PipelineDeal.archived == False, PipelineDeal.is_seed == False,
+        )
     )).scalars().all()
 
     won       = [d for d in deals if d.stage == "closed_won"
@@ -385,6 +424,7 @@ async def regional_performance(
     """Regional performance dashboard — business_head and above only.
     Returns performance KPIs sliced by India region.
     Optional ?region=India+-+West to drill into one region."""
+    deny_governance(user)
     from app.models import role_level
     from app.services.permission_service import get_region_summary, resolve_visible_user_ids
 
@@ -434,6 +474,10 @@ async def performance_comparison(
     India FY: April 1 → March 31
     Quarters: Q1=Apr-Jun, Q2=Jul-Sep, Q3=Oct-Dec, Q4=Jan-Mar
     """
+    # Revenue/target KPIs org-wide once scope="all" resolves visible_ids to
+    # None below — governance's org-wide scope would otherwise expose this
+    # exact data despite passing no other role gate here.
+    deny_governance(user)
     from app.models import role_level
     from app.services.period_service import parse_period
     from app.services.permission_service import resolve_visible_user_ids
@@ -462,6 +506,7 @@ async def performance_comparison(
                 DSRDaily.user_id.in_(team_ids),
                 DSRDaily.date >= start,
                 DSRDaily.date <= end,
+                DSRDaily.is_seed == False,
             )
         )).scalars().all()
         deals = (await db.execute(
@@ -469,7 +514,10 @@ async def performance_comparison(
                 PipelineDeal.user_id.in_(team_ids),
                 PipelineDeal.closure_eta >= start,
                 PipelineDeal.closure_eta <= end,
-                PipelineDeal.stage == "closed_won"
+                PipelineDeal.stage == "closed_won",
+                # Matches the DSRDaily.is_seed filter just above — this query
+                # was the one left out of the original migration-0027 pass.
+                PipelineDeal.archived == False, PipelineDeal.is_seed == False,
             )
         )).scalars().all()
         targets = (await db.execute(
@@ -563,6 +611,84 @@ async def performance_comparison(
             "mom":      mom_kpis,
         }
     }
+
+
+@router.get("/performance/export")
+async def export_performance(
+    period: str,   # "2026-07"
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("business_head", "practice_head", "coo", "ceo", "super_admin")),
+):
+    """CSV download of monthly per-rep performance — one of the three report/
+    export gaps confirmed missing in the 2026-07-26 audit (Analytics/
+    RevenueIntelligence/RegionalPerformance had zero export code). Gated
+    business_head+ to match those screens' own visibility, same reasoning
+    as the include_seed=40+ gate elsewhere in this file. Contains revenue
+    figures, so this is business_head+ only — governance is level 35 and
+    role_level(...) < 40 already excludes it without needing a separate
+    deny_governance() call (unlike the ungated endpoints above)."""
+    from fastapi.responses import StreamingResponse
+    import csv, io
+
+    start, end = _period_bounds(period)
+    visible_ids = await resolve_visible_user_ids(db, user)
+    q = select(User).where(User.is_active == True,
+                          User.role.in_(["rep", "inside_sales", "pre_sales", "manager"]))
+    if visible_ids is not None:
+        q = q.where(User.id.in_(visible_ids))
+    reps = (await db.execute(q)).scalars().all()
+
+    rows = []
+    for rep in reps:
+        dsrs = (await db.execute(
+            select(DSRDaily).where(
+                DSRDaily.user_id == rep.id, DSRDaily.is_seed == False,
+                DSRDaily.date >= start, DSRDaily.date <= end,
+            )
+        )).scalars().all()
+        deals = (await db.execute(
+            select(PipelineDeal).where(
+                PipelineDeal.user_id == rep.id,
+                PipelineDeal.archived == False, PipelineDeal.is_seed == False,
+                PipelineDeal.stage == "closed_won",
+                PipelineDeal.closure_eta.isnot(None),
+                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+            )
+        )).scalars().all()
+        targets = (await db.execute(
+            select(RevenueTarget).where(
+                RevenueTarget.user_id == rep.id, RevenueTarget.period == period,
+                RevenueTarget.target_type == "revenue",
+            )
+        )).scalars().all()
+        target_amount = sum(float(t.target_amount) for t in targets)
+        closed_won_value = sum(float(d.deal_value or 0) for d in deals)
+
+        rows.append({
+            "name": rep.name, "email": rep.email, "role": rep.role,
+            "region": rep.region, "business": rep.business,
+            "calls": sum(d.calls for d in dsrs), "visits": sum(d.visits for d in dsrs),
+            "followups": sum(d.followups for d in dsrs), "new_leads": sum(d.new_leads for d in dsrs),
+            "proposals": sum(d.proposals for d in dsrs),
+            "avg_rigor": calculate_avg_rigor(dsrs),
+            "closed_won_value": closed_won_value,
+            "target_amount": target_amount,
+            "achievement_pct": round(closed_won_value / target_amount * 100, 1) if target_amount else None,
+        })
+
+    if not rows:
+        return {"period": period, "count": 0, "data": []}
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=performance_{period}.csv"}
+    )
 
 
 @router.get("/revenue/team-targets")
@@ -819,11 +945,15 @@ async def rollover_preview(
 
 
 @router.get("/funnel")
-async def funnel_analytics(db: AsyncSession = Depends(get_db),
+async def funnel_analytics(include_seed: bool = False,
+                           db: AsyncSession = Depends(get_db),
                            user: User = Depends(get_current_user)):
     """Conversion funnel: Meetings → Leads → Deals → Won, with conversion rates.
     Scoped to the caller's visible users (own for reps, team for managers).
-    This is the business-insight view a Business Head actually wants."""
+    This is the business-insight view a Business Head actually wants.
+    Seeded meetings excluded by default (see migration 0027);
+    include_seed=true opts back in for business_head+."""
+    deny_governance(user)
     from app.models import Meeting, Lead, role_level
     from sqlalchemy import func
 
@@ -832,9 +962,26 @@ async def funnel_analytics(db: AsyncSession = Depends(get_db),
         visible = await resolve_visible_user_ids(db, user)
     else:
         visible = [user.id]
+    show_seed = include_seed and _can_view_seed(user)
 
+    # Applies visibility scope + seed exclusion (Meeting/Lead) uniformly, and
+    # additionally archived + seed exclusion for PipelineDeal — previously
+    # this helper only special-cased Meeting, so Lead and PipelineDeal rows
+    # got zero exclusion (Lead didn't even have an is_seed column until
+    # migration 0029; PipelineDeal's existing `archived` flag wasn't applied
+    # here either, despite being correctly applied in pipeline.py's
+    # list_deals()). See the 2026-07-22 seed-data-leakage audit.
     def _scoped(q, col):
-        return q.where(col.in_(visible)) if visible is not None else q
+        q = q.where(col.in_(visible)) if visible is not None else q
+        if col is Meeting.user_id and not show_seed:
+            q = q.where(Meeting.is_seed == False)
+        elif col is Lead.user_id and not show_seed:
+            q = q.where(Lead.is_seed == False)
+        elif col is PipelineDeal.user_id:
+            q = q.where(PipelineDeal.archived == False)
+            if not show_seed:
+                q = q.where(PipelineDeal.is_seed == False)
+        return q
 
     meetings_total = (await db.execute(_scoped(
         select(func.count(Meeting.id)), Meeting.user_id))).scalar() or 0
@@ -848,6 +995,18 @@ async def funnel_analytics(db: AsyncSession = Depends(get_db),
         Lead.user_id))).scalar() or 0
     deals_total = (await db.execute(_scoped(
         select(func.count(PipelineDeal.id)), PipelineDeal.user_id))).scalar() or 0
+    # Deals-with-lead-ancestry — NOT the same as deals_total. PipelineDeal can
+    # be created directly (no Lead involved at all, e.g. service_delivery-
+    # sourced farming deals), so deals_total is not a subset of leads_total.
+    # Using deals_total/leads_total as "Leads → Deals conversion" (the
+    # pre-existing bug — see finding #2 in the project tracker doc, showed
+    # 225% in a real observed case) implied a subset relationship that
+    # doesn't exist. deals_from_leads is the correct numerator for that
+    # specific conversion rate; deals_total remains the real overall count,
+    # shown separately rather than implied to be leads-derived.
+    deals_from_leads = (await db.execute(_scoped(
+        select(func.count(PipelineDeal.id)).where(PipelineDeal.source_lead_id.isnot(None)),
+        PipelineDeal.user_id))).scalar() or 0
     deals_won = (await db.execute(_scoped(
         select(func.count(PipelineDeal.id)).where(PipelineDeal.stage == "closed_won"),
         PipelineDeal.user_id))).scalar() or 0
@@ -888,8 +1047,14 @@ async def funnel_analytics(db: AsyncSession = Depends(get_db),
             {"label": "Meetings",  "count": meetings_total,   "value": None},
             {"label": "Leads",     "count": leads_total,      "value": None,
              "conv_from_prev": pct(leads_total, meetings_total)},
+            # count = every open/closed deal (deals can be created directly,
+            # not just from a lead — see deals_from_leads above). The
+            # conversion rate compares like with like: deals that actually
+            # descended from a lead, over total leads — not deals_total,
+            # which isn't a subset of leads_total.
             {"label": "Deals",     "count": deals_total,      "value": float(open_value),
-             "conv_from_prev": pct(deals_total, leads_total)},
+             "deals_from_leads": deals_from_leads,
+             "conv_from_prev": pct(deals_from_leads, leads_total)},
             {"label": "Won",       "count": deals_won,        "value": float(won_value),
              "conv_from_prev": pct(deals_won, deals_total)},
         ],

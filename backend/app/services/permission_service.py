@@ -249,12 +249,15 @@ async def get_region_summary(
         if not region_users:
             continue
 
-        # DSR data for this region in the period
+        # DSR data for this region in the period. is_seed excluded
+        # unconditionally — this feeds region ranking and compliance %,
+        # both management-facing (see migration 0027 / 2026-07-22 audit).
         dsrs = (await db.execute(
             select(DSRDaily).where(
                 DSRDaily.user_id.in_(region_users),
                 DSRDaily.date >= start,
-                DSRDaily.date <= end
+                DSRDaily.date <= end,
+                DSRDaily.is_seed == False,
             )
         )).scalars().all()
 

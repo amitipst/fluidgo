@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
 import { format } from 'date-fns'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { getQuoteOfDay } from '@/lib/quotes'
 
 // Compact Indian-format currency (₹2.5Cr / ₹1.5L / ₹5,000)
@@ -265,6 +265,10 @@ export default function Dashboard() {
   // gets its own company-wide FGA governance dashboard instead (see
   // HRDashboard below), not the generic rep/BU-head layout.
   const isHR = user?.role === 'hr'
+  // Validation-only — no KPIs/revenue of its own; redirected below, after
+  // every hook has been called (never gate a hook call itself on this, or
+  // conditionally-called hooks break the rules of hooks on next render).
+  const isGovernance = user?.role === 'governance'
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'))
   const [quote] = useState(getQuoteOfDay)
@@ -272,7 +276,7 @@ export default function Dashboard() {
   const { data: dash, isLoading } = useQuery({
     queryKey: ['dashboard', user?.id, selectedMonth],
     queryFn: () => api.get(`/analytics/dashboard?month=${selectedMonth}`).then(r => r.data),
-    enabled: !!user?.id && !isSDM && !isHR,
+    enabled: !!user?.id && !isSDM && !isHR && !isGovernance,
   })
 
   // Service Delivery: DOR history for the month, aggregated client-side —
@@ -293,7 +297,7 @@ export default function Dashboard() {
   const { data: todayDSR } = useQuery({
     queryKey: ['dsr-today', today],
     queryFn: () => api.get(`/dsr?date=${today}`).then(r => r.data),
-    enabled: !isSDM && !isHR,
+    enabled: !isSDM && !isHR && !isGovernance,
   })
 
   // Rep's own revenue target vs achievement (field roles that carry a number)
@@ -307,6 +311,13 @@ export default function Dashboard() {
   const rigor = dash?.avg_rigor ?? 0
   const rigorColor = rigor >= 80 ? '#059669' : rigor >= 60 ? '#D97706' : rigor > 0 ? '#DC2626' : '#DDE3EE'
   const rigorLabel = rigor >= 80 ? '🏆 Excellent' : rigor >= 60 ? '✅ Good' : rigor > 0 ? '⚠️ Needs focus' : undefined
+
+  // Governance has no KPI/revenue landing of its own — send it straight to
+  // its dedicated validation queue instead of building a bespoke empty
+  // Dashboard variant (same idea as HRDashboard above, one level simpler
+  // since governance doesn't even need a company-wide KPI view). Placed
+  // after every hook above so hook order never depends on role.
+  if (isGovernance) return <Navigate to="/governance" replace />
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">

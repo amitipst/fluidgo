@@ -129,3 +129,24 @@ def require_any_manager(user: User = Depends(get_current_user)) -> User:
     if role_level(user.role) < 20 and user.role not in ("hr", "finance"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Management role required")
     return user
+
+
+def deny_governance(user: User) -> None:
+    """Explicit deny-list guard for the "governance" role (level 35, scope
+    "all" — see ROLE_HIERARCHY). Governance's org-wide scope would otherwise
+    let it pass most `require_level(20/25/30)` checks in this codebase, which
+    were written before governance existed and gate revenue/incentive/score
+    visibility AND team-management authority using the same numeric level.
+    That's exactly the wrong thing for a role that must see submission
+    STATUS org-wide but must see NO financial figures and hold NO approval
+    authority — so every endpoint returning money/incentive/target/score
+    data, or performing an approve/reject/override/payout action, calls this
+    explicitly as its first line instead of relying on level thresholds
+    alone. Grep for `deny_governance(` to find every enforced boundary.
+    A no-op for every other role, including super_admin (unaffected)."""
+    if user.role == "governance":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Governance role is validation-only — no visibility into financial data "
+                   "or approval authority. See /api/governance/* for what this role can do."
+        )

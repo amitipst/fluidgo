@@ -51,6 +51,20 @@ def working_dates(start: date, end: date):
     return dates
 
 async def seed():
+    # ── Production safety guard ────────────────────────────────────────────
+    # This script unconditionally DELETEs every User (and every dependent
+    # row) before re-seeding — including real production accounts, not just
+    # prior seed rows (see the "Clear old seed data" step below). That's how
+    # placeholder data ended up attached to real accounts like
+    # danish@fluidpro.in / neha@fluidpro.in in the first place. Refuse to
+    # run at all against a production environment; there is no safe partial
+    # mode here, so this is a hard stop, not a warning.
+    from app.config import settings
+    if settings.ENVIRONMENT == "production":
+        print("❌ Refusing to run seed_v3.py: ENVIRONMENT=production. "
+              "This script deletes ALL users and data — never run it against prod.")
+        sys.exit(1)
+
     from app.database import AsyncSessionLocal, engine
     from app.models import (Base, User, DSRDaily, SelfScore, Meeting, Lead,
                              PipelineDeal, RevenueTarget)
@@ -182,7 +196,8 @@ async def seed():
                         trainings_attended = random.randint(0,1),
                         docs_created       = random.randint(0,2),
                         virtual_meetings   = random.randint(0,3),
-                        notes=f"Pre-sales activity — {dt.strftime('%b %Y')}"
+                        notes=f"Pre-sales activity — {dt.strftime('%b %Y')}",
+                        is_seed=True
                     )
                 else:
                     calls     = random.randint(2,8)
@@ -197,7 +212,8 @@ async def seed():
                         new_leads=leads, proposals=props,
                         virtual_meetings=random.randint(0,1),
                         proposal_value=Decimal(random.randint(0,5)*100000) if props else None,
-                        notes=f"Field activity — {dt.strftime('%b %Y')}"
+                        notes=f"Field activity — {dt.strftime('%b %Y')}",
+                        is_seed=True
                     )
                 db.add(dsr)
                 dsr_count += 1
@@ -233,7 +249,8 @@ async def seed():
                     next_step="Follow up with decision maker",
                     roadblock=random.random() < 0.15,
                     ai_closure_pct={"cold":10,"warm":40,"hot":70,
-                                    "closed_won":100,"closed_lost":0,"dropped":0}.get(stage,50)
+                                    "closed_won":100,"closed_lost":0,"dropped":0}.get(stage,50),
+                    is_seed=True,
                 )
                 db.add(deal)
                 deal_count += 1
@@ -267,7 +284,8 @@ async def seed():
                     bant_budget=bant_b, bant_authority=bant_a,
                     bant_need=bant_n, bant_timeline=bant_t,
                     ai_intent_score=intent,
-                    ai_closure_pct=pct_map[filled]
+                    ai_closure_pct=pct_map[filled],
+                    is_seed=True
                 )
                 db.add(mtg)
                 mtg_count += 1
@@ -291,7 +309,8 @@ async def seed():
                     next_action="Follow up with proposal",
                     next_action_date=dt + timedelta(days=random.randint(3,14)),
                     ai_lead_score=random.randint(40,95),
-                    status=random.choice(["new","qualified","proposal","closed_won"])
+                    status=random.choice(["new","qualified","proposal","closed_won"]),
+                    is_seed=True,
                 ))
                 lead_count += 1
         await db.commit()

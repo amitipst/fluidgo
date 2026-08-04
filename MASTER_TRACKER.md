@@ -588,3 +588,157 @@ deployed — bundled into the same rebuild as the stale-deploy fix above.
 *This file supersedes README.md's "Recent Progress" and "Known Issues"
 sections going forward — check here first. README.md stays the quick-start
 reference; this file is the detailed, chronological record.*
+
+## 2026-08-04 — R0 kickoff: consolidate 4 undeployed branches (Claude/Rambo Commander session, local dev on blr-dsk-amits)
+
+Context: a separate strategic exercise (Rambo Commander, full Team RAMBO
+Constitution review) validated evolving fluidGo from a CRM/sales tool into
+an "AI-Native Services Intelligence Platform" — Sales → Pre-sales →
+Delivery → Governance → Customer Success → Renewals → Executive
+Intelligence. Verdict: achievable without a rebuild, via two new
+architectural primitives (a polymorphic `interactions` ledger + a
+generalized config-driven `health_engine`) rather than 12 separate new
+modules. Full assessment lives in the fluidGo Claude Project
+(`fluidgo-services-intelligence-platform-assessment.md`) and a roadmap
+summary in this repo's own `README.md` going forward. Roadmap: **R0
+(stabilize) → R1 (primitives + DSR↔Meeting link) → R2 (Customer Voice +
+Executive digest) → R3 (Governance/Escalation consolidation) → R4
+(Delivery Intelligence, build-vs-buy decision required) → R5 (Practice
+Mgmt + Knowledge Intelligence) → R6 (Farming Intelligence + single AI
+Copilot)**. Amit's direction: work locally branch-by-branch with proper
+git tags, target a **new UAT instance** (to be provisioned separately)
+rather than continuing to push directly to the existing EC2 production
+box.
+
+**This session = R0, step 1: ship what's already built.** Three feature
+branches had been sitting on GitHub since 2026-07-26, verified but never
+deployed. Confirmed via `git merge-base --is-ancestor` that all four
+relevant branches form one clean linear stack off `main`:
+
+```
+main (725534b)
+ └─ feature/dsr-backfill-and-seed-cleanup   (migration 0027)
+     └─ feature/feedback-and-help-guide      (migration 0028)
+         └─ feature/seed-data-pipeline-fix    (migration 0029)
+             └─ feature/compliance-export-governance (migration 0030)
+```
+
+`develop` was still sitting at `725534b` (unchanged since the 2026-07-16
+end-to-end review). Fast-forwarded it straight to
+`origin/feature/compliance-export-governance` (`b8180b2`) — a true
+fast-forward, zero conflicts, since the stack is strictly linear.
+
+**Local dev environment:** this repo already had a working Docker Compose
+stack on this machine (`blr-dsk-amits`, Windows, Docker Desktop) running
+continuously for 6 days prior to this session — nginx:80, frontend:3002,
+backend:8000, db:5433, ollama:11434. Restarted `backend` to pick up the
+fast-forwarded code; its entrypoint auto-ran `alembic upgrade head`,
+applying `0027 → 0030` cleanly.
+
+**Verification results:**
+- `pytest tests/`: 24 passed, 7 failed — the 7 are the pre-existing
+  `test_permission_service.py` failures already confirmed unrelated to
+  this work in an earlier session (`git stash` reproduces them on an
+  unmodified checkout). No new failures.
+- `vertical_slice_test.py`: still broken as previously documented — stale
+  against current schema/RBAC (crashes on `bu_head`/`inside_sales`/
+  `manager` logins failing against this local DB's credentials). Not
+  fixed in this pass; flagged as a concrete R0 follow-up.
+- `smoke_test.py --base http://nginx` (had to override the default
+  `http://localhost`, which resolves to the container's own loopback
+  when run via `docker compose exec backend`, not the nginx-fronted
+  stack): **32/37 (86%)**. All 5 failures are local-environment
+  artifacts, not code regressions:
+  - `manager@fluidpro.in` / `inside@fluidpro.in` logins → 401. Root
+    cause: a password rotation for these two test accounts (from the
+    2026-07-16 session, commit `b22eb3f`) only ever landed in the *live*
+    EC2 DB and in an **unpushed local commit on `main`** — it never made
+    it into this branch's `smoke_test.py` or into this local Docker DB's
+    seed. Not a defect in the merged code.
+  - Cascading "4/6 tokens obtained" from the above.
+  - `Dashboard: calls > 0` / `avg_rigor > 0` for `danish@fluidpro.in` →
+    0. Root cause, confirmed via direct query: 58 of his 62 real DSR rows
+    (loaded from the actual May-2026 Excel export via `backend/seed.py`)
+    predate migration 0027's 2026-07-04 seed-cutoff and got flagged
+    `is_seed=true` — **this is the exact tradeoff migration 0027's own
+    docstring already calls out** ("a genuine pre-07-04 real entry would
+    also get flagged; recoverable via `include_seed=true` + manual unset
+    if any are found"). Local-DB-only; not touched in this pass since
+    it's cosmetic to this dev environment, not a code bug.
+- Frontend `tsc --noEmit`: clean. `npm run build`: clean (PWA bundle
+  generated, main chunk ~294 KB gzipped — the existing >500KB chunk-size
+  warning is pre-existing, not introduced here).
+
+**Pushed:** `develop` → `origin/develop` (`725534b..b8180b2`, fast-forward).
+**Opened:** [PR #1](https://github.com/amitipst/fluidgo/pull/1),
+`develop` → `main`, with the verification results above in the PR body.
+**Deliberately not merged** — the existing auto-deploy-to-EC2 pipeline on
+`main` merges is exactly the pipeline this session is trying to route
+around now that the plan is a fresh UAT instance; merge timing is Amit's
+call, not automated in this pass.
+
+**Still open (R0, next steps):**
+1. GitHub Actions billing lock — unresolved status not re-checked this
+   session; still assumed blocking until Amit confirms otherwise.
+2. Branch protection / required-status-checks on `main` — not yet applied,
+   recommended before PR #1 or anything after it merges.
+3. `vertical_slice_test.py` repair — still stale, still open.
+4. The 2 unpushed commits on local `main` (`b22eb3f` scope-leak fix,
+   `12582bc` docs) from the 2026-07-16 session — never reconciled with
+   `develop`/`origin`; worth deciding whether to cherry-pick the
+   scope-leak fix forward.
+5. New UAT instance provisioning — Amit-owned, not started this session.
+6. Version tag: `v1.1.0` already exists at the older `725534b` commit
+   (tagged prematurely per the 2026-07-21 finding, predates all 4
+   branches above) — recommend tagging the consolidated state `v1.2.0`
+   once PR #1 merges, rather than moving/re-tagging `v1.1.0`.
+
+Once R0 is actually closed out, next work starts R1: the `interactions`
+ledger + generalized `health_engine` primitives, proven first against the
+DSR↔Meeting structural-link gap (finding #3, open since 2026-07-21).
+
+## 2026-08-04 (same day, continued) — Branch protection enabled on `main` and `develop`
+
+Per Amit's explicit direction ("branch protection is needed as per best
+practice and right time, we will be using free version only"). Confirmed
+first that plan tier is not actually a constraint here: the repo
+(`amitipst/fluidgo`) is **public**, and GitHub's free plan has always
+included full branch protection rules on public repositories — no
+Team/Enterprise upgrade needed. (The free-tier limitation people usually
+mean only affects *private* repos under an organization account, which
+doesn't apply here — this is a public repo under a personal account.)
+
+Applied identically to both `main` and `develop` via `gh api PUT
+.../branches/{branch}/protection`:
+- Pull request required before merging — **no direct pushes, including
+  for repo admins** (`enforce_admins: true`). This directly closes the
+  gap flagged repeatedly in this tracker and the fluidGo Claude Project
+  assessment: most work had been landing straight on `main` with no
+  PR/review step, `develop` included, despite `develop`'s own documented
+  policy (CHANGELOG.md "Release Process") already saying feature
+  branches should PR into `develop`.
+- `required_approving_review_count: 0` — deliberate: a PR object is
+  still mandatory, but no second reviewer is required. GitHub does not
+  allow a PR author to approve their own PR, so requiring ≥1 approval
+  would make solo merging impossible without a second GitHub identity.
+  This keeps the workflow solo-friendly while still forcing every change
+  through a reviewable, diffable PR instead of a silent direct push.
+- Force-pushes and branch deletion blocked on both branches.
+- `required_conversation_resolution: true`.
+- **No required status checks yet, on either branch** — deliberate, not
+  an oversight: `vertical_slice_test.py` is still broken/stale and
+  GitHub Actions' billing-lock status hasn't been re-confirmed this
+  session. Wiring in required checks now would just block every future
+  PR on a suite that's already known-broken. Revisit once (a) Actions is
+  confirmed unblocked and (b) the test suite is genuinely green or the
+  known-bad tests are explicitly quarantined.
+
+This PR (`chore/branch-protection-r0` → `develop`) is itself the first
+PR merged under the new rule — recording the policy change through the
+same mechanism it introduces, rather than pushing it directly.
+
+**R0 still open after this:** GitHub Actions billing-lock status,
+`vertical_slice_test.py` repair, the 2 old unpushed commits on local
+`main`, new UAT instance provisioning, and merging/tagging PR #1
+(`develop`→`main`, the 4-branch consolidation) — all unchanged from the
+entry immediately above this one.

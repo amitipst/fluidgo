@@ -2,8 +2,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { format } from 'date-fns'
-import { useState } from 'react'
+import { format, parseISO, subDays } from 'date-fns'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
@@ -118,13 +118,20 @@ export default function DSREntry() {
   const today = format(new Date(), 'yyyy-MM-dd')
   const [submitted, setSubmitted] = useState(false)
   const [lastRigor, setLastRigor] = useState<number | null>(null)
+  const [wasBackfill, setWasBackfill] = useState(false)
 
   const isPresales = user?.role === 'pre_sales'
 
-  const { data: existing } = useQuery({
-    queryKey: ['dsr', today],
-    queryFn: () => api.get(`/dsr?date=${today}`).then(r => r.data)
+  // "Second chance" backfill window bounds come from the backend (single
+  // source of truth — see /dsr/backfill-window) so the picker never drifts
+  // out of sync with what the server will actually accept. Falls back to a
+  // local 7-day computation while that request is in flight.
+  const { data: backfillWindow } = useQuery({
+    queryKey: ['dsr', 'backfill-window'],
+    queryFn: () => api.get('/dsr/backfill-window').then(r => r.data)
   })
+  const minDate = backfillWindow?.min_date ?? format(subDays(new Date(), 7), 'yyyy-MM-dd')
+  const maxDate = backfillWindow?.max_date ?? today
 
   // ── Sales form ───────────────────────────────────────────────────────────
   const salesForm = useForm<SalesForm>({
@@ -146,6 +153,28 @@ export default function DSREntry() {
       knowledge_excellence:4, operational_excellence:4 }
   })
 
+  // Whichever form is active drives which date is "selected" right now.
+  const selectedDate = isPresales ? psForm.watch('date') : salesForm.watch('date')
+  const isBackdated = selectedDate !== today
+
+  const { data: existing } = useQuery({
+    queryKey: ['dsr', selectedDate],
+    queryFn: () => api.get(`/dsr?date=${selectedDate}`).then(r => r.data),
+    enabled: !!selectedDate
+  })
+
+  // Prefill the form when an already-submitted DSR exists for the picked
+  // date. Without this, picking a past date that was already filed would
+  // silently overwrite it with a blank/default row on next submit — a much
+  // bigger risk now that backfill makes revisiting old dates the norm.
+  useEffect(() => {
+    if (!existing) return
+    const form = isPresales ? psForm : salesForm
+    const { self_scores, ...rest } = existing
+    form.reset({ ...form.getValues(), ...rest, ...(self_scores || {}), date: selectedDate })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing, selectedDate])
+
   const mutation = useMutation({
     mutationFn: async (data: SalesForm | PresalesForm) => {
       if (isPresales) {
@@ -166,6 +195,7 @@ export default function DSREntry() {
     },
     onSuccess: (res) => {
       setLastRigor(res.data?.rigor_score ?? null)
+      setWasBackfill(!!res.data?.is_backfill)
       qc.invalidateQueries({ queryKey: ['dsr'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       setSubmitted(true)
@@ -176,11 +206,28 @@ export default function DSREntry() {
   const pStatus = psForm.watch('status')
   const activeStatus = isPresales ? pStatus : sStatus
 
+  // ── Date picker (shared) ───────────────────────────────────────────────────
+  const DateSelector = ({ registerFn }: any) => (
+    <div className="card mb-4">
+      <label className="form-label block mb-2">📅 Report Date</label>
+      <input type="date" min={minDate} max={maxDate} {...registerFn('date')}
+        className="form-input" />
+      {isBackdated && (
+        <p className="text-xs text-wep-orange mt-2">
+          ⏳ Filing for a past day — this will be marked as a late/backfilled entry
+          for your manager's review. You can go back up to {backfillWindow?.window_days ?? 7} days.
+        </p>
+      )}
+    </div>
+  )
+
   // ── Success state ────────────────────────────────────────────────────────
   if (submitted) return (
     <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
       <div className="text-5xl mb-4">✅</div>
-      <h2 className="font-display font-bold text-2xl text-wep-text mb-2">DSR Submitted!</h2>
+      <h2 className="font-display font-bold text-2xl text-wep-text mb-2">
+        DSR {wasBackfill ? 'Backfilled' : 'Submitted'}!
+      </h2>
       {lastRigor !== null && lastRigor >= 0 && (
         <div className="mb-4">
           <span className="text-lg font-bold"
@@ -197,7 +244,13 @@ export default function DSREntry() {
         ⏳ Pending manager approval — you can still edit until approved.
       </p>
       <div className="flex gap-3 flex-wrap justify-center">
-        <button className="btn-primary" onClick={() => setSubmitted(false)}>Submit Another</button>
+        <button className="btn-primary" onClick={() => {
+          // Reset back to today so "Submit Another" doesn't leave the picker
+          // stuck on whatever past date was just backfilled.
+          if (isPresales) psForm.setValue('date', today)
+          else salesForm.setValue('date', today)
+          setSubmitted(false)
+        }}>Submit Another</button>
         <Link to="/dsr/history" className="btn-outline">View My DSR Log →</Link>
       </div>
     </div>
@@ -234,14 +287,19 @@ export default function DSREntry() {
           {isPresales ? '🔬 Pre-Sales Daily Report' : '✏️ Submit Daily Sales Report'}
         </h1>
         <p className="text-wep-muted text-sm mt-1">
-          {format(new Date(), 'EEEE, d MMMM yyyy')}
-          {existing && <span className="ml-2 text-wep-teal font-medium">· Already submitted today</span>}
+          {selectedDate ? format(parseISO(selectedDate), 'EEEE, d MMMM yyyy') : format(new Date(), 'EEEE, d MMMM yyyy')}
+          {existing && (
+            <span className="ml-2 text-wep-teal font-medium">
+              · Already submitted {isBackdated ? 'for this day' : 'today'} — editing will update it
+            </span>
+          )}
         </p>
       </div>
 
       {/* ── SALES DSR FORM ─────────────────────────────────────────────────── */}
       {!isPresales && (
         <form onSubmit={salesForm.handleSubmit(d => mutation.mutate(d))} className="space-y-4">
+          <DateSelector registerFn={salesForm.register} />
           <StatusSelector registerFn={salesForm.register} watchFn={salesForm.watch} />
 
           {sStatus === 'working' && (
@@ -294,11 +352,11 @@ export default function DSREntry() {
 
           <button type="submit" disabled={mutation.isPending}
             className="w-full btn-primary py-3 text-base disabled:opacity-50">
-            {mutation.isPending ? '⏳ Submitting...' : '✅ Submit DSR'}
+            {mutation.isPending ? '⏳ Submitting...' : isBackdated ? '⏳ Backfill DSR' : '✅ Submit DSR'}
           </button>
           {mutation.isError && (
             <p className="text-red-500 text-sm text-center">
-              Submission failed — check your connection.
+              {(mutation.error as any)?.response?.data?.detail || 'Submission failed — check your connection.'}
             </p>
           )}
         </form>
@@ -307,6 +365,7 @@ export default function DSREntry() {
       {/* ── PRE-SALES DSR FORM ──────────────────────────────────────────────── */}
       {isPresales && (
         <form onSubmit={psForm.handleSubmit(d => mutation.mutate(d))} className="space-y-4">
+          <DateSelector registerFn={psForm.register} />
           <StatusSelector registerFn={psForm.register} watchFn={psForm.watch} />
 
           {pStatus === 'working' && (
@@ -351,10 +410,12 @@ export default function DSREntry() {
 
           <button type="submit" disabled={mutation.isPending}
             className="w-full btn-primary py-3 text-base disabled:opacity-50">
-            {mutation.isPending ? '⏳ Submitting...' : '✅ Submit Pre-Sales DSR'}
+            {mutation.isPending ? '⏳ Submitting...' : isBackdated ? '⏳ Backfill Pre-Sales DSR' : '✅ Submit Pre-Sales DSR'}
           </button>
           {mutation.isError && (
-            <p className="text-red-500 text-sm text-center">Submission failed.</p>
+            <p className="text-red-500 text-sm text-center">
+              {(mutation.error as any)?.response?.data?.detail || 'Submission failed.'}
+            </p>
           )}
         </form>
       )}

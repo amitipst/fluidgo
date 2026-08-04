@@ -75,8 +75,25 @@ function ConversionFunnel() {
   )
 }
 
+// Blob-download pattern (Authorization header needed — a plain <a href>
+// can't carry it), same as FGAApproval.tsx/SystemHealth.tsx/Team.tsx.
+async function downloadPerformanceCSV(period: string) {
+  try {
+    const res = await api.get(`/analytics/performance/export?period=${period}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(new Blob([res.data as any], { type: 'text/csv' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = `performance_${period}.csv`
+    link.click(); URL.revokeObjectURL(url)
+  } catch {
+    alert('Nothing to export for this period.')
+  }
+}
+
+const PERFORMANCE_EXPORT_ROLES = ['business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
+
 export default function Analytics() {
   const { user } = useAuthStore()
+  const canExportPerformance = PERFORMANCE_EXPORT_ROLES.includes(user?.role ?? '')
   const { data: records = [] } = useQuery({
     queryKey: ['analytics', user?.id],
     queryFn: () => api.get(`/analytics/rep/${user?.id}`).then(r => r.data),
@@ -107,11 +124,20 @@ export default function Analytics() {
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h1 className="font-display font-bold text-xl text-wep-navy">📈 Analytics</h1>
-        <p className="text-wep-muted text-sm">
-          {isTeamView ? "Team-wide · " : ''}Funnel conversion & daily activity
-        </p>
+      <div className="mb-6 flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-display font-bold text-xl text-wep-navy">📈 Analytics</h1>
+          <p className="text-wep-muted text-sm">
+            {isTeamView ? "Team-wide · " : ''}Funnel conversion & daily activity
+          </p>
+        </div>
+        {canExportPerformance && (
+          <button className="btn-outline text-sm"
+            onClick={() => downloadPerformanceCSV(new Date().toISOString().slice(0, 7))}
+            title="Monthly per-rep performance report">
+            ⬇️ Export Performance Report
+          </button>
+        )}
       </div>
 
       <ConversionFunnel />

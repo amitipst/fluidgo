@@ -42,13 +42,18 @@ async def create_meeting(body: MeetingIn, db: AsyncSession = Depends(get_db),
 @router.get("")
 async def list_meetings(
     scope: Literal["mine", "team"] = "mine",
+    include_seed: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """scope=mine → only the caller's own meetings (default).
     scope=team → all meetings across the caller's visible users (managers+).
-    Field roles always get their own regardless of scope."""
+    Field roles always get their own regardless of scope.
+    Seeded meetings (seed_v3.py, dated before the 2026-07-04 go-live —
+    see migration 0027) are excluded by default; include_seed=true opts
+    back in for business_head+ only."""
     from app.models import role_level
+    show_seed = include_seed and role_level(user.role) >= 40
     if scope == "team" and role_level(user.role) >= 20:
         from app.services.permission_service import resolve_visible_user_ids
         visible = await resolve_visible_user_ids(db, user)
@@ -57,6 +62,8 @@ async def list_meetings(
             q = q.where(Meeting.user_id.in_(visible))
     else:
         q = select(Meeting).where(Meeting.user_id == user.id).order_by(Meeting.date.desc())
+    if not show_seed:
+        q = q.where(Meeting.is_seed == False)
     result = await db.execute(q)
     meetings = result.scalars().all()
     out = []

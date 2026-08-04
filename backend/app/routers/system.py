@@ -34,7 +34,8 @@ async def system_health(
     # DSR today
     today = datetime.utcnow().date()
     dsrs_today = (await db.execute(
-        select(func.count()).select_from(DSRDaily).where(DSRDaily.date == today)
+        select(func.count()).select_from(DSRDaily).where(
+            DSRDaily.date == today, DSRDaily.is_seed == False)
     )).scalar()
 
     # Audit events last 24h

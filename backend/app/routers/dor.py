@@ -14,7 +14,7 @@ from typing import Optional, Literal
 import uuid
 from app.database import get_db
 from app.models import User, DORDaily, PipelineDeal, role_level
-from app.services.deps import get_current_user, require_level
+from app.services.deps import get_current_user, require_level, deny_governance
 from app.services.account_service import get_or_create_account
 from app.services.audit_service import audit
 
@@ -41,8 +41,8 @@ class DORIn(BaseModel):
     blockers_notes:        Optional[str] = None
 
 
-def _serialize(d: DORDaily) -> dict:
-    return {
+def _serialize(d: DORDaily, viewer_role: Optional[str] = None) -> dict:
+    row = {
         "id": str(d.id), "user_id": str(d.user_id), "date": d.report_date.isoformat(),
         "client_account": d.client_account, "status": d.status,
         "tickets_open_start": d.tickets_open_start, "tickets_new": d.tickets_new,
@@ -59,6 +59,11 @@ def _serialize(d: DORDaily) -> dict:
         "approved_at": d.approved_at.isoformat() if d.approved_at else None,
         "manager_comment": d.manager_comment,
     }
+    # Governance validates ticket/escalation completeness, not collections —
+    # same rule as DSR's proposal_value (see dsr.py's _serialize_dsr).
+    if viewer_role == "governance":
+        row.pop("collection_amount", None)
+    return row
 
 
 @router.post("")
@@ -132,7 +137,7 @@ async def team_dor(month: Optional[str] = None, db: AsyncSession = Depends(get_d
     users = {u.id: u for u in (await db.execute(select(User))).scalars().all()}
     out = []
     for d in rows:
-        row = _serialize(d)
+        row = _serialize(d, viewer_role=user.role)
         u = users.get(d.user_id)
         row["name"] = u.name if u else None
         row["email"] = u.email if u else None
@@ -153,7 +158,11 @@ async def approve_dor(dor_id: str, body: DORApprovalIn, background_tasks: Backgr
     like DSR (see module docstring). Rejecting sets approval_status to
     "rejected" with the manager's comment; the SDM can always resubmit
     (submit_dor resets to "submitted" on any save), which is what brings
-    it back for review."""
+    it back for review.
+
+    Governance is blocked here — approval authority stays with the manager
+    chain; governance validates via POST /governance/dor/{id}/review."""
+    deny_governance(user)
     from app.services.permission_service import resolve_visible_user_ids
 
     dor = (await db.execute(select(DORDaily).where(DORDaily.id == uuid.UUID(dor_id)))).scalar_one_or_none()
@@ -211,6 +220,9 @@ class FlagOpportunityIn(BaseModel):
 @router.post("/{dor_id}/flag-opportunity")
 async def flag_opportunity(dor_id: str, body: FlagOpportunityIn, db: AsyncSession = Depends(get_db),
                            user: User = Depends(require_level(20))):
+    # Creating a PipelineDeal is a sales action, not a validation one —
+    # governance has no business raising opportunities.
+    deny_governance(user)
     dor = (await db.execute(select(DORDaily).where(DORDaily.id == uuid.UUID(dor_id)))).scalar_one_or_none()
     if not dor:
         raise HTTPException(404, "DOR entry not found")

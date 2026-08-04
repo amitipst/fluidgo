@@ -7,7 +7,7 @@ from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
 from app.models import User, DSRDaily, SelfScore
-from app.services.deps import get_current_user, require_level
+from app.services.deps import get_current_user, require_level, deny_governance
 from app.services.rigor_service import calculate_rigor_score, rigor_label
 from app.services.audit_service import audit
 
@@ -16,6 +16,15 @@ router = APIRouter()
 # Self-edit window — see design note on DSRDaily.edit_granted_until.
 SELF_EDIT_WINDOW = timedelta(hours=24)
 GRANTED_EDIT_WINDOW = timedelta(hours=24)  # duration of a manager-granted exception
+
+# "Second chance" backfill window — a rep who forgot to log a day can still
+# create (not just edit) a DSR for any of the last N calendar days. Before
+# this existed, submit_dsr had NO date-range check at all: any past OR
+# future date was silently accepted. This both plugs that hole and gives
+# reps a bounded, self-serve way to catch up on missed days. Beyond the
+# window, a rep needs to go through their manager (same edit-request/
+# grant path already used for the 24h self-edit window above).
+BACKFILL_WINDOW_DAYS = 7
 
 # Roles permitted to submit a DSR (field + direct management only)
 DSR_ALLOWED_ROLES = {
@@ -100,8 +109,14 @@ def _edit_lock_state(dsr: DSRDaily) -> dict:
             "message": "The 24-hour self-edit window has closed. "
                        "Use 'Request Edit' to ask your manager for an exception."}
 
-def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None) -> dict:
+def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None, viewer_role: Optional[str] = None) -> dict:
     d = {c.name: getattr(dsr, c.name) for c in dsr.__table__.columns}
+    # Governance validates completeness/timeliness, not deal size — strip
+    # the one money-adjacent field this table carries so a governance
+    # viewer never sees it, even though their org-wide scope reaches this
+    # endpoint (see can_see_financials() / deny_governance() design note).
+    if viewer_role == "governance":
+        d.pop("proposal_value", None)
     d["rigor_score"]     = rigor
     d["rigor_label"]     = rigor_label(rigor)
     d["id"]              = str(d["id"])
@@ -112,6 +127,14 @@ def _serialize_dsr(dsr: DSRDaily, rigor: int, self_score=None) -> dict:
     d["lock_reason"]     = lock.get("reason")
     d["lock_message"]    = lock.get("message")
     d["self_edit_ends_at"] = lock.get("self_edit_ends_at")
+    # Backfill visibility — a DSR first submitted after the day it covers
+    # (i.e. via the second-chance window, not same-day) is flagged here so
+    # the Mine/Team approval views can surface it distinctly rather than
+    # looking identical to an on-time entry. Derived from existing columns
+    # (submitted_at vs date) — no separate "is_backfilled" column needed.
+    days_late = (_aware(dsr.submitted_at).date() - dsr.date).days
+    d["submitted_late"] = days_late > 0
+    d["days_late"]      = max(days_late, 0)
     if self_score:
         d["self_scores"] = {
             c.name: getattr(self_score, c.name)
@@ -148,6 +171,21 @@ async def submit_dsr(
                                     DSRDaily.date == body.date))
     )
     dsr = result.scalar_one_or_none()
+
+    # Date-range guard. No future dates, ever. A brand-new (never-submitted)
+    # DSR can only be backfilled within BACKFILL_WINDOW_DAYS — this is the
+    # "second chance" window. An EXISTING row older than the window is left
+    # alone here; its own edit lock (24h / approval / manager-grant) below
+    # already governs whether it can still be changed, and that path
+    # shouldn't get any looser just because backfill now exists.
+    today = datetime.now(timezone.utc).date()
+    if body.date > today:
+        raise HTTPException(status_code=400,
+            detail="Cannot submit a DSR for a future date.")
+    if dsr is None and (today - body.date).days > BACKFILL_WINDOW_DAYS:
+        raise HTTPException(status_code=400,
+            detail=f"DSR can only be backfilled for the last {BACKFILL_WINDOW_DAYS} days. "
+                    "For an older missed day, ask your manager to log it or grant an exception.")
 
     # Block editing if approved, or if the 24h self-edit window has closed
     # (unless a manager has explicitly granted a temporary exception).
@@ -188,6 +226,7 @@ async def submit_dsr(
         request=request
     )
 
+    is_backfill = body.date != today
     return {
         "id":              str(dsr.id),
         "rigor_score":     rigor,
@@ -195,7 +234,22 @@ async def submit_dsr(
         "dsr_type":        dsr_type,
         "approval_status": "submitted",
         "is_update":       is_update,
+        "is_backfill":     is_backfill,
         "message":         f"DSR {'updated' if is_update else 'submitted'} successfully for {body.date}"
+                            + (" (backfilled)" if is_backfill and not is_update else "")
+    }
+
+# ── Backfill window bounds ────────────────────────────────────────────────────
+@router.get("/backfill-window")
+async def get_backfill_window(user: User = Depends(get_current_user)):
+    """Tells the client the allowed date range for a NEW DSR submission, so
+    the date picker's min/max stays driven by one source of truth (this
+    constant) instead of being duplicated/hardcoded on the frontend."""
+    today = datetime.now(timezone.utc).date()
+    return {
+        "min_date":    (today - timedelta(days=BACKFILL_WINDOW_DAYS)).isoformat(),
+        "max_date":    today.isoformat(),
+        "window_days": BACKFILL_WINDOW_DAYS,
     }
 
 # ── Get single DSR for a date ─────────────────────────────────────────────────
@@ -223,8 +277,11 @@ async def get_my_history(
     user: User = Depends(get_current_user)
 ):
     """Returns all DSR rows for the current user, newest first.
-    Optional month filter: ?month=2026-07"""
-    q = select(DSRDaily).where(DSRDaily.user_id == user.id)
+    Optional month filter: ?month=2026-07
+    Seeded rows (see migration 0027) are always excluded here — there's no
+    legitimate reason a rep's own DSR log should show fake seed_v3.py data
+    attached to their account."""
+    q = select(DSRDaily).where(DSRDaily.user_id == user.id, DSRDaily.is_seed == False)
     if month:
         try:
             yr, mo = int(month[:4]), int(month[5:7])
@@ -260,11 +317,11 @@ async def get_team_dsr(
         visible = await resolve_direct_report_ids(db, user)
     else:
         visible = await resolve_visible_user_ids(db, user)
-    q = select(DSRDaily).where(DSRDaily.date == date)
+    q = select(DSRDaily).where(DSRDaily.date == date, DSRDaily.is_seed == False)
     if visible is not None:
         q = q.where(DSRDaily.user_id.in_(visible))
     dsrs = (await db.execute(q)).scalars().all()
-    return [_serialize_dsr(d, calculate_rigor_score(d)) for d in dsrs]
+    return [_serialize_dsr(d, calculate_rigor_score(d), viewer_role=user.role) for d in dsrs]
 
 # ── Team DSR History (manager view — for approval) ────────────────────────────
 @router.get("/team/pending")
@@ -272,6 +329,7 @@ async def get_pending_approvals(
     month: Optional[str] = None,
     scope: Optional[str] = None,   # "direct" — see /team above
     status: Literal["submitted", "approved", "rejected", "all"] = "submitted",
+    include_seed: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_level(20))
 ):
@@ -281,13 +339,22 @@ async def get_pending_approvals(
     back into "submitted", so a rejected DSR correctly drops out of the
     default pending view instead of reappearing in the same queue the
     manager just acted on - that was the "reject doesn't remove it from the
-    list" bug. status=all removes the filter entirely."""
+    list" bug. status=all removes the filter entirely.
+    Seeded rows (migration 0027) are excluded by default even in historical
+    (approved/rejected/all) views, unlike genuinely deactivated-rep history
+    which is deliberately kept — seed rows aren't real audit trail, they're
+    fake data. include_seed=true (business_head+ only) opts back in for
+    verifying the cleanup itself."""
     from app.services.permission_service import resolve_visible_user_ids, resolve_direct_report_ids
+    from app.models import role_level
+    show_seed = include_seed and role_level(user.role) >= 40
     if scope == "direct":
         visible = await resolve_direct_report_ids(db, user)
     else:
         visible = await resolve_visible_user_ids(db, user)
     q = select(DSRDaily)
+    if not show_seed:
+        q = q.where(DSRDaily.is_seed == False)
     if status != "all":
         q = q.where(DSRDaily.approval_status == status)
     if visible is not None:
@@ -315,11 +382,82 @@ async def get_pending_approvals(
         # records aren't erased from the audit trail.
         if status == "submitted" and rep and not rep.is_active:
             continue
-        row     = _serialize_dsr(dsr, rigor)
+        row     = _serialize_dsr(dsr, rigor, viewer_role=user.role)
         row["rep_name"]  = rep.name  if rep else "Unknown"
         row["rep_email"] = rep.email if rep else ""
         results.append(row)
     return results
+
+# ── Monthly team DSR export (CSV) ─────────────────────────────────────────────
+# Confirmed missing in the 2026-07-26 report/export audit: no download
+# existed anywhere for the Monthly DSR report for teams (Team.tsx/
+# DSRHistory.tsx had zero export code). One row per DSR entry for the
+# scoped team in a month — same scoping (resolve_visible_user_ids) and the
+# same blob-download pattern already proven in FGAApproval.tsx's CSV export.
+@router.get("/team/export")
+async def export_team_dsr(
+    month: str,   # "2026-07"
+    scope: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_level(20)),
+):
+    from fastapi.responses import StreamingResponse
+    import csv, io
+    from app.services.permission_service import resolve_visible_user_ids, resolve_direct_report_ids
+
+    if scope == "direct":
+        visible = await resolve_direct_report_ids(db, user)
+    else:
+        visible = await resolve_visible_user_ids(db, user)
+
+    yr, mo = int(month[:4]), int(month[5:7])
+    from calendar import monthrange
+    start, end = date(yr, mo, 1), date(yr, mo, monthrange(yr, mo)[1])
+
+    q = select(DSRDaily).where(
+        DSRDaily.date >= start, DSRDaily.date <= end, DSRDaily.is_seed == False,
+    )
+    if visible is not None:
+        q = q.where(DSRDaily.user_id.in_(visible))
+    dsrs = (await db.execute(q.order_by(DSRDaily.date.asc()))).scalars().all()
+
+    is_governance = user.role == "governance"
+    rows = []
+    for dsr in dsrs:
+        rep = (await db.execute(select(User).where(User.id == dsr.user_id))).scalar_one_or_none()
+        lateness = _serialize_dsr(dsr, 0)
+        row = {
+            "date": dsr.date.isoformat(),
+            "rep_name": rep.name if rep else "Unknown",
+            "rep_email": rep.email if rep else "",
+            "role": rep.role if rep else "",
+            "status": dsr.status,
+            "calls": dsr.calls, "visits": dsr.visits, "followups": dsr.followups,
+            "new_leads": dsr.new_leads, "proposals": dsr.proposals,
+            "approval_status": dsr.approval_status,
+            "submitted_late": lateness["submitted_late"],
+            "days_late": lateness["days_late"],
+        }
+        # No proposal_value column for governance — same rule as
+        # _serialize_dsr's viewer_role param, applied here since this export
+        # builds its own row dict rather than calling that helper directly.
+        if not is_governance:
+            row["proposal_value"] = float(dsr.proposal_value) if dsr.proposal_value is not None else None
+        rows.append(row)
+
+    if not rows:
+        return {"month": month, "count": 0, "data": []}
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=team_dsr_{month}.csv"}
+    )
 
 # ── Approve / Reject DSR ──────────────────────────────────────────────────────
 @router.post("/{dsr_id}/approve")
@@ -334,7 +472,12 @@ async def approve_dsr(
     """Manager approves or rejects a submitted DSR.
     - approved → rep cannot edit
     - rejected → rep can re-edit and resubmit
-    """
+
+    Governance is explicitly blocked here even though its org-wide scope
+    passes require_level(20) — approval authority stays with the manager
+    chain. Governance validates via POST /governance/dsr/{id}/review
+    instead, which never touches approval_status."""
+    deny_governance(user)
     from app.services.permission_service import resolve_visible_user_ids
 
     dsr = (await db.execute(
@@ -461,7 +604,10 @@ async def grant_edit(
     user: User = Depends(require_level(20))
 ):
     """Manager explicitly reopens a locked DSR for 24h. Every grant is
-    audited with who/when/why — nothing changes on a past DSR silently."""
+    audited with who/when/why — nothing changes on a past DSR silently.
+    Governance is blocked here too — granting an edit exception is a
+    management decision, not a validation action."""
+    deny_governance(user)
     from app.services.permission_service import resolve_visible_user_ids
     dsr = (await db.execute(
         select(DSRDaily).where(DSRDaily.id == uuid.UUID(dsr_id))
