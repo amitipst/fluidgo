@@ -269,6 +269,31 @@ class Meeting(Base):
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     # Seed-data marker — see DSRDaily.is_seed above and migration 0027.
     is_seed:          Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    # ── CSG Phase 2 — Meeting Management + AI MOM Generator (migration 0031) ──
+    # Generalizes this table beyond Sales-only BANT meetings so Service
+    # Delivery (QBR/cadence/escalation reviews) can log against it too,
+    # instead of a parallel table. source picks the persona; account_id/
+    # dsr_id/dor_id are soft refs (no FK constraint, same convention as
+    # PipelineDeal.account_id) that close the disconnect between this table
+    # and DSRDaily.virtual_meetings / DORDaily.client_meetings_held — both
+    # were manually-typed counters with no rows behind them.
+    source:              Mapped[str]  = mapped_column(String(20), default="sales", server_default="sales")  # sales | service_delivery
+    account_id:          Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    dsr_id:              Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # set when source=sales
+    dor_id:              Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # set when source=service_delivery
+    # Free string, not a DB enum — QBR/cadence_review/escalation_review/etc
+    # is a growing, config-like list; a new purpose shouldn't need a migration.
+    meeting_purpose:     Mapped[str]  = mapped_column(String(30), default="sales_discovery", server_default="sales_discovery", nullable=True)
+    attendees:           Mapped[list] = mapped_column(JSONB, nullable=True)  # [{name, title, is_external}]
+    # AI-generated Minutes of Meeting — markdown text, same pattern as every
+    # other AI output in this codebase (deal_health, deal_momentum,
+    # daily_insight); phi3:mini is too small to trust for reliable JSON
+    # extraction, so action items live inside the markdown, not a separate
+    # structured column. mom_status gives a human a required checkpoint
+    # before the AI draft is treated as authoritative.
+    ai_mom_summary:       Mapped[str]      = mapped_column(Text, nullable=True)
+    ai_mom_generated_at:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    mom_status:           Mapped[str]      = mapped_column(String(20), default="none", server_default="none")  # none|generated|edited|finalized
 
 class Lead(Base):
     __tablename__ = "leads"

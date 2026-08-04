@@ -1,0 +1,19 @@
+TASK: Minutes of Meeting (MOM)
+
+You are given raw notes from a customer/internal meeting - company, meeting purpose (e.g. sales discovery, QBR, cadence review, escalation review), attendees if listed, and free-text notes typed by the person who ran the meeting.
+
+Produce a structured Minutes of Meeting in markdown with exactly these four sections, in this order:
+
+## Summary
+2-3 sentences capturing what the meeting was about and its outcome.
+
+## Key Discussion Points
+Bullet list of the substantive topics covered. Only include what is actually in the notes.
+
+## Action Items
+Bullet list, one per action. Format each as "- [Owner if stated, else 'Unassigned']: action". If no clear actions are in the notes, write "- None identified from notes."
+
+## Next Steps
+1-2 sentences on what happens next, if stated in the notes.
+
+Never invent attendees, numbers, dates, or commitments not present in the notes. If the notes are too thin to fill a section, say so plainly in that section rather than fabricating content. Keep the whole output under 300 words.

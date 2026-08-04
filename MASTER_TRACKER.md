@@ -968,3 +968,103 @@ by `gh pr merge --delete-branch` at merge time, confirmed via `git fetch
 R0 status unchanged otherwise — still functionally closed, with this one
 correction: the billing lock item goes back to ⛔ open/unconfirmed rather
 than ✅.
+
+
+## 2026-08-04 (same day, continued 5) — Roadmap reconciliation: R1 retired in favor of CSG Phase 2
+
+Before writing any R1 code (the planned `interactions` ledger +
+`health_engine` primitives), read `backend/app/models/__init__.py` in full
+to ground the design in the real schema, and found the `Account` model's
+docstring pointing at an existing Linear project doc: **"Epic 9 — Customer
+Success Governance (CSG) — Roadmap & Phasing"** (created 2026-07-11, before
+this session's assessment work existed). Stopped and read it in full via
+the Linear MCP before designing anything, per the Constitution's "does
+something similar already exist" gate.
+
+**What CSG already covers:** Phase 1 (Account entity, hunting/farming
+`deal_type`, SDM→Sales opportunity signal) is live. Phase 2 (unscheduled):
+Meeting Management + AI MOM Generator — the foundational data-capture
+layer. Phase 3: Service Improvement Plans + Customer Timeline (aggregates
+Phase 2 data per-account). Phase 4: AI Customer Intelligence (health/risk
+scoring). Phase 5: AI Opportunity Engine (auto-surfaced signals,
+supersedes Phase 1's manual flagging). Phase 6 (deferred): external
+integrations (ServiceDesk Plus, Site24x7, Seceon, Teams, Outlook).
+
+**Decision (confirmed with Amit):** this maps almost exactly onto what the
+assessment doc's R1 (interactions ledger) and later phases (health_engine
+≈ Phase 4, Farming Intelligence ≈ Phase 5) were about to independently
+propose. Running two parallel roadmaps for the same ground would be
+exactly the kind of drift the Constitution exists to prevent. **R1-R6
+numbering is retired for the customer-lifecycle thread; CSG's phase
+numbering becomes canonical for it.** The assessment's 12-area findings
+that CSG does *not* touch (Escalation Management, Governance/Compliance
+workflow polish, AI Practice Management, Knowledge Intelligence, unified
+AI Copilot, Executive Intelligence digest) stay on an independent track,
+sequenced around CSG rather than folded into it.
+
+**Next build item: CSG Phase 2 — Meeting Management + AI MOM Generator.**
+This also absorbs the open "DSR↔Meeting structural disconnect" finding
+(#3, open since 2026-07-21) — fixed as part of rebuilding how meetings are
+captured and linked, not as a separate parallel patch.
+
+**Developer/DSR question (raised by Amit):** confirmed developers should
+not use the sales-shaped DSR form (would pollute FGA/compliance metrics
+built around sales fields). Developer daily-activity logging belongs to
+the separate AI Practice Management track (skills/capacity/timesheets),
+which has no overlap with CSG. Amit confirmed this is not urgent — stays
+sequenced normally, behind CSG Phase 2.
+
+Note from the Linear doc itself: the WEP team workspace hit its free-tier
+issue cap while this doc was written (2026-07-11) — Phases 2-6 don't have
+their own Linear issues yet, tracked only in this doc and here. Not
+blocking (we don't need Linear issues to build), but worth Amit knowing
+next time issue-tracking hygiene comes up.
+
+
+## 2026-08-04 (same day, continued 6) — CSG Phase 2 built: Meeting Management + AI MOM Generator
+
+Built on `feature/csg-phase2-meeting-management` off `develop`. Extends the
+existing `meetings` table (migration 0031) rather than a parallel one:
+
+- `source` (sales|service_delivery, default sales) — mirrors `PipelineDeal.source`.
+- `account_id` — auto-resolved via the existing `account_service.get_or_create_account()`,
+  same call DOR's flag-opportunity already uses.
+- `dsr_id` / `dor_id` — soft refs, auto-linked to that user+date's DSR/DOR row
+  if one exists yet. This is the actual fix for the open "DSR↔Meeting
+  disconnect" finding (#3, open since 2026-07-21) — and it turned out to be
+  symmetric: `DORDaily.client_meetings_held` had the exact same
+  disconnected-counter problem as `DSRDaily.virtual_meetings`, so both got
+  fixed in the same migration. `GET /api/meetings?dsr_id=`/`?dor_id=` (new
+  filter params on the existing list endpoint, not a new route) is how a
+  DSR/DOR detail view can show which meetings actually back the count.
+- `meeting_purpose` — free string, not a DB enum (QBR/cadence_review/
+  escalation_review/etc is a growing, config-like list).
+- `attendees` (JSONB, manual entry for Phase 2).
+- `ai_mom_summary` / `ai_mom_generated_at` / `mom_status` — AI-generated
+  Minutes of Meeting via `POST /{id}/generate-mom`, reusing
+  `ai_service.analyse()` verbatim (same Ollama/phi3:mini call, same
+  prompt-file convention — new `app/prompts/meeting_mom.txt`). Markdown
+  output, not structured JSON (every other AI feature in this codebase is
+  markdown-only; phi3:mini isn't reliable enough for JSON extraction).
+  `PATCH /{id}/mom` is the required human review/finalize checkpoint before
+  a draft is treated as authoritative.
+- BANT scoring (existing feature) is skipped entirely for
+  `source=service_delivery` meetings rather than showing a meaningless
+  "cold" score on something that was never a sales call.
+
+**Verified locally** (danish@fluidpro.in, docker compose dev stack):
+create_meeting correctly resolved account_id + dsr_id for a sales meeting
+against an existing DSR row; generate-mom completed in ~57s and produced a
+structured 4-section markdown MOM (Summary/Key Discussion Points/Action
+Items/Next Steps — action items section got cut by the 400-token cap, a
+known phi3:mini limitation already documented in ai_service.py, which is
+exactly why the PATCH finalize step exists); PATCH finalize worked;
+`?dsr_id=` filter returned the correct row; generate-mom on a meeting with
+no notes correctly 400'd instead of calling the model; a service_delivery
+meeting with no DOR row yet resolved dor_id=null with no error. Test rows
+cleaned up from the dev DB afterward.
+
+**Not yet done:** frontend (meeting form doesn't expose source/
+meeting_purpose/attendees yet, no MOM review UI) — backend-first per this
+session's usual pattern, frontend as a follow-up. No DSR/DOR-side UI change
+yet to surface the linked-meetings count either.
