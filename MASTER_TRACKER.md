@@ -1127,3 +1127,30 @@ was getting crowded). No equivalent "linked meetings" card added to
 DSREntry.tsx/DSRHistory.tsx yet — would need either an aggregate backend
 endpoint or accepting N+1 queries across a potentially long history list;
 not worth it for this PR, worth revisiting if reps ask for it.
+
+
+## 2026-08-04 (same day, continued 9) — Dev-only Service Delivery Manager test login
+
+Production has a real `service_delivery_manager` (Hemant Mathurkar), but
+this local dev DB's seed set never included that role (confirmed earlier
+this session — `SELECT DISTINCT role FROM users` returned 9 roles, no
+`service_delivery_manager`, no `governance`). Since PR #12 needs testing
+against dev, not production, created a dedicated dev-only test account via
+`POST /api/users` (as business_head, real hash_password() path, not a raw
+SQL insert) rather than reusing/touching Hemant's real record:
+
+- `test.sdm@fluidpro.in` / `DeliveryOps@2026!` — role
+  `service_delivery_manager`, region India - West, business fluidpro.
+- Note: first password attempt (`TestSDM@2026!`) was rejected by
+  `validate_password_policy()` — "Password cannot contain your name" — it
+  echoed the account name/email local-part ("Test SDM" / "test.sdm"), same
+  policy rule that rejected `Inside@2026!` for inside_sales earlier. Went
+  through the same must-change-password temp-swap pattern
+  smoke_test.py uses (`_clear_forced_password_change`) to land on a
+  policy-clean final password with `must_change_password: false`. Verified
+  end-to-end via a fresh `/auth/login`.
+
+This account is dev-database-only — obviously named so it's never confused
+with Hemant's real production record, and not added to the README's
+"Default Credentials" table since it's throwaway test infrastructure, not
+a real persona anyone should rely on long-term.
