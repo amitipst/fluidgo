@@ -886,3 +886,51 @@ though nobody explicitly confirmed *when* it cleared.
 Once Amit clears the stale deploy-approval queue (or decides to leave it),
 R0 is functionally done. Next: R1 — the `interactions` ledger +
 `health_engine` primitives, proven first against the DSR↔Meeting link.
+
+## 2026-08-04 (same day, continued 3) — R0 closed: stale deploy-approval queue rejected
+
+Amit confirmed: real deploys to the EC2 box have always been done
+manually (VS Code Remote-SSH), never through this pipeline's automated
+"production" Environment approval gate — matching what section 0.5 of
+the earlier fluidGo Claude Project doc already documented. That means
+every `waiting` deploy job on this pipeline is inherently dead on
+arrival: nobody was ever going to click "approve" on it.
+
+Confirmed the actual count first (an earlier `--json` filtered query gave
+an inconsistent/misleading count due to what looks like a pagination
+quirk — cross-checked against the plain-text `gh run list`, which is
+authoritative): exactly **5** runs in `waiting` state, not the dozens the
+raw history might suggest — everything else from 2026-07-13/14 that looks
+similar is already `completed failure` (the deploy job failed outright on
+those, rather than sitting in the approval queue — different failure
+mode, already resolved one way or another).
+
+Rejected all 5 via `gh api POST .../pending_deployments` with
+`state: rejected` and an explanatory comment (manual-SSH is the real
+deploy path; next real promotion target is the still-unprovisioned new
+UAT instance):
+- 3 from today: PR #1, #3, #4 merges to `main`
+- 2 stale, from 2026-07-15: `ci: rewrite release pipeline for v1.0.5...`
+  and `ci: grant contents:write...`
+
+All 5 now show `completed failure` (rejected, not actually failed) —
+Actions dashboard is clean, no dangling approvals.
+
+**R0 is now fully closed.** Everything from the original punch list is
+either done or explicitly deferred with a reason:
+- ✅ 4 undeployed branches consolidated, `v1.2.0` tagged
+- ✅ Branch protection on `main` + `develop`
+- ✅ GitHub Actions billing lock (confirmed resolved)
+- ✅ 2 old unpushed local-`main` commits reconciled (including a real
+  security fix)
+- ✅ Stale/dead deploy-approval queue cleared
+- ⛔ Deferred, with reason: `vertical_slice_test.py` repair (tracked, not
+  blocking — required status checks intentionally not wired up until
+  it's fixed); new UAT instance provisioning (Amit-owned, separate
+  infra task, not a code change)
+
+**Next: R1** — the `interactions` ledger + `health_engine` primitives
+(see the fluidGo Claude Project's
+`fluidgo-services-intelligence-platform-assessment.md`), proven first
+against the DSR↔Meeting structural link (finding #3, open since
+2026-07-21).
