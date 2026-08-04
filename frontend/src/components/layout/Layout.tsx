@@ -4,6 +4,7 @@ import { APP_VERSION } from '@/version'
 import { useAuthStore } from '@/store/authStore'
 import { useIdleLogout } from '@/hooks/useIdleLogout'
 import api from '@/hooks/useApi'
+import FeedbackWidget from '@/components/FeedbackWidget'
 
 // Field roles only — can submit DSR
 const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
@@ -11,6 +12,10 @@ const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
 // Roles that can act on DSR edit requests (matches backend require_level(20)
 // gate on GET/POST /dsr/team/edit-requests, and DSRHistory.tsx's isManager).
 const DSR_MANAGER_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin']
+
+// Who can see the Feedback inbox — matches backend feedback.py's REVIEW_LEVEL
+// (role_level >= 40: business_head/practice_head and above).
+const FEEDBACK_ADMIN_ROLES = ['business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
 
 const NAV_CORE = [
   { to: '/',              icon: '⚡', label: 'Dashboard',    exact: true },
@@ -43,6 +48,8 @@ const NAV_SCHEME_WINNERS = { to: '/scheme-winners', icon: '🎉', label: 'Scheme
 const NAV_ACTIVITY_LOGS = { to: '/activity-logs', icon: '🗂️', label: 'Activity Logs' }
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
+const NAV_FEEDBACK = { to: '/feedback', icon: '💬', label: 'Feedback Inbox' }
+const NAV_GOVERNANCE = { to: '/governance', icon: '🛡️', label: 'Governance' }
 
 // ── fluidGo compact logo for sidebar header ──────────────────────────────────
 function SidebarLogo() {
@@ -125,6 +132,10 @@ export default function Layout() {
   const isFieldRole   = FIELD_ROLES.includes(user?.role ?? '')
   const isDsrManager  = DSR_MANAGER_ROLES.includes(user?.role ?? '')
   const canSeeActivityLogs = ['hr', 'finance'].includes(user?.role ?? '')
+  // Validation-only role — sees none of the Sales/Revenue/Team nav (no
+  // financial visibility by design, see can_see_financials() on the
+  // backend), just its own dedicated Governance queue.
+  const isGovernance = user?.role === 'governance'
 
   // Pending DSR edit-request count, surfaced as a sidebar badge so it
   // doesn't sit unseen inside DSR History → Team tab. Polled every 60s.
@@ -137,6 +148,19 @@ export default function Layout() {
   })
   const dsrEditRequestCount = dsrEditRequests.length
 
+  const canSeeFeedbackInbox = FEEDBACK_ADMIN_ROLES.includes(user?.role ?? '')
+
+  // Open-feedback count for the sidebar badge — same 60s-poll pattern as
+  // the DSR edit-request badge above.
+  const { data: feedbackPending } = useQuery({
+    queryKey: ['feedback-badge'],
+    queryFn:  () => api.get('/feedback/pending-count').then(r => r.data),
+    enabled:  canSeeFeedbackInbox,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+  const feedbackPendingCount = feedbackPending?.count ?? 0
+
   const isHR = user?.role === 'hr'
 
   // Remove DSR items for non-field roles; remove gamification from core if manager+;
@@ -144,7 +168,7 @@ export default function Layout() {
   // Pipeline/Opportunities/Analytics/Schemes) — Meetings stays, since
   // client meetings are just as real for delivery as for sales, and isn't
   // tagged salesOnly in the first place.
-  const coreNav = NAV_CORE.filter(n => {
+  const coreNav = isGovernance ? [] : NAV_CORE.filter(n => {
     if ((n as any).fieldOnly && !isFieldRole) return false
     if ((n as any).salesOnly && (isSDM || isHR)) return false
     if (n.to === '/gamification' && canSeeTeam) return false
@@ -158,7 +182,7 @@ export default function Layout() {
     manager: 'Manager', service_delivery_manager: 'Service Delivery Manager',
     regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
     practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', coo: 'COO', ceo: 'CEO',
-    super_admin: 'Super Admin',
+    super_admin: 'Super Admin', governance: 'Governance',
   }
 
   // Org label — role-aware, region-aware, never hardcoded
@@ -168,7 +192,7 @@ export default function Layout() {
     // entirely for these scopes (hr/finance = "all users", coo = scope="all"
     // same as ceo/super_admin), so showing a single region/business here
     // would misrepresent what they actually see.
-    if (['ceo', 'super_admin', 'coo', 'hr', 'finance'].includes(r)) return 'All Regions · All Businesses'
+    if (['ceo', 'super_admin', 'coo', 'hr', 'finance', 'governance'].includes(r)) return 'All Regions · All Businesses'
     if (r === 'business_head') return `${user?.business?.toUpperCase() ?? 'fluidPro'} · Global`
     const region = user?.region || user?.bu
     return region ? `${region} · ${user?.business ?? 'fluidPro'}` : 'fluidPro'
@@ -190,6 +214,17 @@ export default function Layout() {
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-0.5">
+          {isGovernance ? (
+            // Governance sees ONLY its own validation queue — no Dashboard/
+            // Sales/Revenue/Team nav at all, since none of it applies (no
+            // data entry) and several of those screens carry the exact
+            // financial figures this role must never see.
+            <>
+              <NavSection label="Validation" />
+              <SideLink {...NAV_GOVERNANCE} />
+            </>
+          ) : (
+          <>
           <NavSection label="My Work" />
           {coreNav.map(item => (
             <SideLink key={item.to} {...item}
@@ -226,6 +261,7 @@ export default function Layout() {
               {canSeeFGA     && <SideLink {...NAV_FGA} />}
               {canSeeFGA     && <SideLink {...NAV_SCHEME_WINNERS} />}
               {canSeeActivityLogs && <SideLink {...NAV_ACTIVITY_LOGS} />}
+              {canSeeFeedbackInbox && <SideLink {...NAV_FEEDBACK} badge={feedbackPendingCount} />}
             </>
           )}
 
@@ -241,6 +277,8 @@ export default function Layout() {
               <NavSection label="Admin" />
               <SideLink {...NAV_HEALTH} />
             </>
+          )}
+          </>
           )}
         </nav>
 
@@ -321,8 +359,8 @@ export default function Layout() {
       ══════════════════════════════════════════════════════════════ */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-wep-border flex overflow-x-auto z-40"
         style={{ boxShadow: '0 -2px 16px rgba(26,11,46,0.10)' }}>
-        {coreNav.slice(0, 5).map(item => (
-          <NavLink key={item.to} to={item.to} end={'exact' in item ? item.exact : undefined}
+        {(isGovernance ? [NAV_GOVERNANCE] : coreNav.slice(0, 5)).map(item => (
+          <NavLink key={item.to} to={item.to} end={'exact' in item ? (item as any).exact : undefined}
             className={({ isActive }) =>
               `flex-1 min-w-[60px] shrink-0 flex flex-col items-center py-2 gap-0.5 text-[10px] font-medium transition-colors
                ${isActive ? 'text-brand-pink' : 'text-wep-muted'}`
@@ -332,6 +370,9 @@ export default function Layout() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Global feedback capture — every logged-in role, every screen */}
+      <FeedbackWidget />
 
       {showWarning && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4"

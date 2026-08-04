@@ -27,6 +27,24 @@ class Settings(BaseSettings):
     def email_configured(self) -> bool:
         return bool(self.SMTP_USER and self.SMTP_PASSWORD)
 
+    # ── Feedback → Jira (optional) ────────────────────────────────────────────
+    # In-app "Report an issue/idea" capture always works and always alerts
+    # super_admin/ceo by email (reuses the SMTP config above — no separate
+    # setup). Filing the matching Jira issue is a bonus on top: if these are
+    # left blank, feedback still saves and still alerts, it just won't have a
+    # Jira link. Get JIRA_API_TOKEN from
+    # https://id.atlassian.com/manage-profile/security/api-tokens (free Jira
+    # Cloud account, up to 10 users, no cost).
+    JIRA_BASE_URL:    str = ""   # e.g. https://yourorg.atlassian.net
+    JIRA_EMAIL:       str = ""   # Jira account email used to authenticate
+    JIRA_API_TOKEN:   str = ""
+    JIRA_PROJECT_KEY: str = ""   # e.g. "FGO"
+    JIRA_ISSUE_TYPE:  str = "Task"
+
+    @property
+    def jira_configured(self) -> bool:
+        return bool(self.JIRA_BASE_URL and self.JIRA_EMAIL and self.JIRA_API_TOKEN and self.JIRA_PROJECT_KEY)
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]

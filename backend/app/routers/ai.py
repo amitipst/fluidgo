@@ -82,13 +82,16 @@ async def generate_dashboard_insight(user_id: str):
     async with AsyncSessionLocal() as db:
         uid = uuid.UUID(user_id)
         try:
+            # Seed rows excluded — otherwise the AI coaching insight for a real
+            # rep (e.g. danish@fluidpro.in, who has seed_v3.py data attached
+            # to their real account) would be generated from fake activity.
             result = await db.execute(
-                select(DSRDaily).where(DSRDaily.user_id == uid)
+                select(DSRDaily).where(DSRDaily.user_id == uid, DSRDaily.is_seed == False)
                 .order_by(DSRDaily.date.desc()).limit(20)
             )
             dsrs = result.scalars().all()
             meet_result = await db.execute(
-                select(Meeting).where(Meeting.user_id == uid)
+                select(Meeting).where(Meeting.user_id == uid, Meeting.is_seed == False)
                 .order_by(Meeting.date.desc()).limit(10)
             )
             meetings = meet_result.scalars().all()
@@ -220,7 +223,7 @@ async def generate_team_insight(manager_id: str):
             lines = []
             for u in team:
                 dsrs = (await db.execute(
-                    select(DSRDaily).where(DSRDaily.user_id == u.id)
+                    select(DSRDaily).where(DSRDaily.user_id == u.id, DSRDaily.is_seed == False)
                     .order_by(DSRDaily.date.desc()).limit(20)
                 )).scalars().all()
                 working = [d for d in dsrs if d.status == "working"]

@@ -16,6 +16,10 @@ export type Role =
   | 'finance'
   | 'ceo'
   | 'super_admin'
+  // Validates DSR/DMR/DOR/FGA submission compliance org-wide — no data
+  // entry, no approval authority, no visibility into revenue/incentive/
+  // score figures (see backend can_see_financials() / deny_governance()).
+  | 'governance'
 
 export type OrgRoleKey =
   | 'sales' | 'presales' | 'service_delivery' | 'manager' | 'bu_head'

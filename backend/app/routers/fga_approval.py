@@ -26,7 +26,7 @@ from typing import Optional, Literal
 import uuid
 from app.database import get_db
 from app.models import User, role_level
-from app.services.deps import get_current_user, require_level
+from app.services.deps import get_current_user, require_level, deny_governance
 from app.services.permission_service import resolve_visible_user_ids
 from app.repositories import scoring_repo
 
@@ -227,6 +227,10 @@ async def list_pending(period: str, db: AsyncSession = Depends(get_db),
 async def manager_review(result_id: str, body: ReviewAction,
                          db: AsyncSession = Depends(get_db),
                          user: User = Depends(require_level(20))):
+    # FGA's manager→HR→VP chain is real approval authority with score
+    # visibility baked into the response below — governance validates via
+    # POST /governance/fga/{id}/review instead, which never sees the score.
+    deny_governance(user)
     from app.models import ScoringResult
     r = await _get_result(db, result_id)
     if r.approval_status != "pending_manager":
@@ -304,20 +308,34 @@ async def vp_approve(result_id: str, body: ReviewAction,
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/export")
-async def export_approved(period: str, db: AsyncSession = Depends(get_db),
-                          user: User = Depends(require_level(20))):
-    """Returns all approved FGA scores for a period — Finance downloads this."""
+async def export_approved(
+    period: str,
+    status: Literal["approved", "pending", "disputed", "all"] = "approved",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_level(20)),
+):
+    """Returns FGA scores for a period as CSV — defaults to approved-only
+    (Finance's original payroll download, unchanged behavior). status=
+    pending/disputed/all extend this to cover the report/export gap flagged
+    2026-07-26 (the on-screen FGA Approval page only ever showed one
+    period's live queue with no download of the fuller picture). Contains
+    real score figures — governance is explicitly blocked (see
+    deny_governance) regardless of its level clearing require_level(20)."""
+    deny_governance(user)
     from app.models import ScoringResult
     from fastapi.responses import StreamingResponse
     import csv, io
 
     visible_ids = await resolve_visible_user_ids(db, user)
-    results = (await db.execute(
-        select(ScoringResult).where(
-            ScoringResult.period == period,
-            ScoringResult.approval_status == "approved"
-        )
-    )).scalars().all()
+    q = select(ScoringResult).where(ScoringResult.period == period)
+    if status == "approved":
+        q = q.where(ScoringResult.approval_status == "approved")
+    elif status == "pending":
+        q = q.where(ScoringResult.approval_status.in_(["pending_manager", "pending_hr", "pending_vp"]))
+    elif status == "disputed":
+        q = q.where(ScoringResult.approval_status == "disputed")
+    # status == "all" → no filter
+    results = (await db.execute(q)).scalars().all()
 
     rows = []
     for r in results:
@@ -330,6 +348,7 @@ async def export_approved(period: str, db: AsyncSession = Depends(get_db),
             "name": rep.name, "email": rep.email, "role": rep.role,
             "region": getattr(rep, "region", None) or rep.bu,
             "period": r.period,
+            "approval_status": r.approval_status,
             "fga_score": float(r.override_score or r.score),
             "raw_score": float(r.score),
             "overridden": r.override_score is not None,
@@ -350,7 +369,7 @@ async def export_approved(period: str, db: AsyncSession = Depends(get_db),
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=fga_approved_{period}.csv"}
+        headers={"Content-Disposition": f"attachment; filename=fga_{status}_{period}.csv"}
     )
 
 

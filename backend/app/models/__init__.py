@@ -57,6 +57,24 @@ ROLE_HIERARCHY: dict[str, dict] = {
     # data/integrations using this string keep working. Do not assign this
     # role to new users; use "regional_manager" instead.
     "bu_head":            {"level": 30, "scope": "region"},
+    # Governance — validates DSR/DMR/DOR/FGA submission compliance org-wide
+    # (scope="all", same visibility reach as coo/ceo/super_admin below) but
+    # is deliberately given NO visibility into money: `can_see_financials`
+    # is the first entry in ROLE_HIERARCHY to actually be set to False (see
+    # can_see_financials() below — every other role defaults to True via
+    # .get(), so this is a pure opt-out, zero behavior change for anyone
+    # else). This decouples "whose records can I see" (scope/level) from
+    # "can I see revenue/incentive/target numbers" (can_see_financials) —
+    # before this role existed those two were the same axis everywhere in
+    # the codebase (see 2026-07-26 audit, fluidgo-data-quality doc §8.2).
+    # Governance never submits its own DSR/DOR/FGA and never has approval
+    # authority over them — those are enforced as explicit role checks in
+    # the relevant routers (dsr.py, dor.py, fga_approval.py, incentives.py,
+    # analytics.py), NOT by this level number, precisely because a single
+    # numeric threshold can't express "can view broadly, can't approve,
+    # can't see money" all at once. Level 35 (between regional_manager/30
+    # and business_head/40) is descriptive of seniority only.
+    "governance":         {"level": 35, "scope": "all", "can_see_financials": False},
     # business_head == practice_head (same level, same scope) — heads ONE
     # business line (fluidpro/fluidprint/floxtax/hooks) across ALL its regions.
     "business_head":  {"level": 40, "scope": "business"},
@@ -73,6 +91,13 @@ def can_manage_targets(role: str) -> bool: return role_level(role) >= 20
 def can_see_team(role: str) -> bool: return role_level(role) >= 20 or role in ("hr","finance")
 def can_see_all_bu(role: str) -> bool: return role_level(role) >= 30
 def is_cross_org(role: str) -> bool: return role_level(role) >= 45
+# Independent of role_level/scope on purpose — see the "governance" entry's
+# comment above. Every role defaults to True (.get(..., True)) so adding
+# this axis changes nothing for any existing role; only "governance" opts
+# out. Callers that return revenue/incentive/target/score figures should
+# gate on this, not on role_level, since level also controls unrelated
+# visibility scope.
+def can_see_financials(role: str) -> bool: return ROLE_HIERARCHY.get(role, {}).get("can_see_financials", True)
 
 # ── Gamification models ───────────────────────────────────────────────────────
 class IncentiveScheme(Base):
@@ -189,6 +214,18 @@ class DSRDaily(Base):
     edit_request_reason: Mapped[str]      = mapped_column(String(500), nullable=True)
     edit_requested_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     edit_granted_until:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ── Seed-data marker ──────────────────────────────────────────────────────
+    # True for rows created by seed_v3.py/seed.py (or backfilled true for
+    # anything dated before the 2026-07-04 go-live cutoff). Default-excluded
+    # from Analytics/DSR list & approval queries; recoverable via
+    # include_seed=true for admins. See migration 0027.
+    is_seed:          Mapped[bool]        = mapped_column(Boolean, default=False, server_default="false")
+    # ── Governance review (parallel compliance checkpoint, not an approval
+    # stage — see migration 0030) ────────────────────────────────────────────
+    governance_reviewed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    governance_reviewed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    governance_flag:        Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    governance_comment:     Mapped[str]       = mapped_column(Text, nullable=True)
 
 class SelfScore(Base):
     __tablename__ = "self_scores"
@@ -230,6 +267,8 @@ class Meeting(Base):
     status:               Mapped[str]       = mapped_column(String(20), default="logged", server_default="logged")
     converted_to_lead_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Seed-data marker — see DSRDaily.is_seed above and migration 0027.
+    is_seed:          Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -249,6 +288,10 @@ class Lead(Base):
     source_meeting_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # meeting this lead came from
     converted_to_deal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # deal this lead became
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # See migration 0029 — same is_seed pattern as DSRDaily/Meeting (0027).
+    # seed_v3.py creates placeholder leads too; this excludes them from
+    # funnel/analytics counts by default.
+    is_seed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 class PipelineDeal(Base):
     """Doubles as the 'Opportunity' entity for v2 — extended in place rather than
@@ -335,6 +378,11 @@ class PipelineDeal(Base):
     archived:    Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     archived_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
     archived_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # ── Seed-data flag (see migration 0029 — same pattern as DSRDaily/Meeting,
+    # migration 0027). Distinct from `archived`: archived is an admin action on
+    # a real deal; is_seed marks a deal seed_v3.py created that was never real
+    # in the first place. Both get excluded from analytics/scoring by default.
+    is_seed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 class PipelineUpdate(Base):
     """Append-only remark history for a pipeline deal. `todays_update`/`next_step`
@@ -458,6 +506,11 @@ class DORDaily(Base):
     approved_by:            Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     approved_at:            Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
     manager_comment:        Mapped[str]       = mapped_column(String(500), nullable=True)
+    # ── Governance review — see DSRDaily's identical block + migration 0030 ──
+    governance_reviewed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    governance_reviewed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    governance_flag:        Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    governance_comment:     Mapped[str]       = mapped_column(Text, nullable=True)
 
 class Account(Base):
     """CSG Phase 1 — the persistent customer identity that Sales pipeline
@@ -501,6 +554,14 @@ class ScoringResult(Base):
     manager_reviewed_at:   Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
     hr_reviewed_at:        Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
     vp_reviewed_at:        Mapped[datetime]   = mapped_column(DateTime(timezone=True), nullable=True)
+    # ── Governance review — see DSRDaily's identical block + migration 0030.
+    # Deliberately separate from the manager/HR/VP approval chain above:
+    # governance validates that a score was submitted/reviewed on time, not
+    # the score itself (which it never sees — see can_see_financials()). ──
+    governance_reviewed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    governance_reviewed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    governance_flag:        Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    governance_comment:     Mapped[str]       = mapped_column(Text, nullable=True)
 
 class RevenueTarget(Base):
     """Config-driven targets — no hardcoded target values anywhere in code.
@@ -540,3 +601,25 @@ class PasswordResetToken(Base):
     expires_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=False)
     used_at:    Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class Feedback(Base):
+    """In-app 'Report an issue / suggest an idea' capture. Always saves and
+    always alerts super_admin/ceo by email — Jira filing is a bonus on top
+    when JIRA_* settings are configured (see config.jira_configured); if not,
+    this table alone is the system of record and the admin inbox (GET
+    /api/feedback) is how issues get triaged."""
+    __tablename__ = "feedback"
+    id:              Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    role:            Mapped[str]       = mapped_column(String(30))           # snapshot of reporter's role at time of filing
+    category:        Mapped[str]       = mapped_column(String(20))           # bug | idea | question | other
+    message:         Mapped[str]       = mapped_column(Text)
+    page_context:    Mapped[str]       = mapped_column(String(120), nullable=True)  # e.g. "Submit DSR" — which screen they were on
+    status:          Mapped[str]       = mapped_column(String(20), default="open", server_default="open")  # open | in_progress | resolved | wont_fix
+    jira_issue_key:  Mapped[str]       = mapped_column(String(30), nullable=True)   # e.g. "FGO-42"
+    jira_issue_url:  Mapped[str]       = mapped_column(String(255), nullable=True)
+    jira_sync_error: Mapped[str]       = mapped_column(Text, nullable=True)         # set if Jira filing failed — feedback itself is never lost
+    created_at:      Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    reviewed_at:     Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by:     Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)

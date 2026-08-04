@@ -25,8 +25,10 @@ import SchemeWinners from '@/pages/SchemeWinners'
 import ActivityLogs from '@/pages/ActivityLogs'
 import Gamification from '@/pages/Gamification'
 import Help from '@/pages/Help'
+import FeedbackInbox from '@/pages/FeedbackInbox'
 import DOREntry from '@/pages/DOREntry'
 import ManualKPIEntry from '@/pages/ManualKPIEntry'
+import Governance from '@/pages/Governance'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Toaster from '@/components/Toaster'
 import './index.css'
@@ -50,6 +52,8 @@ function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?
 const MANAGER_ROLES = ['manager','regional_manager','bu_head','business_head','ceo','super_admin']
 const MGMT_FINANCE  = [...MANAGER_ROLES, 'hr', 'finance']
 const KPI_ENTRY_ROLES = [...MANAGER_ROLES, 'service_delivery_manager', 'rep', 'inside_sales', 'pre_sales']
+// Matches backend feedback.py's REVIEW_LEVEL (role_level >= 40)
+const FEEDBACK_ADMIN_ROLES = ['business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -78,6 +82,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="pipeline"      element={<Pipeline />} />
               <Route path="opportunities" element={<Opportunities />} />
               <Route path="help"          element={<Help />} />
+              <Route path="feedback" element={
+                <ProtectedRoute roles={FEEDBACK_ADMIN_ROLES}>
+                  <FeedbackInbox />
+                </ProtectedRoute>
+              } />
               <Route path="analytics"     element={<Analytics />} />
               <Route path="gamification"  element={<Gamification />} />
               {/* Service Delivery */}
@@ -131,6 +140,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="system-health" element={
                 <ProtectedRoute roles={['super_admin']}>
                   <SystemHealth />
+                </ProtectedRoute>
+              } />
+              {/* Governance — validation-only, no data entry, no financial
+                  visibility (see backend can_see_financials()/deny_governance()) */}
+              <Route path="governance" element={
+                <ProtectedRoute roles={['governance', 'super_admin']}>
+                  <Governance />
                 </ProtectedRoute>
               } />
             </Route>

@@ -40,7 +40,8 @@ async def _metric_revenue_target_achievement_pct(db: AsyncSession, user: User, p
     start, end = _period_bounds(period)
     result = await db.execute(
         select(PipelineDeal).where(PipelineDeal.user_id == user.id, PipelineDeal.stage == "closed_won",
-                                    PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end)
+                                    PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+                                    PipelineDeal.archived == False, PipelineDeal.is_seed == False)
     )
     won = sum(float(d.deal_value or 0) for d in result.scalars().all())
     return min(100.0, (won / float(target.target_amount)) * 100)
@@ -49,7 +50,8 @@ async def _metric_revenue_target_achievement_pct(db: AsyncSession, user: User, p
 async def _metric_activity_rigor_avg(db: AsyncSession, user: User, period: str) -> float:
     start, end = _period_bounds(period)
     result = await db.execute(
-        select(DSRDaily).where(DSRDaily.user_id == user.id, DSRDaily.date >= start, DSRDaily.date <= end)
+        select(DSRDaily).where(DSRDaily.user_id == user.id, DSRDaily.date >= start, DSRDaily.date <= end,
+                                DSRDaily.is_seed == False)
     )
     dsrs = [d for d in result.scalars().all() if d.status == "working"]
     return (sum(calculate_rigor_score(d) for d in dsrs) / len(dsrs)) if dsrs else 0.0
@@ -58,7 +60,8 @@ async def _metric_activity_rigor_avg(db: AsyncSession, user: User, period: str) 
 async def _metric_activity_dsr_compliance_pct(db: AsyncSession, user: User, period: str) -> float:
     start, end = _period_bounds(period)
     result = await db.execute(
-        select(DSRDaily).where(DSRDaily.user_id == user.id, DSRDaily.date >= start, DSRDaily.date <= end)
+        select(DSRDaily).where(DSRDaily.user_id == user.id, DSRDaily.date >= start, DSRDaily.date <= end,
+                                DSRDaily.is_seed == False)
     )
     submitted = len(result.scalars().all())
     calendar_days = (end - start).days + 1
@@ -68,7 +71,8 @@ async def _metric_activity_dsr_compliance_pct(db: AsyncSession, user: User, peri
 async def _metric_pipeline_bant_avg(db: AsyncSession, user: User, period: str) -> float:
     start, end = _period_bounds(period)
     result = await db.execute(
-        select(Meeting).where(Meeting.user_id == user.id, Meeting.date >= start, Meeting.date <= end)
+        select(Meeting).where(Meeting.user_id == user.id, Meeting.date >= start, Meeting.date <= end,
+                               Meeting.is_seed == False)
     )
     meetings = result.scalars().all()
     return (sum(bant_score(m)["closure_pct"] for m in meetings) / len(meetings)) if meetings else 0.0
@@ -94,9 +98,12 @@ async def _metric_presales_support_activity_pct(db: AsyncSession, user: User, pe
     active = await db.execute(
         select(PipelineDeal).where(PipelineDeal.presales_owner_id == user.id,
                                     PipelineDeal.last_activity_at.isnot(None),
-                                    PipelineDeal.last_activity_at >= start, PipelineDeal.last_activity_at <= end)
+                                    PipelineDeal.last_activity_at >= start, PipelineDeal.last_activity_at <= end,
+                                    PipelineDeal.archived == False, PipelineDeal.is_seed == False)
     )
-    total = await db.execute(select(PipelineDeal).where(PipelineDeal.presales_owner_id == user.id))
+    total = await db.execute(select(PipelineDeal).where(
+        PipelineDeal.presales_owner_id == user.id,
+        PipelineDeal.archived == False, PipelineDeal.is_seed == False))
     total_n = len(total.scalars().all())
     return min(100.0, (len(active.scalars().all()) / total_n) * 100) if total_n else 0.0
 
@@ -104,7 +111,8 @@ async def _metric_presales_support_activity_pct(db: AsyncSession, user: User, pe
 async def _metric_presales_win_rate_pct(db: AsyncSession, user: User, period: str) -> float:
     result = await db.execute(
         select(PipelineDeal).where(PipelineDeal.presales_owner_id == user.id,
-                                    PipelineDeal.stage.in_(["closed_won", "closed_lost"]))
+                                    PipelineDeal.stage.in_(["closed_won", "closed_lost"]),
+                                    PipelineDeal.archived == False, PipelineDeal.is_seed == False)
     )
     deals = result.scalars().all()
     if not deals:
