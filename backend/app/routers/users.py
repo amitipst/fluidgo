@@ -85,12 +85,28 @@ def _can_create_role(actor_role: str, target_role: str) -> bool:
 @router.get("")
 async def list_users(
     include_inactive: bool = False,
+    direct_reports_only: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_level(20))
 ):
     """Returns users visible to the current user's scope.
-    Manager → their team, BU Head → their BU, CEO → everyone."""
-    visible = await resolve_visible_user_ids(db, user)
+    Manager → their team, BU Head → their BU, CEO → everyone.
+
+    direct_reports_only=true narrows to just this user's own manager_id
+    reportees via resolve_direct_report_ids — no scope/region fallback.
+    Use this (not the default scope) for screens where the action is a
+    WRITE on someone else's behalf (e.g. Manual KPI Entry): the default
+    "team" scope falls back to "everyone in my region+business" for a
+    freshly-assigned manager with no bound reports yet, which is a
+    reasonable default for read-only dashboards but wrong for an entry
+    screen — it would let a manager pick and edit KPIs for people who
+    aren't actually their reports. Returns an empty list (not everyone)
+    when the manager has zero bound reports."""
+    if direct_reports_only:
+        from app.services.permission_service import resolve_direct_report_ids
+        visible = await resolve_direct_report_ids(db, user)
+    else:
+        visible = await resolve_visible_user_ids(db, user)
     query = select(User)
     if visible is not None:
         query = query.where(User.id.in_(visible))

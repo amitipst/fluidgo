@@ -28,14 +28,24 @@ export default function ManualKPIEntry() {
   const isManagerTier = ['manager', 'service_delivery_manager', 'regional_manager', 'bu_head',
     'business_head', 'coo', 'ceo', 'super_admin'].includes(user?.role ?? '')
 
-  // Team members whose role has a manual-entry FGA template (self always included)
-  const { data: allUsers = [] } = useQuery({
-    queryKey: ['users-for-kpi-entry'],
-    queryFn: () => api.get('/users').then(r => r.data),
+  // Only this user's OWN bound reportees (manager_id chain, direct only) —
+  // deliberately NOT the general /users visibility list, which falls back
+  // to "everyone in my region+business" for a manager with no reports
+  // bound yet. That fallback is fine for read-only dashboards but wrong
+  // here: this screen lets you WRITE KPI values on someone else's behalf,
+  // so it must never show people who aren't actually your reports.
+  const { data: directReports = [] } = useQuery({
+    queryKey: ['direct-reports-for-kpi-entry'],
+    queryFn: () => api.get('/users', { params: { direct_reports_only: true } }).then(r => r.data),
     enabled: isManagerTier,
   })
-  const targets = isManagerTier
-    ? allUsers.filter((u: any) => u.role in ROLE_TO_SCORING_KEY || u.id === user?.id)
+  const reportTargets = directReports.filter((u: any) => u.role in ROLE_TO_SCORING_KEY)
+  // Dropdown only appears when there's actually someone to pick — a
+  // manager-tier role with zero bound reports (or none with a manual-entry
+  // template) sees the exact same self-only view as an individual
+  // contributor, never a company-wide list.
+  const targets = reportTargets.length > 0
+    ? [{ id: user?.id, name: user?.name, role: user?.role }, ...reportTargets]
     : [{ id: user?.id, name: user?.name, role: user?.role }]
 
   const targetUser = targets.find((u: any) => u.id === targetUserId) ??
