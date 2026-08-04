@@ -1068,3 +1068,62 @@ cleaned up from the dev DB afterward.
 meeting_purpose/attendees yet, no MOM review UI) — backend-first per this
 session's usual pattern, frontend as a follow-up. No DSR/DOR-side UI change
 yet to surface the linked-meetings count either.
+
+
+## 2026-08-04 (same day, continued 7) — PR #11 merged to develop; no tag yet
+
+Merged CSG Phase 2 (PR #11) into `develop` — fast-forward, clean. Per Amit:
+staying on `develop` without tagging yet is deliberate ("as per release
+management we can always control the version-wise development and
+testing") — `develop` keeps taking CSG Phase 2 frontend + any Phase 3 work
+before the next version tag/release checkpoint, matching the existing
+CHANGELOG.md convention (feature branches -> PR to develop -> ... -> PR
+develop to main -> tag). Also deleted 3 now-fully-merged stale remote
+branches (`feature/csg-phase2-meeting-management`,
+`docs/billing-lock-correction`, `fix/readme-stale-credentials`) — repo is
+back down to just `main` + `develop`.
+
+`develop` is currently ahead of `main`/`v1.2.0` by the CSG Phase 2 backend
+work. Not deployed anywhere (deploy still on hold pending the new UAT
+instance, per R0).
+
+
+## 2026-08-04 (same day, continued 8) — CSG Phase 2 frontend
+
+Built on `feature/csg-phase2-frontend` off `develop`. Adds the UI for the
+Phase 2 backend (PR #11):
+
+- `Meetings.tsx`: the log-meeting form now branches on a `isDeliveryMode`
+  flag (SDM role, or a `?source=service_delivery` query param — the latter
+  matters because managers can also reach `/dor`, so a role-only check
+  would land them in the wrong form) — Delivery mode swaps BANT
+  qualification for a Purpose dropdown (QBR/Cadence Review/Escalation
+  Review/Delivery Review/General) and hides the Sales-only "mark as
+  opportunity"/"convert to lead" affordances entirely, rather than showing
+  them disabled or irrelevant.
+- New `MeetingMomSection` component on each meeting card: generate (calls
+  `POST /generate-mom`), view (rendered via a new shared
+  `lib/markdown.ts` lite-renderer — same regex-based approach already used
+  on Dashboard.tsx's AI insight panel, reused instead of adding a markdown
+  library dependency for one feature), edit, and finalize (`PATCH /mom`).
+  Explicit "AI draft — please review before finalizing" notice while
+  `mom_status=generated` and unedited.
+- `DOREntry.tsx`: new "🤝 Client Meetings" card once a DOR row exists,
+  showing the real linked-meeting count against `client_meetings_held`
+  (the disconnect the backend fixed) with a "+ Log a meeting" link into
+  Meetings.tsx (pre-set to Delivery mode + the client account name).
+  Deliberately a link, not a duplicate inline form — DOR/DSR both point
+  at the one real meeting-logging surface instead of copy-pasting form
+  logic three times.
+
+**Verified:** `npx tsc --noEmit` — zero errors. Frontend hot-reloaded
+cleanly in the dev stack, no console/build errors. Not yet clicked through
+manually in a browser (no browser access to the dev box from this
+session) — Amit to sanity-check on next login before this merges.
+
+**Deferred for a later pass:** `attendees` has no UI yet (backend accepts
+it; kept out of the form for now per progressive-disclosure — the form
+was getting crowded). No equivalent "linked meetings" card added to
+DSREntry.tsx/DSRHistory.tsx yet — would need either an aggregate backend
+endpoint or accepting N+1 queries across a potentially long history list;
+not worth it for this PR, worth revisiting if reps ask for it.

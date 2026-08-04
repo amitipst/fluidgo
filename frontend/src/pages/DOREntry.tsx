@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import api from '@/hooks/useApi'
 
 const STATUS_OPTS = [
@@ -82,6 +83,17 @@ export default function DOREntry() {
       setFlagResult(r.data)
       setFlagNotes(''); setFlagValue('')
     },
+  })
+
+  // CSG Phase 2 — "Client meetings held" above is a manually-typed count;
+  // this shows what's actually logged behind it (Meeting rows linked via
+  // dor_id, auto-resolved server-side when a meeting is saved for this
+  // user+date), same fix as the DSR↔Meeting disconnect. Fetches only once
+  // this DOR row has an id (i.e. after first save).
+  const { data: linkedMeetings = [] } = useQuery({
+    queryKey: ['dor-linked-meetings', form.id],
+    queryFn: () => api.get(`/meetings?dor_id=${form.id}`).then(r => r.data),
+    enabled: !!form.id,
   })
 
   return (
@@ -184,6 +196,22 @@ export default function DOREntry() {
           </button>
         </div>
       </div>
+
+      {form.id && (
+        <div className="card mt-4 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="font-semibold text-sm text-wep-navy">🤝 Client Meetings</div>
+            <div className="text-xs text-wep-muted">
+              {linkedMeetings.length} logged{form.client_meetings_held > linkedMeetings.length &&
+                ` (${form.client_meetings_held} claimed above — log them to back that number up, and to get an AI MOM for each)`}
+            </div>
+          </div>
+          <Link to={`/meetings?source=service_delivery&open=1${form.client_account ? `&company=${encodeURIComponent(form.client_account)}` : ''}`}
+            className="btn-outline text-xs px-3 py-1.5 shrink-0">
+            + Log a meeting
+          </Link>
+        </div>
+      )}
 
       {form.id && (
         <div className="card mt-4">
