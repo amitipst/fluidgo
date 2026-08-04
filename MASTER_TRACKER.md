@@ -1355,3 +1355,69 @@ root after use, never committed.
 `feature/csg-phase2-frontend`, all 6 commits pushed. Not yet merged to
 `develop`/`main` or deployed — that's Amit's call on timing, not assumed
 here.
+
+## 2026-08-04 (cont'd 2) — Stale-frontend diagnosis + Rambo-AI-Frontend review pass
+
+Amit shared 8 screenshots showing the OLD UI (governance sidebar missing
+the new Meetings link) and asked for a review via `/rambo-ai-frontend
+/rambo-ai-qa`.
+
+**Root cause of the stale UI:** not a code, build, or routing bug.
+Docker Desktop on Windows does not reliably forward native filesystem
+change events from the `./frontend:/app` bind mount into the container's
+inotify, so Vite's default `fs.watch`-based HMR can go stale even though
+a fresh page load/hard-refresh would already serve current code (Vite
+transforms modules per-request from disk, not from a cached snapshot).
+Ruled out bind-mount desync (confirmed new code was present in-container
+via `docker compose exec grep`) and nginx misrouting/caching (reviewed
+`nginx/dev.conf`, confirmed correct proxy/WS headers, no cache
+directives, no decoy stack on port 80) before landing on this. Fixed via
+`vite.config.ts`'s `server.watch.usePolling`, commit `df228f9`.
+
+**Rambo-AI-Frontend review** (against `fluidgo-mom-uiux-spec.md` +
+WCAG 2.1 AA) of `MeetingDetail.tsx`/`Meetings.tsx`/`Layout.tsx` found 6
+concrete, file:line-referenced gaps — fixed and committed same session
+(`f1b64c2`, pushed):
+
+1. `SendMomModal` had none of the focus-trap/Escape/focus-restore
+   behavior spec Sec4.5/Sec5 explicitly required. Added `role="dialog"`,
+   `aria-modal`, `aria-labelledby`, a real focus trap.
+2. "Attach as" radios used `className="hidden"` (`display:none`),
+   removing them from the tab order — keyboard users could not pick
+   PDF/Word/Inline at all. Switched to `sr-only` + added the missing
+   `name` attribute (radios weren't even grouped).
+3. Attendee chip click-to-edit was a bare `<span onClick>` — mouse-only.
+   Added `role="button"`, `tabIndex`, Enter/Space handling.
+4. Chip remove (`×`) button was 24×24px vs. spec's explicit ≥44×44px
+   touch-target requirement. Kept the compact visual chip, added an
+   invisible hit-slop overlay to reach 44×44 without resizing it.
+5. Send modal's Subject `<label>` had no `htmlFor`/`id` pairing.
+6. Revision History showed "No changes recorded yet" while still
+   loading — indistinguishable from a genuinely-empty history. Added its
+   own `isLoading` state.
+
+`tsc --noEmit` clean; verified the running dev server actually serves
+this content (not another stale-HMR false alarm) via a direct
+in-container fetch of Vite's own module endpoint.
+
+**Flagged, not fixed this session** (bigger surface, needs Amit's
+prioritization call before more scope goes in):
+- Spec Sec4.2's "Us"-side org-directory autocomplete — not implemented at
+  all; both attendee sides are free-text only today.
+- Spec Sec4.3's discussion-point Responsibility-name autocomplete against
+  attendee chips — not implemented.
+- **Zero automated test coverage** for any MOM extension endpoint
+  (attendees, discussion_points, generate-mom, revisions, export, send)
+  or for `MeetingDetail.tsx` — confirmed empirically (`vertical_slice_test.py`
+  / `test_endpoints.py` have zero references to `discussion_points`,
+  `generate-mom`, `/send`, `/export`, `revisions`, or `attendees`; the
+  frontend has no `.spec`/`.test` files at all, so this is inherited debt
+  the feature adds to, not something unique to it). Rambo-AI-QA
+  recommendation: prioritize backend RBAC tests for
+  `deny_governance()` on generate-mom/update-mom/patch/send first (a
+  permission regression there is a real data-leak risk), then
+  export/send integration tests, before frontend component tests.
+
+**Status:** still code-complete on `feature/csg-phase2-frontend`
+(6 feature commits + this fix, all pushed). Not yet merged to
+`develop`/`main` or deployed — Amit's call on timing.
