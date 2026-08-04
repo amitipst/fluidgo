@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
@@ -97,16 +97,29 @@ function AttendeeChipInput({ side, attendees, onChange, readOnly }: {
         return (
           <span key={`${a.name}-${a.email ?? idx}`}
             onClick={() => !readOnly && editAt(idx)}
+            role={!readOnly ? 'button' : undefined}
+            tabIndex={!readOnly ? 0 : undefined}
+            onKeyDown={e => {
+              if (readOnly) return
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editAt(idx) }
+            }}
             className={`inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full text-xs font-medium border
               ${missingEmail ? 'border-wep-amber' : 'border-wep-border'} bg-wep-surface text-wep-text
-              ${!readOnly ? 'cursor-pointer hover:border-wep-border-strong' : ''}`}
+              ${!readOnly ? 'cursor-pointer hover:border-wep-border-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-pink' : ''}`}
             style={{ borderLeftWidth: 3, borderLeftColor: side === 'us' ? '#38BDF8' : '#F0115E' }}
             title={missingEmail ? 'Add an email to include in Send to Customer.' : undefined}>
             {missingEmail && <span aria-hidden>⚠️</span>}
             <span>{a.name}{a.email ? ` · ${a.email}` : ''}</span>
             {!readOnly && (
-              <button type="button" onClick={(e) => { e.stopPropagation(); removeAt(idx) }}
-                className="w-6 h-6 flex items-center justify-center rounded-full text-wep-muted hover:bg-wep-border/60 hover:text-wep-text leading-none">
+              <button type="button" aria-label={`Remove ${a.name}`}
+                onClick={(e) => { e.stopPropagation(); removeAt(idx) }}
+                className="relative w-6 h-6 flex items-center justify-center rounded-full text-wep-muted hover:bg-wep-border/60 hover:text-wep-text leading-none">
+                {/* Visual target stays compact (24px) to fit the chip; an
+                    invisible -10px hit-slop overlay brings the actual tap/
+                    click target to the spec's ≥44×44px minimum (WCAG 2.5.5
+                    "target size" — an expanded invisible hit area is an
+                    accepted technique, not just a visual resize). */}
+                <span className="absolute -inset-[10px]" aria-hidden="true" />
                 ×
               </button>
             )}
@@ -270,6 +283,48 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState('')
 
+  // Focus trap + Escape-to-close + focus restore — spec §4.5/§5 explicitly
+  // requires this ("the Send-to-Customer modal traps focus while open...
+  // and returns focus to the triggering button on close"); it wasn't wired
+  // up before. sendingRef mirrors `sending` so the keydown listener (bound
+  // once on mount) can read current state without re-binding on every
+  // keystroke of the form fields.
+  const modalRef = useRef<HTMLDivElement>(null)
+  const titleId = 'send-mom-modal-title'
+  const sendingRef = useRef(sending)
+  useEffect(() => { sendingRef.current = sending }, [sending])
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const getFocusable = () =>
+      Array.from(
+        modalRef.current?.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      ).filter(el => !el.hasAttribute('disabled'))
+
+    getFocusable()[0]?.focus()
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        if (!sendingRef.current) onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const items = getFocusable()
+      if (!items.length) return
+      const first = items[0], last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      previouslyFocused?.focus()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const missingEmailCustomers = attendees.filter(a => a.side === 'customer' && !a.email).length
 
   async function send() {
@@ -292,11 +347,12 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(26,11,46,0.55)', display: 'grid', placeItems: 'center', padding: 16 }}
       onClick={sending ? undefined : onClose}>
-      <div className="card" style={{ maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}
+      <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        className="card" style={{ maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-display font-bold text-lg text-wep-navy">Send Minutes to Customer</h3>
-          {!sending && <button onClick={onClose} className="text-wep-muted text-xl leading-none">×</button>}
+          <h3 id={titleId} className="font-display font-bold text-lg text-wep-navy">Send Minutes to Customer</h3>
+          {!sending && <button onClick={onClose} aria-label="Close" className="text-wep-muted text-xl leading-none">×</button>}
         </div>
 
         {missingEmailCustomers > 0 && (
@@ -315,17 +371,25 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
           <AttendeeChipInput side="us" attendees={cc} onChange={next => setCc(next)} readOnly={false} />
         </div>
 
-        <label className="form-label block mb-1 mt-3">Subject</label>
-        <input className="form-input" value={subject} onChange={e => setSubject(e.target.value)} />
+        <label htmlFor="send-mom-subject" className="form-label block mb-1 mt-3">Subject</label>
+        <input id="send-mom-subject" className="form-input" value={subject} onChange={e => setSubject(e.target.value)} />
 
-        <label className="form-label block mb-1 mt-3">Attach as</label>
-        <div className="flex gap-2">
+        <label id="attach-as-label" className="form-label block mb-1 mt-3">Attach as</label>
+        <div className="flex gap-2" role="radiogroup" aria-labelledby="attach-as-label">
           {[{ v: 'pdf', l: 'PDF' }, { v: 'docx', l: 'Word' }, { v: 'inline', l: 'Inline body only' }].map(o => (
-            <label key={o.v} className={`flex-1 text-center text-xs font-medium px-2 py-2 rounded-xl border cursor-pointer
+            <label key={o.v} className={`relative flex-1 text-center text-xs font-medium px-2 py-2 rounded-xl border cursor-pointer
               ${attachAs === o.v ? 'border-brand-pink bg-pink-50 text-brand-pink' : 'border-wep-border text-wep-muted'}`}>
-              <input type="radio" className="hidden" checked={attachAs === o.v}
+              {/* sr-only (not `hidden`/display:none) keeps the radio in the
+                  tab order and operable by keyboard/screen reader — `hidden`
+                  removed it from the tab order entirely, so Attach-as format
+                  could not be changed without a mouse. `name` groups the
+                  three as one native radiogroup (was previously unnamed, so
+                  arrow-key cycling and AT grouping didn't work either). */}
+              <input type="radio" name="attachAs" className="sr-only peer" checked={attachAs === o.v}
                 onChange={() => setAttachAs(o.v as 'pdf' | 'docx' | 'inline')} />
-              {o.l}
+              <span className="peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-brand-pink peer-focus-visible:outline-offset-2 rounded-lg block">
+                {o.l}
+              </span>
             </label>
           ))}
         </div>
@@ -356,7 +420,7 @@ export default function MeetingDetail() {
     enabled: !!id,
   })
 
-  const { data: revisions = [] } = useQuery({
+  const { data: revisions = [], isLoading: revisionsLoading } = useQuery({
     queryKey: ['meeting-revisions', id],
     queryFn: () => api.get(`/meetings/${id}/revisions`).then(r => r.data),
     enabled: !!id,
@@ -582,9 +646,11 @@ export default function MeetingDetail() {
         </button>
         {revOpen && (
           <div className="mt-2">
-            {revisions.length === 0
-              ? <p className="text-xs text-wep-muted">No changes recorded yet.</p>
-              : revisions.map((r: any) => <RevisionEntry key={r.id} r={r} />)}
+            {revisionsLoading
+              ? <p className="text-xs text-wep-muted">Loading revision history…</p>
+              : revisions.length === 0
+                ? <p className="text-xs text-wep-muted">No changes recorded yet.</p>
+                : revisions.map((r: any) => <RevisionEntry key={r.id} r={r} />)}
           </div>
         )}
       </div>
