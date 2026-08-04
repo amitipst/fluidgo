@@ -67,6 +67,31 @@ def _normalize_attendees(raw: Optional[list]) -> Optional[list]:
     return out
 
 
+def _format_discussion_points(points: Optional[list]) -> str:
+    """Renders the structured discussion_points list into the AI context
+    string that generate_mom() feeds to meeting_mom.txt. Returns "" (no
+    line at all) when there are none, so older meetings without this field
+    read exactly as they did before migration 0032 — the prompt is written
+    to work from free-text notes alone in that case.
+
+    Kept as a plain readable line-per-point block (not raw JSON/dict repr)
+    because phi3:mini follows a labeled list far more reliably than it
+    parses a Python dict literal — see the "Structured discussion points"
+    handling in meeting_mom.txt, which expects this exact heading string."""
+    if not points:
+        return ""
+    lines = ["Structured discussion points (owner, due date, status):"]
+    for p in points:
+        point = p.get("point", "")
+        owner = p.get("responsibility_name") or "Unassigned"
+        side = p.get("responsibility_side")
+        owner_label = f"{owner} ({side})" if side else owner
+        due = p.get("target_date") or "no date set"
+        status = p.get("status", "open")
+        lines.append(f"- {point} - owner: {owner_label}, due {due}, status: {status}")
+    return "\n".join(lines) + "\n"
+
+
 class MeetingIn(BaseModel):
     date: date
     company: str
@@ -384,7 +409,7 @@ async def generate_mom(meeting_id: str, request: Request, background_tasks: Back
         f"Meeting purpose: {m.meeting_purpose or 'not specified'}\n"
         f"Meeting type: {m.meeting_type}\n"
         f"Attendees: {m.attendees if m.attendees else 'not listed'}\n"
-        f"Discussion points: {m.discussion_points if m.discussion_points else 'not listed'}\n"
+        f"{_format_discussion_points(m.discussion_points)}"
         f"Notes:\n{m.discussion}"
     )
     before_summary = m.ai_mom_summary
