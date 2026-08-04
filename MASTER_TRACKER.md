@@ -810,3 +810,161 @@ same mechanism it introduces, rather than pushing it directly.
 `main`, new UAT instance provisioning, and merging/tagging PR #1
 (`develop`→`main`, the 4-branch consolidation) — all unchanged from the
 entry immediately above this one.
+
+## 2026-08-04 (same day, continued 2) — PR #1 merged, reconciliation fix, encoding repair, v1.2.0 tagged
+
+Amit approved merging PR #1 ("go ahead for pr1 as per recommendation").
+Sequence, in order:
+
+1. **PR #1 merged** (`develop` → `main`, `d99b40e`) — the 4-branch R0
+   consolidation described in the entries above.
+2. **Caught before it caused real damage:** attempting to reconcile the 2
+   old commits sitting unpushed on local `main` since 2026-07-16
+   (`b22eb3f`, `12582bc`) via a plain `git pull` on `main` hit a merge
+   conflict — and a chained shell command kept executing after the
+   conflict, so `git tag v1.2.0` ran against the wrong, still-conflicted
+   local `main` tip. **Caught immediately** (checked `git rev-parse
+   v1.2.0` against the intended commit before telling Amit it was done),
+   deleted the bad tag locally and on origin, aborted the merge, and
+   redid the reconciliation properly: pushed the 2 old commits to their
+   own branch (`reconcile/2026-07-16-fixes`) off a clean `main`, resolved
+   the one real conflict (`MASTER_TRACKER.md`, both sides had appended a
+   new dated entry — kept both, chronological order) on that branch, and
+   merged via **PR #3**. This surfaced a real, previously-unmerged
+   security fix (`fga_approval.py` manager-review scope-leak, see the
+   2026-07-16 entry above) and the `smoke_test.py` password-rotation/
+   change-password-gate handling — both now on `main`.
+3. **Caught a second issue from my own tooling, same session:** the
+   PowerShell one-liner used to strip conflict markers from
+   `MASTER_TRACKER.md` during step 2 (`Get-Content | Where-Object |
+   Set-Content -Encoding UTF8`, no `-Encoding` on the *read* side) misread
+   the file's UTF-8 BOM content through the console's default codepage,
+   then wrote it back out re-encoded — corrupting every em-dash/middle-dot
+   in the **entire file** (260 occurrences, from line 1 onward) into
+   garbled 2-3-character sequences. Found by spot-checking the merged
+   file's headers before moving on, confirmed the scope with a byte-level
+   scan, fixed via `ftfy.fix_text()` on its own branch, verified
+   zero corrupted sequences remain — **PR #4**.
+4. **Synced `develop`** back up to `main` (`main` had gained PR #3 and #4
+   as direct patches, which never passed through `develop`) via **PR #5**
+   (`main` → `develop`, fast-forward content, no new diffs).
+5. **Tagged `v1.2.0`** at the verified-correct `main` HEAD (`07e66af`) —
+   consolidates PR #1, #3, #4, #5. Supersedes the `v1.1.0` tag, which was
+   applied prematurely at an earlier commit (`725534b`) and predates all
+   of the DSR backfill / compliance / Governance / Feedback work.
+
+**Deploy status — deliberately not touched:** the `main`-push deploy job
+is gated behind a manual "production" GitHub Environment approval (per
+`release.yml`). Each of today's 3 merges to `main` (PR #1, #3, #4) queued
+its own deploy run, all currently sitting in `waiting` state — **none
+approved, none deployed**, on purpose, since the target for the next real
+promotion is the new UAT instance Amit is provisioning separately, not
+this existing EC2 box. **Also found while checking this:** 2 *unrelated*,
+much older deploy approvals (`ci: rewrite release pipeline for v1.0.5...`
+and `ci: grant contents:write...`, both from 2026-07-15) have been sitting
+in `waiting` for ~20 days, untouched — flagging for Amit to decide whether
+to reject/clear those (deploying a 3-week-stale commit at this point
+would almost certainly be wrong) rather than leaving them queued
+indefinitely.
+
+**GitHub Actions billing lock: confirmed resolved.** Every workflow run
+today completed normally (`test` job green, no billing-lock error) — this
+was the #1 blocker flagged repeatedly in earlier entries; it's clear now,
+though nobody explicitly confirmed *when* it cleared.
+
+**R0 status after this entry:**
+- ✅ 4 undeployed branches consolidated onto `main`+`develop`, tagged `v1.2.0`
+- ✅ Branch protection on `main`+`develop`
+- ✅ GitHub Actions billing lock (confirmed clear)
+- ✅ The 2 old unpushed local-`main` commits reconciled
+- ⛔ Still open: `vertical_slice_test.py` repair; required status checks
+  (deliberately not wired up until the test suite above is fixed);
+  new UAT instance provisioning; the 5 stacked/stale deploy approvals
+  above (Amit's call); actually deploying anything from `v1.2.0` anywhere
+  (still nowhere — by design, until the UAT instance exists)
+
+Once Amit clears the stale deploy-approval queue (or decides to leave it),
+R0 is functionally done. Next: R1 — the `interactions` ledger +
+`health_engine` primitives, proven first against the DSR↔Meeting link.
+
+## 2026-08-04 (same day, continued 3) — R0 closed: stale deploy-approval queue rejected
+
+Amit confirmed: real deploys to the EC2 box have always been done
+manually (VS Code Remote-SSH), never through this pipeline's automated
+"production" Environment approval gate — matching what section 0.5 of
+the earlier fluidGo Claude Project doc already documented. That means
+every `waiting` deploy job on this pipeline is inherently dead on
+arrival: nobody was ever going to click "approve" on it.
+
+Confirmed the actual count first (an earlier `--json` filtered query gave
+an inconsistent/misleading count due to what looks like a pagination
+quirk — cross-checked against the plain-text `gh run list`, which is
+authoritative): exactly **5** runs in `waiting` state, not the dozens the
+raw history might suggest — everything else from 2026-07-13/14 that looks
+similar is already `completed failure` (the deploy job failed outright on
+those, rather than sitting in the approval queue — different failure
+mode, already resolved one way or another).
+
+Rejected all 5 via `gh api POST .../pending_deployments` with
+`state: rejected` and an explanatory comment (manual-SSH is the real
+deploy path; next real promotion target is the still-unprovisioned new
+UAT instance):
+- 3 from today: PR #1, #3, #4 merges to `main`
+- 2 stale, from 2026-07-15: `ci: rewrite release pipeline for v1.0.5...`
+  and `ci: grant contents:write...`
+
+All 5 now show `completed failure` (rejected, not actually failed) —
+Actions dashboard is clean, no dangling approvals.
+
+**R0 is now fully closed.** Everything from the original punch list is
+either done or explicitly deferred with a reason:
+- ✅ 4 undeployed branches consolidated, `v1.2.0` tagged
+- ✅ Branch protection on `main` + `develop`
+- ✅ GitHub Actions billing lock (confirmed resolved)
+- ✅ 2 old unpushed local-`main` commits reconciled (including a real
+  security fix)
+- ✅ Stale/dead deploy-approval queue cleared
+- ⛔ Deferred, with reason: `vertical_slice_test.py` repair (tracked, not
+  blocking — required status checks intentionally not wired up until
+  it's fixed); new UAT instance provisioning (Amit-owned, separate
+  infra task, not a code change)
+
+**Next: R1** — the `interactions` ledger + `health_engine` primitives
+(see the fluidGo Claude Project's
+`fluidgo-services-intelligence-platform-assessment.md`), proven first
+against the DSR↔Meeting structural link (finding #3, open since
+2026-07-21).
+
+## 2026-08-04 (same day, continued 4) — Correction: billing lock is NOT resolved; release/branch cleanup
+
+**Correction to the "GitHub Actions billing lock confirmed resolved" claim
+two entries above — that was wrong, caught by Amit spotting red check
+status on the GitHub branches page and asking about it.** The earlier
+conclusion was drawn only from `develop`-branch and PR-triggered runs
+succeeding; the `v1.2.0` tag push (both attempts, including the corrected
+one) hit the identical `"The job was not started because your account is
+locked due to a billing issue"` error the original 2026-07-21 finding
+documented. So: PR/`develop` workflow runs are succeeding, but `main`-branch
+pushes and tag pushes are still hitting the billing lock, at least
+intermittently. **Do not treat this as resolved — re-verify against an
+actual `main` push before relying on it.**
+
+Practical consequence: the `v1.2.0` git tag itself is fine (tags don't
+need Actions), but its GitHub Release page was never auto-created (the
+`tag-release` job never started). Created it manually via `gh release
+create v1.2.0 --generate-notes --target main` — same "bypass Actions via
+the API/CLI directly" pattern already used for deploys.
+
+**Also cleaned up, prompted by Amit sharing the GitHub branches list:**
+confirmed via `git merge-base --is-ancestor` that all 4 of the original
+undeployed feature branches (`dsr-backfill-and-seed-cleanup`,
+`feedback-and-help-guide`, `seed-data-pipeline-fix`,
+`compliance-export-governance`) are fully merged into `main` (ahead: 0 on
+GitHub's own branch list) — deleted all 4 from origin, along with the 5
+short-lived PR branches from today's PRs #2/#3/#4/#6/#7 (already deleted
+by `gh pr merge --delete-branch` at merge time, confirmed via `git fetch
+--prune`). Repo is now down to just `main` + `develop`, both current.
+
+R0 status unchanged otherwise — still functionally closed, with this one
+correction: the billing lock item goes back to ⛔ open/unconfirmed rather
+than ✅.
