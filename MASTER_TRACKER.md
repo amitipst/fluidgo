@@ -1154,3 +1154,38 @@ This account is dev-database-only — obviously named so it's never confused
 with Hemant's real production record, and not added to the README's
 "Default Credentials" table since it's throwaway test infrastructure, not
 a real persona anyone should rely on long-term.
+
+
+## 2026-08-04 (same day, continued 10) — DOR save confirmation UX; investigated "stale form" report
+
+Amit tested PR #12 as the new Test SDM account and reported two things:
+
+**1) DOR save had no real confirmation.** True — the only feedback was the
+Save button's own label flashing "✅ Saved" for 2s, which is easy to miss,
+especially since (unlike DSREntry, which shows a full-screen "DSR
+Submitted!" success state and resets) DOR is deliberately an edit-in-place
+form that stays open for same-day resubmission — so DSR's pattern doesn't
+directly apply. Fixed:
+- A toast on save (`toast.success`, reusing the same store Meetings.tsx
+  already uses — visible regardless of scroll position, unlike the button
+  label) — also added `toast.error` on failure, which had no feedback at
+  all before.
+- A persistent "✅ Saved · Xm ago" line next to the button that doesn't
+  disappear after 2s, using a new shared `lib/time.ts` (`timeAgo`,
+  extracted from Dashboard.tsx's private copy of the same function — one
+  implementation instead of two diverging ones).
+- Button now reads "Update DOR" instead of "Save DOR" once a row for the
+  day already exists, so it's clear a save already happened even before
+  clicking again.
+
+**2) Screenshots showed the OLD Sales-only Meetings form (BANT, no Purpose
+dropdown) and no "Client Meetings" card on DOR, despite testing under the
+SDM account.** Investigated — the code is correct and present
+(`isDeliveryMode` appears 17 times in Meetings.tsx as expected, `git
+status` clean on `feature/csg-phase2-frontend`, `npx tsc --noEmit` clean).
+Almost certainly a stale browser tab: the screenshots' session was
+navigated via client-side routing (SPA), which doesn't re-fetch an
+already-loaded JS bundle — only a hard refresh/new tab does. Restarted the
+frontend container to rule out a dev-server-side staleness too. **Asked
+Amit to hard-refresh (Ctrl+F5) and retest** rather than assuming the code
+is broken; will revisit if it reproduces after a clean reload.
