@@ -35,9 +35,9 @@ Open **http://localhost** — you're running.
 |------|-------|----------|
 | Business Head | `amit.singh@wepsol.com` | `Admin@2026!` |
 | Super Admin | `itsupport.blr@wepsol.com` | (see password vault) |
-| Manager | `manager@fluidpro.in` | `Mgr@2026!` (⚠️ deactivated — see MASTER_TRACKER.md §6) |
-| Sales Rep | `danish@fluidpro.in` | `Fluid@2026!` (⚠️ deactivated) |
-| Inside Sales | `inside@fluidpro.in` | `Inside@2026!` (⚠️ deactivated) |
+| Manager | `manager@fluidpro.in` | `TeamLead@2026!` (rotated 2026-07-16, active) |
+| Sales Rep | `danish@fluidpro.in` | `Fluid@2026!` (active) |
+| Inside Sales | `inside@fluidpro.in` | `SalesOps@2026!` (rotated 2026-07-16, active) |
 
 > **Session:** JWT access tokens auto-refresh via a silent retry-once
 > interceptor. Idle sessions now auto-logout after 30 minutes (warning shown
