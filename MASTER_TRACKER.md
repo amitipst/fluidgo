@@ -696,3 +696,49 @@ call, not automated in this pass.
 Once R0 is actually closed out, next work starts R1: the `interactions`
 ledger + generalized `health_engine` primitives, proven first against the
 DSR↔Meeting structural-link gap (finding #3, open since 2026-07-21).
+
+## 2026-08-04 (same day, continued) — Branch protection enabled on `main` and `develop`
+
+Per Amit's explicit direction ("branch protection is needed as per best
+practice and right time, we will be using free version only"). Confirmed
+first that plan tier is not actually a constraint here: the repo
+(`amitipst/fluidgo`) is **public**, and GitHub's free plan has always
+included full branch protection rules on public repositories — no
+Team/Enterprise upgrade needed. (The free-tier limitation people usually
+mean only affects *private* repos under an organization account, which
+doesn't apply here — this is a public repo under a personal account.)
+
+Applied identically to both `main` and `develop` via `gh api PUT
+.../branches/{branch}/protection`:
+- Pull request required before merging — **no direct pushes, including
+  for repo admins** (`enforce_admins: true`). This directly closes the
+  gap flagged repeatedly in this tracker and the fluidGo Claude Project
+  assessment: most work had been landing straight on `main` with no
+  PR/review step, `develop` included, despite `develop`'s own documented
+  policy (CHANGELOG.md "Release Process") already saying feature
+  branches should PR into `develop`.
+- `required_approving_review_count: 0` — deliberate: a PR object is
+  still mandatory, but no second reviewer is required. GitHub does not
+  allow a PR author to approve their own PR, so requiring ≥1 approval
+  would make solo merging impossible without a second GitHub identity.
+  This keeps the workflow solo-friendly while still forcing every change
+  through a reviewable, diffable PR instead of a silent direct push.
+- Force-pushes and branch deletion blocked on both branches.
+- `required_conversation_resolution: true`.
+- **No required status checks yet, on either branch** — deliberate, not
+  an oversight: `vertical_slice_test.py` is still broken/stale and
+  GitHub Actions' billing-lock status hasn't been re-confirmed this
+  session. Wiring in required checks now would just block every future
+  PR on a suite that's already known-broken. Revisit once (a) Actions is
+  confirmed unblocked and (b) the test suite is genuinely green or the
+  known-bad tests are explicitly quarantined.
+
+This PR (`chore/branch-protection-r0` → `develop`) is itself the first
+PR merged under the new rule — recording the policy change through the
+same mechanism it introduces, rather than pushing it directly.
+
+**R0 still open after this:** GitHub Actions billing-lock status,
+`vertical_slice_test.py` repair, the 2 old unpushed commits on local
+`main`, new UAT instance provisioning, and merging/tagging PR #1
+(`develop`→`main`, the 4-branch consolidation) — all unchanged from the
+entry immediately above this one.
