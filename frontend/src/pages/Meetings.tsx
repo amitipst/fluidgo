@@ -1,11 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/store/toastStore'
-import { renderMarkdownLite } from '@/lib/markdown'
 
 const MEETING_TYPES = ['F2F', 'Virtual', 'Call']
 const today = format(new Date(), 'yyyy-MM-dd')
@@ -21,7 +20,7 @@ const INTENT_CFG: Record<string, { label: string; cls: string }> = {
 // service_delivery) instead of a parallel one. Purpose is a free string on
 // the backend (not a DB enum), so this list can grow without a migration —
 // it's just the UI's known set.
-const DELIVERY_PURPOSES = [
+export const DELIVERY_PURPOSES = [
   { val: 'qbr',               label: '📊 QBR' },
   { val: 'cadence_review',    label: '🔄 Cadence Review' },
   { val: 'escalation_review', label: '🚨 Escalation Review' },
@@ -64,102 +63,27 @@ function BANTBar({ m }: { m: any }) {
 }
 
 // ── CSG Phase 2 — AI MOM (Minutes of Meeting) ─────────────────────────────────
-// Generate is on-demand (rep/SDM-triggered, not auto-run — same reasoning as
-// DealMomentum: keeps local Ollama load bounded). ai_mom_summary/mom_status
-// already come back with the meeting list, so unlike DealMomentum this
-// doesn't need its own GET — just the two mutations.
-const MOM_STATUS_CFG: Record<string, { label: string; cls: string }> = {
+// Generate/edit/finalize, attendees, discussion points, revision history,
+// export and send all now live on the dedicated /meetings/:id detail page
+// (MeetingDetail.tsx) — see fluidgo-mom-uiux-spec.md §3: the inline
+// accordion this list card used to carry didn't have room for the fuller
+// minutes UI, so it moved out rather than growing denser in place. Exported
+// so MeetingDetail can reuse the exact same status labels/colors.
+export const MOM_STATUS_CFG: Record<string, { label: string; cls: string }> = {
   none:      { label: 'No MOM yet',   cls: 'bg-wep-surface text-wep-muted' },
   generated: { label: '🤖 AI draft',  cls: 'bg-sky-50 text-sky-700' },
   edited:    { label: '✏️ Edited',    cls: 'bg-amber-50 text-amber-700' },
   finalized: { label: '✅ Finalized', cls: 'bg-emerald-50 text-emerald-700' },
 }
 
-function MeetingMomSection({ m }: { m: any }) {
-  const qc = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(m.ai_mom_summary ?? '')
-
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['meetings'] })
-
-  const generate = useMutation({
-    mutationFn: () => api.post(`/meetings/${m.id}/generate-mom`).then(r => r.data),
-    onSuccess: (r: any) => { setDraft(r.ai_mom_summary); invalidate() },
-    onError: (e: any) => toast.error(getErrorMessage(e, 'Could not generate MOM')),
-  })
-
-  const save = useMutation({
-    mutationFn: (finalize: boolean) =>
-      api.patch(`/meetings/${m.id}/mom`, { ai_mom_summary: draft, finalize }).then(r => r.data),
-    onSuccess: () => { setEditing(false); invalidate() },
-    onError: (e: any) => toast.error(getErrorMessage(e, 'Could not save MOM')),
-  })
-
+function MomStatusLink({ m }: { m: any }) {
   const status = MOM_STATUS_CFG[m.mom_status] ?? MOM_STATUS_CFG.none
-
   return (
-    <div className="mt-3 pt-3 border-t border-wep-border">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <button type="button" onClick={() => setOpen(v => !v)}
-          className="text-xs font-semibold text-brand-pink hover:opacity-80">
-          {open ? '▲ Hide MOM' : '▼ Minutes of Meeting'}
-        </button>
-        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${status.cls}`}>{status.label}</span>
-      </div>
-
-      {open && (
-        <div className="mt-2 space-y-2">
-          {!m.ai_mom_summary && !generate.isPending && (
-            <p className="text-xs text-wep-muted">No MOM generated yet.</p>
-          )}
-          {generate.isPending && (
-            <p className="text-xs text-wep-muted">⏳ Generating on the local model — this can take a minute or two…</p>
-          )}
-
-          {m.ai_mom_summary && !editing && (
-            <div className="text-xs leading-relaxed rounded-lg p-3 bg-wep-surface"
-              dangerouslySetInnerHTML={{ __html: renderMarkdownLite(m.ai_mom_summary) }} />
-          )}
-
-          {editing && (
-            <textarea rows={8} className="form-input text-xs font-mono"
-              value={draft} onChange={e => setDraft(e.target.value)} />
-          )}
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <button type="button" onClick={() => generate.mutate()} disabled={generate.isPending}
-              className="btn-outline text-xs px-3 py-1.5">
-              {generate.isPending ? '⏳ Generating…' : m.ai_mom_summary ? '🔄 Regenerate' : '✨ Generate MOM'}
-            </button>
-            {m.ai_mom_summary && !editing && (
-              <button type="button" onClick={() => { setDraft(m.ai_mom_summary); setEditing(true) }}
-                className="btn-outline text-xs px-3 py-1.5">✏️ Edit</button>
-            )}
-            {editing && (
-              <>
-                <button type="button" onClick={() => save.mutate(false)} disabled={save.isPending}
-                  className="btn-outline text-xs px-3 py-1.5">💾 Save draft</button>
-                <button type="button" onClick={() => save.mutate(true)} disabled={save.isPending}
-                  className="text-xs font-bold px-3 py-1.5 rounded-lg text-white disabled:opacity-40"
-                  style={{ background: 'linear-gradient(135deg,#F0115E,#C2005A)' }}>
-                  {save.isPending ? '⏳ Saving…' : '✅ Finalize'}
-                </button>
-                <button type="button" onClick={() => setEditing(false)} className="text-xs text-wep-muted">Cancel</button>
-              </>
-            )}
-          </div>
-
-          {/* This is a human review checkpoint, not a formality — phi3:mini is
-              a small local model and its output (esp. action items, which can
-              run past the token cap mid-sentence) should be checked before
-              anyone treats it as the record of what was agreed. */}
-          {m.ai_mom_summary && m.mom_status === 'generated' && !editing && (
-            <p className="text-[10px] text-wep-muted">⚠️ AI draft — please review before finalizing.</p>
-          )}
-        </div>
-      )}
-    </div>
+    <Link to={`/meetings/${m.id}`}
+      className={`mt-3 pt-3 border-t border-wep-border flex items-center justify-between gap-2 text-xs font-semibold text-brand-pink hover:opacity-80`}>
+      <span>📄 Minutes of Meeting</span>
+      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${status.cls}`}>{status.label}</span>
+    </Link>
   )
 }
 
@@ -175,13 +99,20 @@ export default function Meetings() {
   // param override rather than relying on role alone.
   const isDeliveryMode = isSDM || searchParams.get('source') === 'service_delivery'
   const prefillCompany = searchParams.get('company') ?? undefined
+  // Governance never logs a meeting (deny_governance on the backend) and has
+  // no "mine" — its only reason to be on this screen at all is org-wide
+  // read visibility, so it starts (and stays) on team scope, never mine.
+  const isGovernance = user?.role === 'governance'
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('All')
   const [showAdd, setShowAdd] = useState(searchParams.get('open') === '1')
   const [form, setForm] = useState(() => getEmptyForm(isDeliveryMode, prefillCompany))
   const [addErr, setAddErr] = useState('')
-  const [scope, setScope] = useState<'mine' | 'team'>('mine')
+  const [scope, setScope] = useState<'mine' | 'team'>(isGovernance ? 'team' : 'mine')
 
+  // Governance gets no Mine/Team toggle at all — "mine" is always empty for
+  // a role that never logs a meeting (deny_governance), so offering it would
+  // just be a confusing dead end. It's pinned to team scope above instead.
   const isManager = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
 
   const { data: meetings = [], isLoading } = useQuery({
@@ -247,17 +178,19 @@ export default function Meetings() {
               ))}
             </div>
           )}
-          <button onClick={() => {
-            if (showAdd) { setForm(getEmptyForm(isDeliveryMode)); setAddErr('') }
-            setShowAdd(v => !v)
-          }} className="btn-primary">
-            {showAdd ? '✕ Cancel' : isDeliveryMode ? '➕ Log Client Meeting' : '➕ Log Meeting'}
-          </button>
+          {!isGovernance && (
+            <button onClick={() => {
+              if (showAdd) { setForm(getEmptyForm(isDeliveryMode)); setAddErr('') }
+              setShowAdd(v => !v)
+            }} className="btn-primary">
+              {showAdd ? '✕ Cancel' : isDeliveryMode ? '➕ Log Client Meeting' : '➕ Log Meeting'}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Add form */}
-      {showAdd && (
+      {showAdd && !isGovernance && (
         <div className="card mb-5 border-brand-pink/30">
           <h3 className="font-bold text-sm text-wep-text mb-4">
             {isDeliveryMode ? '📝 Log a Client Meeting' : '📝 Log a Meeting'}
@@ -423,7 +356,7 @@ export default function Meetings() {
                   </div>
                 </div>
                 {m.source !== 'service_delivery' && <BANTBar m={m} />}
-                <MeetingMomSection m={m} />
+                <MomStatusLink m={m} />
                 {/* Convert to Lead — funnel step 1. Only the owner (mine view), Sales only. */}
                 {scope === 'mine' && m.source !== 'service_delivery' && (
                   <div className="mt-3 pt-3 border-t border-wep-border flex items-center justify-between gap-2 flex-wrap">

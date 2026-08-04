@@ -311,7 +311,14 @@ async def get_meeting(meeting_id: str, db: AsyncSession = Depends(get_db),
     _serialize_dsr there's no viewer_role stripping needed, just the same
     _get_meeting_or_404 gate everything else already uses."""
     m = await _get_meeting_or_404(meeting_id, db, user)
-    return _serialize_meeting_detail(m)
+    d = _serialize_meeting_detail(m)
+    # The detail page header shows "logged by {rep_name}" (UIUX spec §4.1) —
+    # list_meetings already resolves this for scope=team via a name_map;
+    # this is the single-row equivalent (one extra query, not a batch, since
+    # this endpoint only ever fetches one meeting at a time).
+    rep = (await db.execute(select(User).where(User.id == m.user_id))).scalar_one_or_none()
+    d["rep_name"] = rep.name if rep else "Unknown"
+    return d
 
 
 class MeetingPatchIn(BaseModel):
