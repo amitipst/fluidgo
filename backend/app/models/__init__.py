@@ -453,6 +453,11 @@ class ScoringParameter(Base):
     tiers:         Mapped[list]      = mapped_column(JSONB, nullable=True)         # only for calc_type='tiered'
     is_active:     Mapped[bool]      = mapped_column(Boolean, default=True, server_default="true")
     sort_order:    Mapped[int]       = mapped_column(Integer, default=0)
+    # Bonus line (0031): adds its contribution directly on top of the
+    # weighted 100% split instead of being part of it — for uncapped
+    # incentive KRAs (e.g. "0.5 pts per 5% over target, no ceiling").
+    # Excluded from the active-weights-must-sum-to-100 validation.
+    is_bonus:      Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
 
 class ManualMetricEntry(Base):
     """Period achievement value for a 'manual.*' metric_source, entered via UI
