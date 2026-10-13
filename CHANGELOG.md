@@ -21,7 +21,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Minutes of Meeting exports (PDF, Word, Excel) and the customer e-mail redesigned: branded header,
   meeting-details block, name/email attendee table, numbered discussion points, readable dates
   (18 May 2026), owner shown as "Name (Side)", AI summary rendered from markdown instead of raw `##`/`-`,
-  page footer with page numbers. Fixes black "■" separator glyphs in the PDF and "(no email)" noise.
+  wepsol logo on the header band, landscape A4 page layout (PDF/Word/Excel print setup) and page footer with page numbers. Fixes black "■" separator glyphs in the PDF and "(no email)" noise.
 - Meeting detail page: purpose shown as "Sales Discovery" (not `sales_discovery`), friendly date.
 - Tests: `backend/tests/test_mom_export_service.py`.
 
