@@ -572,5 +572,5 @@ async def send_meeting(meeting_id: str, body: SendMeetingIn, request: Request,
         background_tasks.add_task(
             audit, db, user, "SEND_MOM_FAILED", "meeting", meeting_id,
             f"{m.company}: send by {user.email} failed ({reason}){cc_note}", request=request)
-        message = f"{reason} Download the minutes and send them from your own mailbox."
+        message = reason
     return {"sent": sent, "to": body.to, "cc": body.cc, "message": message}

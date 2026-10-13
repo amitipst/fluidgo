@@ -356,12 +356,15 @@ function SendMomModal({ meeting, attendees, onClose, onDownload, downloading }: 
 
   // mailto: cannot carry attachments (no mail client allows it), so the draft carries the
   // recipients and a short body, and the user attaches the downloaded file.
+  const firstNames = to.map(a => (a.name || '').trim().split(/\s+/)[0]).filter(Boolean)
+    .map(n => n === n.toLowerCase() ? n.charAt(0).toUpperCase() + n.slice(1) : n)
+  const greeting = firstNames.length ? `Dear ${firstNames.join(', ')}` : 'Dear team'
   const summaryText = (meeting.ai_mom_summary || '').replace(/[#*]/g, '').slice(0, 1200)
   const mailtoHref =
     `mailto:${to.map(a => a.email).join(',')}` +
     `?cc=${encodeURIComponent(cc.map(a => a.email).join(','))}` +
     `&subject=${encodeURIComponent(subject)}` +
-    `&body=${encodeURIComponent(`Dear team,\n\nPlease find the minutes of our meeting attached.\n\n${summaryText}\n`)}`
+    `&body=${encodeURIComponent(`${greeting},\n\nPlease find the minutes of our meeting attached.\n\n${summaryText}\n`)}`
 
   const missingEmailCustomers = attendees.filter(a => a.side === 'customer' && !a.email).length
 
