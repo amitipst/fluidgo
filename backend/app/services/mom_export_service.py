@@ -65,14 +65,21 @@ BRAND_TINT = "#F8F5FF"
 BRAND_LINE = "#E8DFF5"
 
 
-LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "wepsol_logo.png")
-LOGO_ASPECT = 900 / 202  # width / height of the packaged PNG
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+FLUIDPRO_LOGO = os.path.join(ASSETS_DIR, "fluidpro_logo.png")  # portfolio brand  -> left of letterhead
+WEPSOL_LOGO = os.path.join(ASSETS_DIR, "wepsol_logo.png")      # company brand    -> right of letterhead
+# fluidGo is the *platform* name: it appears only in the footer, never as a header logo.
 
 
-def _logo_or_none():
-    """Path to the packaged wepsol logo, or None if the file is missing — a
+def _logo(path):
+    """(path, width/height) or None when the file is missing/unreadable — a
     missing asset must degrade to a text-only header, never fail an export."""
-    return LOGO_PATH if os.path.exists(LOGO_PATH) else None
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            return path, im.size[0] / im.size[1]
+    except Exception:
+        return None
 
 
 def fmt_date(value) -> str:
@@ -188,20 +195,25 @@ def render_xlsx(doc: MinutesDocument) -> bytes:
     thin = Side(style="thin", color=BRAND_LINE.lstrip("#"))
     box = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    ws.merge_cells("A1:D1")
-    ws["A1"] = f"{settings.APP_NAME} - Minutes of Meeting"
-    ws["A1"].font = Font(bold=True, size=16, color="FFFFFF")
-    ws["A1"].fill = head_fill
-    ws["A1"].alignment = Alignment(vertical="center", indent=1)
-    ws.row_dimensions[1].height = 34
-    if _logo_or_none():
-        try:
-            from openpyxl.drawing.image import Image as XlImage
-            img = XlImage(LOGO_PATH)
-            img.height, img.width = 30, int(30 * LOGO_ASPECT)
-            ws.add_image(img, "D1")
-        except Exception:  # logo is decoration only
-            pass
+    ws.row_dimensions[1].height = 42  # white letterhead row: fluidPro left, wepsol right
+    try:
+        from openpyxl.drawing.image import Image as XlImage
+        for name, anchor in ((FLUIDPRO_LOGO, "A1"), (WEPSOL_LOGO, "C1")):
+            lg = _logo(name)
+            if lg:
+                img = XlImage(lg[0])
+                img.height, img.width = 34, int(34 * lg[1])
+                ws.add_image(img, anchor)
+    except Exception:  # logos are decoration only
+        pass
+    ws.append([])
+    ws.merge_cells("A2:D2")
+    ws["A2"] = "Minutes of Meeting"
+    ws["A2"].font = Font(bold=True, size=16, color="FFFFFF")
+    ws["A2"].fill = head_fill
+    ws["A2"].alignment = Alignment(vertical="center", indent=1)
+    ws.row_dimensions[2].height = 30
+    ws.append([])
     ws.append([])
 
     for label, value in _meta_rows(doc):
@@ -259,7 +271,7 @@ def render_xlsx(doc: MinutesDocument) -> bytes:
 
     for col, width in zip("ABCD", (60, 32, 26, 16)):
         ws.column_dimensions[col].width = width
-    for row in ws.iter_rows(min_row=3):
+    for row in ws.iter_rows(min_row=4):
         for c in row:
             c.alignment = Alignment(wrap_text=True, vertical="top")
 
@@ -333,27 +345,30 @@ def render_docx(doc: MinutesDocument) -> bytes:
             t.columns[ci].width = Cm(w)
         return t
 
-    # Title band: text on the left, wepsol logo on the right
-    band = d.add_table(rows=1, cols=2)
-    band.autofit = False
-    left, right = band.rows[0].cells
-    for c, w in ((left, 19.2), (right, 6.5)):
-        c.width = Cm(w)
-        _shade(c, BRAND_DARK)
-    band.columns[0].width, band.columns[1].width = Cm(19.2), Cm(6.5)
-    p = left.paragraphs[0]
-    run(p, settings.APP_NAME, bold=True, size=11, color="#F0115E")
-    p2 = left.add_paragraph()
+    # Letterhead: fluidPro (portfolio) left, wepsol (company) right, on white
+    lh = d.add_table(rows=1, cols=2)
+    lh.autofit = False
+    lcell, rcell = lh.rows[0].cells
+    lh.columns[0].width, lh.columns[1].width = Cm(12.85), Cm(12.85)
+    for c, name, align in ((lcell, FLUIDPRO_LOGO, WD_ALIGN_PARAGRAPH.LEFT), (rcell, WEPSOL_LOGO, WD_ALIGN_PARAGRAPH.RIGHT)):
+        c.width = Cm(12.85)
+        par = c.paragraphs[0]
+        par.alignment = align
+        lg = _logo(name)
+        if lg:
+            try:
+                par.add_run().add_picture(lg[0], height=Cm(1.3))
+            except Exception:
+                pass
+    # Title band
+    band = d.add_table(rows=1, cols=1)
+    cell = band.rows[0].cells[0]
+    cell.width = Cm(25.7)
+    _shade(cell, BRAND_DARK)
+    p2 = cell.paragraphs[0]
     run(p2, "Minutes of Meeting", bold=True, size=20, color="#FFFFFF")
-    p3 = left.add_paragraph()
+    p3 = cell.add_paragraph()
     run(p3, f"{doc.company}  |  {fmt_date(doc.date)}", size=10.5, color="#E8DFF5")
-    rp = right.paragraphs[0]
-    rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    if _logo_or_none():
-        try:
-            rp.add_run().add_picture(LOGO_PATH, width=Cm(4.6))
-        except Exception:
-            pass
 
     heading("Meeting details")
     t = table(_meta_rows(doc), [4, 21.7], header=False)
@@ -444,25 +459,28 @@ def render_pdf(doc: MinutesDocument) -> bytes:
         t.setStyle(TableStyle(style))
         return t
 
-    # Title band: text on the left, wepsol logo on the right
+    # Letterhead (white): fluidPro portfolio logo left, wepsol company logo right
     from reportlab.platypus import Image as RLImage
-    left_cell = [
-        Paragraph(f'<font color="{BRAND_PINK}"><b>{_esc(settings.APP_NAME)}</b></font>',
-                  ParagraphStyle("b1", parent=body, fontSize=11)),
-        Paragraph('<font color="#FFFFFF"><b>Minutes of Meeting</b></font>',
-                  ParagraphStyle("b2", parent=body, fontSize=22, leading=26)),
-        Paragraph(f'<font color="#E8DFF5">{_esc(doc.company)}&nbsp;&nbsp;|&nbsp;&nbsp;{_esc(fmt_date(doc.date))}</font>',
-                  ParagraphStyle("b3", parent=body, fontSize=11)),
-    ]
-    logo_h = 13 * mm
-    right_cell = RLImage(LOGO_PATH, width=logo_h * LOGO_ASPECT, height=logo_h, hAlign="RIGHT") if _logo_or_none() else ""
-    band = Table([[left_cell, right_cell]], colWidths=[page_w - 70 * mm, 70 * mm])
+    logo_h = 12 * mm
+
+    def logo_flow(name, align):
+        lg = _logo(name)
+        return RLImage(lg[0], width=logo_h * lg[1], height=logo_h, hAlign=align) if lg else ""
+
+    letterhead = Table([[logo_flow(FLUIDPRO_LOGO, "LEFT"), logo_flow(WEPSOL_LOGO, "RIGHT")]],
+                       colWidths=[page_w / 2, page_w / 2])
+    letterhead.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (0, 0), (0, 0), "LEFT"), ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                                    ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 0)]))
+    band = Table([[[Paragraph('<font color="#FFFFFF"><b>Minutes of Meeting</b></font>',
+                              ParagraphStyle("b2", parent=body, fontSize=22, leading=26)),
+                    Paragraph(f'<font color="#E8DFF5">{_esc(doc.company)}&nbsp;&nbsp;|&nbsp;&nbsp;{_esc(fmt_date(doc.date))}</font>',
+                              ParagraphStyle("b3", parent=body, fontSize=11))]]], colWidths=[page_w])
     band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), C(BRAND_DARK)),
-                              ("VALIGN", (0, 0), (0, 0), "TOP"), ("VALIGN", (1, 0), (1, 0), "MIDDLE"),
-                              ("LEFTPADDING", (0, 0), (0, 0), 14), ("RIGHTPADDING", (1, 0), (1, 0), 16),
+                              ("LEFTPADDING", (0, 0), (-1, -1), 14),
                               ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 12)]))
 
-    story = [band, Paragraph("Meeting details", h2)]
+    story = [letterhead, band, Paragraph("Meeting details", h2)]
     meta = Table([[Paragraph(k, label), P(v)] for k, v in _meta_rows(doc)], colWidths=[35 * mm, page_w - 35 * mm])
     meta.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.5, C(BRAND_LINE)), ("VALIGN", (0, 0), (-1, -1), "TOP"),
                               ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
@@ -561,7 +579,7 @@ def render_email_html(doc: MinutesDocument) -> tuple:
     html = f"""\
 <div style="font-family:Segoe UI,Arial,sans-serif;max-width:620px;margin:0 auto;color:{BRAND_DARK}">
   <div style="background:{BRAND_DARK};padding:18px 22px;border-radius:10px 10px 0 0">
-    <div style="color:{BRAND_PINK};font-size:13px;font-weight:700">{_esc(settings.APP_NAME)}</div>
+    <div style="color:{BRAND_PINK};font-size:13px;font-weight:700">fluidPro &nbsp;|&nbsp; WEP Solutions</div>
     <div style="color:#fff;font-size:20px;font-weight:700;margin-top:2px">Minutes of Meeting</div>
     <div style="color:#E8DFF5;font-size:13px;margin-top:2px">{_esc(doc.company)} &nbsp;|&nbsp; {_esc(fmt_date(doc.date))} &nbsp;|&nbsp; {_esc(doc.purpose)}</div>
   </div>
