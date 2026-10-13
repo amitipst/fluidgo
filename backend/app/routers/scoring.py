@@ -28,7 +28,7 @@ class ParameterIn(BaseModel):
     tiers: Optional[list] = None    # only for calc_type='tiered' — see ScoringParameter docstring
     is_active: bool = True
     sort_order: int = 0
-    is_bonus: bool = False           # adds on top of the 100% weighted split — see 0031
+    is_bonus: bool = False           # adds on top of the 100% weighted split — see 0033
 
 
 class TemplateIn(BaseModel):
@@ -47,7 +47,7 @@ def _validate_weights(parameters: list[ParameterIn]):
     # can carry any leftover weight without blocking save (re-enabling it
     # later is exactly when its weight, and everyone else's, needs
     # revisiting), and a bonus line adds on top of the 100% split by design
-    # (see 0031_kra_bonus_lines.py) so it's excluded from the sum entirely.
+    # (see 0033_kra_bonus_lines.py) so it's excluded from the sum entirely.
     total = sum(p.weight_pct for p in parameters if p.is_active and not p.is_bonus)
     if round(total) != 100:
         raise HTTPException(400, f"Active (non-bonus) parameter weights must sum to 100, got {total}")

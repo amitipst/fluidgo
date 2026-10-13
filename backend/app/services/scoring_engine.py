@@ -242,7 +242,7 @@ async def compute_score(db: AsyncSession, user: User, period: str) -> dict:
             contribution = value * (weight / 100.0)
         row["contribution"] = round(contribution, 2)
         # Bonus lines add straight onto the total — they sit outside the
-        # 100%-weighted base split (see 0031_kra_bonus_lines.py) and are
+        # 100%-weighted base split (see 0033_kra_bonus_lines.py) and are
         # excluded from the weight-sum-to-100 validation on save.
         total += contribution
         breakdown.append(row)

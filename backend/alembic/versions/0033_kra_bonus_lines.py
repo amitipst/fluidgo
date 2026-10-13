@@ -19,14 +19,14 @@ contribution directly to the total instead of folding it into the weighted
 Purely additive — every existing row defaults to is_bonus=false, i.e. no
 behavior change until a template actually sets one.
 
-Revision ID: 0031
-Revises: 0030
+Revision ID: 0033
+Revises: 0032
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = '0031'
-down_revision = '0030'
+revision = '0033'
+down_revision = '0032'
 branch_labels = None
 depends_on = None
 
