@@ -26,6 +26,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Send-to-Customer: the dialog shows the logged-in user as the sender and Cc's their reporting manager by default
   (editable; `GET /meetings/{id}/send-defaults`). Mail goes out as "<User> via fluidGo" with Reply-To = the user;
   set `SMTP_SEND_AS_USER=true` to send From the user's own address once M365 Send-As is granted (auto-falls back if refused).
+- Send-to-Customer fallback: if fluidGo cannot send (SMTP not configured, relay refused, network), the dialog stays open
+  with a clear warning, **Download PDF / Word** buttons and an **Open in my mail app** draft (recipients, Cc, subject pre-filled).
+  A failed send is audited as `SEND_MOM_FAILED`, never as sent.
 - Tests: `backend/tests/test_mom_export_service.py`.
 
 ### Added

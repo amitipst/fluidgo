@@ -271,7 +271,10 @@ function RevisionEntry({ r }: { r: any }) {
 }
 
 // ── Send to Customer modal ──────────────────────────────────────────────────
-function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees: AttendeeDraft[]; onClose: () => void }) {
+function SendMomModal({ meeting, attendees, onClose, onDownload, downloading }: {
+  meeting: any; attendees: AttendeeDraft[]; onClose: () => void
+  onDownload: (fmt: 'pdf' | 'docx') => void; downloading: string | null
+}) {
   const [to, setTo] = useState<AttendeeDraft[]>(
     attendees.filter(a => a.side === 'customer' && a.email).map(a => ({ ...a }))
   )
@@ -300,6 +303,9 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
   const [attachAs, setAttachAs] = useState<'pdf' | 'docx' | 'inline'>('pdf')
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState('')
+  // Set when fluidGo could not send (mail not configured, relay refused, network). The
+  // minutes are never lost: the user downloads them and sends from their own mailbox.
+  const [fallback, setFallback] = useState<string | null>(null)
 
   // Focus trap + Escape-to-close + focus restore — spec §4.5/§5 explicitly
   // requires this ("the Send-to-Customer modal traps focus while open...
@@ -343,20 +349,33 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // mailto: cannot carry attachments (no mail client allows it), so the draft carries the
+  // recipients and a short body, and the user attaches the downloaded file.
+  const summaryText = (meeting.ai_mom_summary || '').replace(/[#*]/g, '').slice(0, 1200)
+  const mailtoHref =
+    `mailto:${to.map(a => a.email).join(',')}` +
+    `?cc=${encodeURIComponent(cc.map(a => a.email).join(','))}` +
+    `&subject=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(`Dear team,\n\nPlease find the minutes of our meeting attached.\n\n${summaryText}\n`)}`
+
   const missingEmailCustomers = attendees.filter(a => a.side === 'customer' && !a.email).length
 
   async function send() {
     if (!to.length) { setErr('Add at least one recipient in To.'); return }
-    setSending(true); setErr('')
+    setSending(true); setErr(''); setFallback(null)
     try {
       const res = await api.post(`/meetings/${meeting.id}/send`, {
         to: to.map(a => a.email), cc: cc.map(a => a.email),
         subject, attach_as: attachAs,
       })
-      toast.success(res.data.sent ? 'Minutes sent.' : 'SMTP not configured — logged instead of sent (dev mode).')
-      onClose()
+      if (res.data.sent) {
+        toast.success('Minutes sent.')
+        onClose()
+      } else {
+        setFallback(res.data.message || 'fluidGo could not send this email.')
+      }
     } catch (e: any) {
-      setErr(getErrorMessage(e, 'Could not send'))
+      setFallback(getErrorMessage(e, 'fluidGo could not send this email.'))
     } finally {
       setSending(false)
     }
@@ -424,6 +443,23 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
         </div>
 
         {err && <p className="text-red-500 text-xs mt-3">{err}</p>}
+
+        {fallback && (
+          <div role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+            <p className="font-semibold">Could not send from fluidGo — nothing was delivered.</p>
+            <p className="mt-1">{fallback}</p>
+            <p className="mt-2">Backup: download the minutes and send them from your own mailbox. The button below opens a draft with the recipients, Cc and subject already filled in — attach the downloaded file.</p>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button type="button" className="btn-outline" disabled={!!downloading} onClick={() => onDownload('pdf')}>
+                {downloading === 'pdf' ? '⏳ …' : '⬇ Download PDF'}
+              </button>
+              <button type="button" className="btn-outline" disabled={!!downloading} onClick={() => onDownload('docx')}>
+                {downloading === 'docx' ? '⏳ …' : '⬇ Download Word'}
+              </button>
+              <a className="btn-primary" href={mailtoHref}>✉️ Open in my mail app</a>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-2 mt-5">
           <button onClick={send} disabled={sending || !to.length} className="btn-primary flex-1 disabled:opacity-40">
@@ -718,7 +754,8 @@ export default function MeetingDetail() {
       </div>
 
       {showSend && (
-        <SendMomModal meeting={meeting} attendees={attendees} onClose={() => setShowSend(false)} />
+        <SendMomModal meeting={meeting} attendees={attendees} onClose={() => setShowSend(false)}
+          onDownload={f => downloadExport(f)} downloading={exporting} />
       )}
     </div>
   )
