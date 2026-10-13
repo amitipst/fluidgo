@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.version import APP_VERSION
 from app.routers import (auth, dsr, meetings, leads, pipeline, analytics,
                           ai, users, opportunities, scoring, roles,
                           fga_approval, incentives, audit, system, dor,
                           feedback, compliance, governance)
 
-app = FastAPI(title="fluidGo API", version="1.0.0", docs_url="/api/docs")
+app = FastAPI(title="fluidGo API", version=APP_VERSION, docs_url="/api/docs")
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,4 +39,4 @@ app.include_router(governance.router,   prefix="/api/governance",  tags=["govern
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "fluidGo", "version": "1.0.0"}
+    return {"status": "ok", "service": "fluidGo", "version": APP_VERSION}

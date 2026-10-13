@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = "http://localhost,http://localhost:3000"
     ENVIRONMENT: str = "development"
+    # Product/brand name shown on exported documents (Minutes of Meeting
+    # xlsx/pdf/docx) and similar customer-facing output. A named setting
+    # rather than a literal string in the generator code — this app is
+    # internal-only today, but Amit's call (2026-08-04) is to keep the
+    # architecture open for a future multi-tenant version without a
+    # rearchitecture; this is one of the near-zero-cost things that buys,
+    # not a build-now for multi-tenancy itself.
+    APP_NAME: str = "fluidGo"
 
     # ── Email (password reset) ────────────────────────────────────────────────
     # Microsoft 365 SMTP. Provision a no-reply mailbox in the wepsol.com tenant
@@ -20,6 +28,12 @@ class Settings(BaseSettings):
     SMTP_USER:      str = ""          # e.g. fluidgo-noreply@wepsol.com
     SMTP_PASSWORD:  str = ""          # app password from M365
     SMTP_FROM:      str = "fluidGo <fluidgo-noreply@wepsol.com>"
+    # Minutes/other user-initiated mail: show the logged-in user as the sender.
+    # False (default, always deliverable): From = "<User name> via fluidGo <SMTP_FROM address>"
+    #   with Reply-To = the user's own address. True: From = the user's own address, which
+    #   needs the M365 "Send As" permission for the relay mailbox on each user (or an
+    #   equivalent relay); if the server refuses the sender we fall back automatically.
+    SMTP_SEND_AS_USER: bool = False
     APP_BASE_URL:   str = "https://fluidgo.wepsol.com"   # for building reset links
     RESET_TOKEN_TTL_MINUTES: int = 30
 

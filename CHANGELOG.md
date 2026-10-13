@@ -10,6 +10,115 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.3.0] — Unreleased (release candidate on `release/v1.3.0`)
+
+> Batches CSG Phase 2 (Meeting Management + AI Minutes of Meeting), the first
+> real KRA scoring template, and release-hygiene fixes. **Database:** three new
+> additive migrations, `0031` -> `0032` -> `0033` (production is at `0030`).
+> Roll-forward only; see "Rollback" in the release PR for the downgrade path.
+
+### Changed (UAT feedback, 2026-10-13)
+- Minutes of Meeting exports (PDF, Word, Excel) and the customer e-mail redesigned: branded header,
+  meeting-details block, name/email attendee table, numbered discussion points, readable dates
+  (18 May 2026), owner shown as "Name (Side)", AI summary rendered from markdown instead of raw `##`/`-`,
+  fluidPro (portfolio) and wepsol (company) logos on a white letterhead strip, with the fluidGo platform name in the footer only, landscape A4 page layout (PDF/Word/Excel print setup) and page footer with page numbers. Fixes black "■" separator glyphs in the PDF and "(no email)" noise.
+- Meeting detail page: purpose shown as "Sales Discovery" (not `sales_discovery`), friendly date.
+- Send-to-Customer: the dialog shows the logged-in user as the sender and Cc's their reporting manager by default
+  (editable; `GET /meetings/{id}/send-defaults`). Mail goes out as "<User> via fluidGo" with Reply-To = the user;
+  set `SMTP_SEND_AS_USER=true` to send From the user's own address once M365 Send-As is granted (auto-falls back if refused).
+- Send-to-Customer fallback: if fluidGo cannot send (SMTP not configured, relay refused, network), the dialog stays open
+  with a clear warning, **Download PDF / Word** buttons and an **Open in my mail app** draft (recipients, Cc, subject pre-filled).
+  A failed send is audited as `SEND_MOM_FAILED`, never as sent.
+- **Bug fix:** when the AI service is down, "Generate" no longer saves the error text as the minutes. It now returns 503
+  ("no minutes were generated, existing minutes unchanged"); exports and the customer e-mail also ignore any error text
+  stored by earlier drafts. Send subject uses a readable date.
+- Tests: `backend/tests/test_mom_export_service.py`.
+
+### Added
+- **Meeting Management for Service Delivery** (migration `0031`): the
+  `meetings` table now serves both Sales and Service Delivery (`source`,
+  `meeting_purpose`, `attendees`, soft links `account_id` / `dsr_id` /
+  `dor_id`). Closes the DSR-to-Meeting and DOR-to-Meeting counter
+  disconnects.
+- **AI Minutes of Meeting (MOM)**: `POST /meetings/{id}/generate-mom` with a
+  required human finalize step (`PATCH /meetings/{id}/mom`) before a draft
+  counts as authoritative.
+- **MOM extension** (migration `0032`): structured attendees (Us / Customer),
+  discussion-points repeater, revision history table `meeting_mom_revisions`,
+  `GET/PATCH /meetings/{id}`, `GET /meetings/{id}/revisions`, export to
+  Excel / PDF / Word, and send-to-customer by email with CC. New
+  `/meetings/:id` detail page; read-only Meetings entry for the Governance
+  role. New backend dependencies: openpyxl, python-docx, reportlab.
+- **Config-driven KRA scoring** (migration `0033`, `scoring_parameters.is_bonus`):
+  bonus lines that add on top of the weighted 100% split, `linear` tier
+  formula and tier `cap`, and a seeded "Business Head / Direct Sales FGA v1"
+  template (`backend/seed_business_head.py`) validated against the July FGA
+  sheet.
+- `backend/app/version.py` and `scripts/check_version_sync.py`: one version
+  source for the API, `/api/health`, UI footer and `package.json`, with a
+  drift check usable in CI.
+
+### Changed
+- Delivery-mode meeting form (Purpose dropdown, no BANT); DOR save
+  confirmation (toast + persistent status line); Manual KPI Entry now lists
+  only a manager's actual reportees (`direct_reports_only`).
+- `/api/health` and OpenAPI now report the real release version (previously
+  hard-coded `1.0.0`). Frontend footer/Help show `1.3.0`.
+
+### Fixed
+- **Security (P0):** the Governance role could write to any meeting org-wide;
+  now blocked on all MOM write endpoints.
+- Meeting detail accessibility (WCAG 2.1 AA): focus trap and Escape in the
+  Send modal, keyboard-reachable "Attach as" radios, keyboard edit of
+  attendee chips, 44px remove targets, associated Subject label, distinct
+  loading state in Revision History.
+- Vite HMR on Docker Desktop for Windows bind mounts (polling watch).
+- Removed redundant "Total Users" tile from System Health (from `main`, PR #13).
+- Alembic: the KRA migration was renumbered `0031` -> `0033` because
+  `develop` already used `0031`; two migrations with the same revision would
+  have produced two heads.
+
+---
+
+## [1.2.0] — 2026-08-04
+
+> Consolidation release: four previously undeployed branches merged to `main`
+> and `develop` (R0), tagged at `07e66af`. Supersedes the `v1.1.0` tag.
+> Alembic head: `0030`.
+
+### Added
+- **DSR backfill:** reps can submit a missed DSR for the last 7 days.
+- **Governance role** and DSR/DMR/DOR **compliance dashboard** with report
+  exports (migration `0030`); governance sees submission status org-wide
+  with no financial data and no approval authority.
+- **In-app feedback capture** with Jira filing and admin alerts (migration `0028`).
+- **Role-aware Help & Guide** covering every feature.
+- Seed/archived-data exclusion extended to Pipeline, Leads and FGA scoring
+  (migrations `0027`, `0029`).
+- Branch protection on `main` and `develop`.
+
+### Fixed
+- FGA `manager_review` scope leak: any user at level >= 20 could action any
+  pending result; now limited to the reviewer's scope.
+- Smoke test blind to the forced password-change gate; password rotation.
+- Governance added to `V3_ROLES` and `LEADERSHIP_ROLES` so onboarded users
+  appear.
+- `seed_v3.py` placeholder data no longer pollutes Analytics.
+
+---
+
+## [1.1.0] — 2026-07-21 (tag superseded by 1.2.0)
+
+> Minor tag placed at `725534b`; it contains only the two commits below on top
+> of 1.0.5 (same Alembic head, `0026`). Use `1.2.0` instead.
+
+### Fixed
+- Deactivated users are excluded from actionable approval queues.
+- CI environment URL points at the actual UAT domain.
+
+---
+
+
 ## [1.0.5] — 2026-07-15
 
 > **Production promotion release.** The existing UAT environment is promoted

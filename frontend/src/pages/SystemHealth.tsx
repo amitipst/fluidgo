@@ -87,7 +87,6 @@ export default function SystemHealth() {
           <StatCard label="Failed Logins"    value={health?.activity?.failed_logins_24h ?? 0} icon="⚠️" color="#DC2626" />
           <StatCard label="Audit Events 24h" value={health?.activity?.audit_events_24h ?? 0}  icon="📊" color="#7B2D8B" />
           <StatCard label="Retention Policy" value="90 days" icon="🗓️" color="#0D9488" />
-          <StatCard label="Total Users"      value={health?.users?.total ?? 0}           icon="🏢" color="#F0115E" />
         </div>
       )}
 
