@@ -77,3 +77,20 @@ def test_sender_headers_without_sender_uses_relay(monkeypatch):
     from app.services import email_service as es
     frm, env, reply = es._sender_headers(None, None, as_user=False)
     assert reply is None and env == "fluidgo-noreply@wepsol.com"
+
+
+# ── AI failure must never become minutes ─────────────────────────────────────
+def test_is_ai_error_detects_the_service_failure_string():
+    from app.services import ai_service
+    assert ai_service.is_ai_error("⚠️ AI analysis unavailable: boom\n\nEnsure Ollama is running")
+    assert not ai_service.is_ai_error("## Summary\nAll good")
+    assert not ai_service.is_ai_error(None)
+
+
+def test_export_ignores_stored_ai_error_text():
+    bad = {**MEETING, "ai_mom_summary": "⚠️ AI analysis unavailable: [Errno -3] Temporary failure in name resolution"}
+    doc = s.build_minutes_document(bad)
+    assert doc.ai_mom_summary is None
+    html, text = s.render_email_html(doc)
+    assert "unavailable" not in html and "unavailable" not in text
+    assert s.EXPORT_RENDERERS["pdf"][0](doc).startswith(b"%PDF")

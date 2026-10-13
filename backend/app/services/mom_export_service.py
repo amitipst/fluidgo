@@ -31,6 +31,13 @@ class MinutesDocument:
     finalized_note: str
 
 
+def _clean_summary(text):
+    """Drafts saved before the generate-mom guard may contain an AI *error message* as the
+    summary; never print that into a customer-facing document."""
+    from app.services.ai_service import is_ai_error
+    return None if (not text or is_ai_error(text)) else text
+
+
 def build_minutes_document(m) -> MinutesDocument:
     """m is a Meeting ORM row or a dict from _serialize_meeting_detail —
     both are read the same way below."""
@@ -46,7 +53,7 @@ def build_minutes_document(m) -> MinutesDocument:
         attendees_us=[a for a in attendees if a.get("side") == "us"],
         attendees_customer=[a for a in attendees if a.get("side") == "customer"],
         discussion_points=g("discussion_points") or [],
-        ai_mom_summary=g("ai_mom_summary"),
+        ai_mom_summary=_clean_summary(g("ai_mom_summary")),
         mom_status=g("mom_status") or "none",
         finalized_note="Finalized" if g("mom_status") == "finalized" else "Draft, not yet finalized",
     )

@@ -29,6 +29,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Send-to-Customer fallback: if fluidGo cannot send (SMTP not configured, relay refused, network), the dialog stays open
   with a clear warning, **Download PDF / Word** buttons and an **Open in my mail app** draft (recipients, Cc, subject pre-filled).
   A failed send is audited as `SEND_MOM_FAILED`, never as sent.
+- **Bug fix:** when the AI service is down, "Generate" no longer saves the error text as the minutes. It now returns 503
+  ("no minutes were generated, existing minutes unchanged"); exports and the customer e-mail also ignore any error text
+  stored by earlier drafts. Send subject uses a readable date.
 - Tests: `backend/tests/test_mom_export_service.py`.
 
 ### Added

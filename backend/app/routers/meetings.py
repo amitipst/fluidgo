@@ -421,6 +421,11 @@ async def generate_mom(meeting_id: str, request: Request, background_tasks: Back
     )
     before_summary = m.ai_mom_summary
     summary = await ai_service.analyse(context, prompt_type="meeting_mom")
+    if ai_service.is_ai_error(summary):
+        # Nothing is saved: the existing minutes (if any) stay exactly as they were.
+        raise HTTPException(503, "The AI service is not responding right now, so no minutes were generated "
+                                 "and your existing minutes are unchanged. Please try again in a few minutes, "
+                                 "or write the summary yourself with Edit.")
     m.ai_mom_summary = summary
     m.ai_mom_generated_at = datetime.utcnow()
     m.mom_status = "generated"
@@ -534,7 +539,7 @@ async def send_meeting(meeting_id: str, body: SendMeetingIn, request: Request,
         raise HTTPException(400, "At least one recipient (To) is required.")
     m = await _get_meeting_or_404(meeting_id, db, user)
     doc = export_svc.build_minutes_document(m)
-    subject = body.subject or f"Minutes of Meeting — {m.company} — {m.date}"
+    subject = body.subject or f"Minutes of Meeting — {m.company} — {export_svc.fmt_date(m.date)}"
 
     attachment = None
     if body.attach_as in ("pdf", "docx"):

@@ -270,6 +270,11 @@ function RevisionEntry({ r }: { r: any }) {
   )
 }
 
+const fmtDateGB = (v?: string) => {
+  const d = v ? new Date(`${String(v).slice(0, 10)}T00:00:00`) : null
+  return d && !isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : (v ?? '')
+}
+
 // ── Send to Customer modal ──────────────────────────────────────────────────
 function SendMomModal({ meeting, attendees, onClose, onDownload, downloading }: {
   meeting: any; attendees: AttendeeDraft[]; onClose: () => void
@@ -299,7 +304,7 @@ function SendMomModal({ meeting, attendees, onClose, onDownload, downloading }: 
     }).catch(() => { /* defaults are a convenience; sending still works without them */ })
     return () => { alive = false }
   }, [meeting.id])
-  const [subject, setSubject] = useState(`Minutes of Meeting — ${meeting.company} — ${meeting.date}`)
+  const [subject, setSubject] = useState(`Minutes of Meeting — ${meeting.company} — ${fmtDateGB(meeting.date)}`)
   const [attachAs, setAttachAs] = useState<'pdf' | 'docx' | 'inline'>('pdf')
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState('')

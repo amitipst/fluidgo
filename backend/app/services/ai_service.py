@@ -55,6 +55,16 @@ async def analyse(context: str, model: str = None, prompt_type: str = "daily_ins
         detail = str(e) or f"{type(e).__name__} (no message — likely a timeout waiting for the model to finish generating)"
         return f"⚠️ AI analysis unavailable: {detail}\n\nEnsure Ollama is running and the model is pulled."
 
+AI_ERROR_PREFIX = "\u26a0\ufe0f AI analysis unavailable"
+
+
+def is_ai_error(text) -> bool:
+    """analyse() returns its failure as a normal string (other callers rely on that), so
+    anything that PERSISTS or SENDS model output must check this first — an error message
+    must never be stored as, or exported as, real content."""
+    return isinstance(text, str) and text.lstrip().startswith(AI_ERROR_PREFIX)
+
+
 async def stream_analyse(context: str, model: str = None, prompt_type: str = "daily_insight"):
     m = model or settings.OLLAMA_MODEL
     prompt = build_prompt(context, prompt_type)
