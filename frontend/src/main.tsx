@@ -11,6 +11,7 @@ import Dashboard from '@/pages/Dashboard'
 import DSREntry from '@/pages/DSREntry'
 import DSRHistory from '@/pages/DSRHistory'
 import Meetings from '@/pages/Meetings'
+import MeetingDetail from '@/pages/MeetingDetail'
 import Leads from '@/pages/Leads'
 import Pipeline from '@/pages/Pipeline'
 import Analytics from '@/pages/Analytics'
@@ -78,6 +79,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="dsr/history" element={<DSRHistory />} />
               {/* Field activities */}
               <Route path="meetings"      element={<Meetings />} />
+              {/* Governance reaches this via its own nav link (Layout.tsx);
+                  every other role reaches it from the Meetings list. Same
+                  route serves both edit and read-only render modes — see
+                  MeetingDetail.tsx's isGovernance check — one screen to
+                  maintain instead of a parallel governance-only view. */}
+              <Route path="meetings/:id"  element={<MeetingDetail />} />
               <Route path="leads"         element={<Leads />} />
               <Route path="pipeline"      element={<Pipeline />} />
               <Route path="opportunities" element={<Opportunities />} />

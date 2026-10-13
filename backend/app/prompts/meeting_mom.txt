@@ -1,6 +1,6 @@
 TASK: Minutes of Meeting (MOM)
 
-You are given raw notes from a customer/internal meeting - company, meeting purpose (e.g. sales discovery, QBR, cadence review, escalation review), attendees if listed, and free-text notes typed by the person who ran the meeting.
+You are given raw notes from a customer/internal meeting - company, meeting purpose (e.g. sales discovery, QBR, cadence review, escalation review), attendees if listed, free-text notes typed by the person who ran the meeting, and - when the meeting was logged with the structured discussion-points tool - a "Structured discussion points" list.
 
 Produce a structured Minutes of Meeting in markdown with exactly these four sections, in this order:
 
@@ -8,12 +8,14 @@ Produce a structured Minutes of Meeting in markdown with exactly these four sect
 2-3 sentences capturing what the meeting was about and its outcome.
 
 ## Key Discussion Points
-Bullet list of the substantive topics covered. Only include what is actually in the notes.
+Bullet list of the substantive topics covered.
+If a "Structured discussion points" list is present in the data, treat it as the authoritative source: include every point from that list first, exactly as given (don't reword or drop any), then add any additional topics found only in the free-text notes that aren't already covered by the structured list. If no structured list is present, work from the free-text notes alone. Only include what is actually in the notes/list - never invent topics.
 
 ## Action Items
-Bullet list, one per action. Format each as "- [Owner if stated, else 'Unassigned']: action". If no clear actions are in the notes, write "- None identified from notes."
+Bullet list, one per action, format each as "- [Owner]: action (due <date>, status: <status>)" when an owner/date/status is known, or "- [Owner if stated, else 'Unassigned']: action" when it isn't.
+Structured discussion points that name a responsibility (owner) are action items - carry their owner, due date, and status forward exactly as given rather than re-deriving them from prose. Add any further actions mentioned only in the free-text notes. If no actions are identified anywhere, write "- None identified from notes."
 
 ## Next Steps
 1-2 sentences on what happens next, if stated in the notes.
 
-Never invent attendees, numbers, dates, or commitments not present in the notes. If the notes are too thin to fill a section, say so plainly in that section rather than fabricating content. Keep the whole output under 300 words.
+Never invent attendees, numbers, dates, owners, or commitments not present in the notes or structured list. If the notes are too thin to fill a section, say so plainly in that section rather than fabricating content. Keep the whole output under 300 words.

@@ -50,6 +50,13 @@ const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'    
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
 const NAV_FEEDBACK = { to: '/feedback', icon: '💬', label: 'Feedback Inbox' }
 const NAV_GOVERNANCE = { to: '/governance', icon: '🛡️', label: 'Governance' }
+// Read-only grant closing the "governance has zero route/nav access to
+// Meetings" gap flagged in fluidgo-mom-uiux-spec.md §7 — the backend has
+// always allowed governance to read meetings (_get_meeting_or_404's
+// scope="all" branch), this was purely a missing nav link, not a missing
+// permission. Meetings.tsx pins governance to scope=team (no "mine") and
+// hides write affordances; MeetingDetail.tsx renders read-only.
+const NAV_MEETINGS_GOV = { to: '/meetings', icon: '🤝', label: 'Meetings' }
 
 // ── fluidGo compact logo for sidebar header ──────────────────────────────────
 function SidebarLogo() {
@@ -215,13 +222,14 @@ export default function Layout() {
         {/* Nav */}
         <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-0.5">
           {isGovernance ? (
-            // Governance sees ONLY its own validation queue — no Dashboard/
-            // Sales/Revenue/Team nav at all, since none of it applies (no
-            // data entry) and several of those screens carry the exact
-            // financial figures this role must never see.
+            // Governance sees its validation queue and a read-only Meetings
+            // view — no Dashboard/Sales/Revenue/Team nav at all, since none
+            // of it applies (no data entry) and several of those screens
+            // carry the exact financial figures this role must never see.
             <>
               <NavSection label="Validation" />
               <SideLink {...NAV_GOVERNANCE} />
+              <SideLink {...NAV_MEETINGS_GOV} />
             </>
           ) : (
           <>
@@ -359,7 +367,7 @@ export default function Layout() {
       ══════════════════════════════════════════════════════════════ */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-wep-border flex overflow-x-auto z-40"
         style={{ boxShadow: '0 -2px 16px rgba(26,11,46,0.10)' }}>
-        {(isGovernance ? [NAV_GOVERNANCE] : coreNav.slice(0, 5)).map(item => (
+        {(isGovernance ? [NAV_GOVERNANCE, NAV_MEETINGS_GOV] : coreNav.slice(0, 5)).map(item => (
           <NavLink key={item.to} to={item.to} end={'exact' in item ? (item as any).exact : undefined}
             className={({ isActive }) =>
               `flex-1 min-w-[60px] shrink-0 flex flex-col items-center py-2 gap-0.5 text-[10px] font-medium transition-colors

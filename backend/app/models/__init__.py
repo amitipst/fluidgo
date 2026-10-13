@@ -284,7 +284,20 @@ class Meeting(Base):
     # Free string, not a DB enum — QBR/cadence_review/escalation_review/etc
     # is a growing, config-like list; a new purpose shouldn't need a migration.
     meeting_purpose:     Mapped[str]  = mapped_column(String(30), default="sales_discovery", server_default="sales_discovery", nullable=True)
-    attendees:           Mapped[list] = mapped_column(JSONB, nullable=True)  # [{name, title, is_external}]
+    # Shape grew in migration 0032 (no DDL needed, JSONB is schemaless): now
+    # [{name, email, title, side: "us"|"customer", is_external}] — email and
+    # side are new (is_external kept, derived from side, for anything still
+    # reading the old field). Validated at the Pydantic layer (see
+    # meetings.py's Attendee model), not the DB — same convention as
+    # everything else on this row.
+    attendees:           Mapped[list] = mapped_column(JSONB, nullable=True)
+    # NEW (migration 0032) — structured discussion points, one list item per
+    # row: {point, responsibility_side, responsibility_name, target_date,
+    # status}. Deliberately JSONB not a child table — see ADR-1 in
+    # fluidgo-mom-architecture-lld.md: these live and die with one meeting,
+    # nothing queries across meetings yet. Revisit if that changes (CSG
+    # Phase 4 health scoring is the likeliest trigger).
+    discussion_points:   Mapped[list] = mapped_column(JSONB, nullable=True)
     # AI-generated Minutes of Meeting — markdown text, same pattern as every
     # other AI output in this codebase (deal_health, deal_momentum,
     # daily_insight); phi3:mini is too small to trust for reliable JSON
@@ -294,6 +307,25 @@ class Meeting(Base):
     ai_mom_summary:       Mapped[str]      = mapped_column(Text, nullable=True)
     ai_mom_generated_at:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     mom_status:           Mapped[str]      = mapped_column(String(20), default="none", server_default="none")  # none|generated|edited|finalized
+
+
+# ── Minutes of Meeting revision history (migration 0032) ─────────────────────
+# Deliberately a real table, not a JSONB column on Meeting — see ADR-2 in
+# fluidgo-mom-architecture-lld.md. Append-only/unbounded growth is exactly
+# the shape a growing-on-every-edit JSONB blob handles badly; this is what
+# gives governance's read-only "Revision History" view (Meeting has no
+# governance_reviewed_by/at of its own — unlike DSR/DOR/scoring_results,
+# there's no money field to gate, so governance just needs to SEE this,
+# see deny_governance() usage in meetings.py) something real to show.
+class MeetingMomRevision(Base):
+    __tablename__ = "meeting_mom_revisions"
+    id:          Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    meeting_id:  Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=False)  # soft ref, matches account_id/dsr_id/dor_id on Meeting
+    actor_id:    Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=False)  # soft ref -> users.id
+    action:      Mapped[str]        = mapped_column(String(30), nullable=False)  # generated|edited|finalized|attendees_updated|discussion_points_updated
+    before:      Mapped[dict]       = mapped_column(JSONB, nullable=True)
+    after:       Mapped[dict]       = mapped_column(JSONB, nullable=True)
+    created_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class Lead(Base):
     __tablename__ = "leads"

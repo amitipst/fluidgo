@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = "http://localhost,http://localhost:3000"
     ENVIRONMENT: str = "development"
+    # Product/brand name shown on exported documents (Minutes of Meeting
+    # xlsx/pdf/docx) and similar customer-facing output. A named setting
+    # rather than a literal string in the generator code — this app is
+    # internal-only today, but Amit's call (2026-08-04) is to keep the
+    # architecture open for a future multi-tenant version without a
+    # rearchitecture; this is one of the near-zero-cost things that buys,
+    # not a build-now for multi-tenancy itself.
+    APP_NAME: str = "fluidGo"
 
     # ── Email (password reset) ────────────────────────────────────────────────
     # Microsoft 365 SMTP. Provision a no-reply mailbox in the wepsol.com tenant
