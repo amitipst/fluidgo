@@ -487,25 +487,7 @@ async def export_meeting(meeting_id: str, format: Literal["xlsx", "pdf", "docx"]
 
 
 def _render_send_body(doc) -> tuple[str, str]:
-    text = (
-        f"Minutes of Meeting — {doc.company} ({doc.date})\n\n"
-        f"{doc.ai_mom_summary or '(no summary generated yet — see attached document for details)'}\n\n"
-        f"— {settings.APP_NAME}"
-    )
-    html = f"""\
-<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1A0B2E">
-  <div style="background:linear-gradient(135deg,#F0115E,#92278E);padding:18px 22px;border-radius:12px 12px 0 0">
-    <div style="color:#fff;font-size:16px;font-weight:700">Minutes of Meeting</div>
-    <div style="color:rgba(255,255,255,0.85);font-size:12px">{doc.company} · {doc.date} · {doc.purpose}</div>
-  </div>
-  <div style="border:1px solid #eee;border-top:none;padding:20px;border-radius:0 0 12px 12px;font-size:14px;line-height:1.5">
-    {(doc.ai_mom_summary or '(no summary generated yet — see attached document for details)').replace(chr(10), '<br>')}
-    <p style="color:#999;font-size:11px;border-top:1px solid #eee;padding-top:10px;margin-top:16px">
-      Sent via {settings.APP_NAME}
-    </p>
-  </div>
-</div>"""
-    return html, text
+    return export_svc.render_email_html(doc)
 
 
 class SendMeetingIn(BaseModel):

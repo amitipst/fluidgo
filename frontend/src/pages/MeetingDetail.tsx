@@ -530,9 +530,14 @@ export default function MeetingDetail() {
     )
   }
 
+  const humanize = (v: string) => v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  const fmtDate = (v?: string) => {
+    const d = v ? new Date(`${v.slice(0, 10)}T00:00:00`) : null
+    return d && !isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : (v ?? '')
+  }
   const purposeLabel = meeting.source === 'service_delivery'
     ? (DELIVERY_PURPOSES.find(p => p.val === meeting.meeting_purpose)?.label ?? meeting.meeting_purpose)
-    : (meeting.meeting_purpose ?? 'Sales Discovery')
+    : humanize(meeting.meeting_purpose ?? 'sales_discovery')
   const status = MOM_STATUS_CFG[meeting.mom_status] ?? MOM_STATUS_CFG.none
   const readOnly = isGovernance
 
@@ -546,7 +551,7 @@ export default function MeetingDetail() {
         <div>
           <h1 className="page-title">🤝 {meeting.company} — {purposeLabel}</h1>
           <p className="page-sub">
-            {meeting.date} · {meeting.meeting_type}{meeting.rep_name ? ` · logged by ${meeting.rep_name}` : ''}
+            {fmtDate(meeting.date)} · {meeting.meeting_type}{meeting.rep_name ? ` · logged by ${meeting.rep_name}` : ''}
           </p>
         </div>
         <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full h-fit ${status.cls}`}>{status.label}</span>

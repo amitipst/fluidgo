@@ -17,6 +17,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 > additive migrations, `0031` -> `0032` -> `0033` (production is at `0030`).
 > Roll-forward only; see "Rollback" in the release PR for the downgrade path.
 
+### Changed (UAT feedback, 2026-10-13)
+- Minutes of Meeting exports (PDF, Word, Excel) and the customer e-mail redesigned: branded header,
+  meeting-details block, name/email attendee table, numbered discussion points, readable dates
+  (18 May 2026), owner shown as "Name (Side)", AI summary rendered from markdown instead of raw `##`/`-`,
+  page footer with page numbers. Fixes black "■" separator glyphs in the PDF and "(no email)" noise.
+- Meeting detail page: purpose shown as "Sales Discovery" (not `sales_discovery`), friendly date.
+- Tests: `backend/tests/test_mom_export_service.py`.
+
 ### Added
 - **Meeting Management for Service Delivery** (migration `0031`): the
   `meetings` table now serves both Sales and Service Delivery (`source`,
