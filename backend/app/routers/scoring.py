@@ -28,6 +28,7 @@ class ParameterIn(BaseModel):
     tiers: Optional[list] = None    # only for calc_type='tiered' — see ScoringParameter docstring
     is_active: bool = True
     sort_order: int = 0
+    is_bonus: bool = False           # adds on top of the 100% weighted split — see 0031
 
 
 class TemplateIn(BaseModel):
@@ -42,12 +43,14 @@ def _current_period() -> str:
 
 
 def _validate_weights(parameters: list[ParameterIn]):
-    # Only ACTIVE parameters need to sum to 100 — a disabled one can carry any
-    # leftover weight without blocking save; re-enabling it later is exactly
-    # when its weight (and everyone else's) needs revisiting.
-    total = sum(p.weight_pct for p in parameters if p.is_active)
+    # Only ACTIVE, non-bonus parameters need to sum to 100 — a disabled one
+    # can carry any leftover weight without blocking save (re-enabling it
+    # later is exactly when its weight, and everyone else's, needs
+    # revisiting), and a bonus line adds on top of the 100% split by design
+    # (see 0031_kra_bonus_lines.py) so it's excluded from the sum entirely.
+    total = sum(p.weight_pct for p in parameters if p.is_active and not p.is_bonus)
     if round(total) != 100:
-        raise HTTPException(400, f"Active parameter weights must sum to 100, got {total}")
+        raise HTTPException(400, f"Active (non-bonus) parameter weights must sum to 100, got {total}")
 
 
 def _serialize_parameter(p: ScoringParameter) -> dict:
@@ -55,6 +58,7 @@ def _serialize_parameter(p: ScoringParameter) -> dict:
         "id": str(p.id), "name": p.name, "weight_pct": float(p.weight_pct),
         "metric_source": p.metric_source, "calc_type": p.calc_type,
         "tiers": p.tiers, "is_active": p.is_active, "sort_order": p.sort_order,
+        "is_bonus": p.is_bonus,
     }
 
 
@@ -107,7 +111,8 @@ async def create_template(body: TemplateIn, db: AsyncSession = Depends(get_db),
     for p in body.parameters:
         db.add(ScoringParameter(template_id=tmpl.id, name=p.name, weight_pct=p.weight_pct,
                                  metric_source=p.metric_source, calc_type=p.calc_type,
-                                 tiers=p.tiers, is_active=p.is_active, sort_order=p.sort_order))
+                                 tiers=p.tiers, is_active=p.is_active, sort_order=p.sort_order,
+                                 is_bonus=p.is_bonus))
     await db.commit()
     return {"id": str(tmpl.id), "role_key": tmpl.role_key, "version": tmpl.version}
 
@@ -128,7 +133,8 @@ async def update_parameters(template_id: str, body: list[ParameterIn], db: Async
     for p in body:
         db.add(ScoringParameter(template_id=template_id, name=p.name, weight_pct=p.weight_pct,
                                  metric_source=p.metric_source, calc_type=p.calc_type,
-                                 tiers=p.tiers, is_active=p.is_active, sort_order=p.sort_order))
+                                 tiers=p.tiers, is_active=p.is_active, sort_order=p.sort_order,
+                                 is_bonus=p.is_bonus))
     await db.commit()
     return {"template_id": template_id, "updated": True}
 

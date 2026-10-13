@@ -136,25 +136,47 @@ async def _get_manual_metric_value(db: AsyncSession, user: User, metric_key: str
     return float(entry.value) if entry else 0.0
 
 
-def resolve_tier_multiplier(value: float, tiers: list) -> float:
-    """Looks `value` (0-100 achievement, or whatever scale the tiers use) up
-    against a parameter's tier bands to find its multiplier. Each tier is
-    {"label": str, "min": float|None, "max": float|None, "multiplier": float|None,
-    "formula": str|None}. Bounds are half-open: min <= value < max (top tier's
-    max is None = open-ended, bottom tier's min is None = -infinity).
-    "formula": "square" computes multiplier = (value/100)**2 instead of using
-    a flat number — e.g. a KRA scored as "square of achievement" above a
-    qualifying threshold, rewarding values close to 100% disproportionately."""
+def find_tier(value: float, tiers: list) -> dict | None:
+    """The tier band `value` falls into, or None if none matched (misconfigured
+    template). Bounds are half-open: min <= value < max (top tier's max is None
+    = open-ended, bottom tier's min is None = -infinity)."""
     for tier in (tiers or []):
         lo, hi = tier.get("min"), tier.get("max")
         if lo is not None and value < lo:
             continue
         if hi is not None and value >= hi:
             continue
-        if tier.get("formula") == "square":
-            return (value / 100.0) ** 2
+        return tier
+    return None
+
+
+def resolve_tier_multiplier(value: float, tiers: list) -> float:
+    """Looks `value` (0-100 achievement, or whatever scale the tiers use) up
+    against a parameter's tier bands to find its multiplier. Each tier is
+    {"label": str, "min": float|None, "max": float|None, "multiplier": float|None,
+    "formula": str|None, "cap": float|None}.
+    "formula": "square" computes multiplier = (value/100)**2 instead of using a
+    flat number — e.g. a KRA scored as "square of achievement" above a
+    qualifying threshold, rewarding values close to 100% disproportionately.
+    "formula": "linear" computes multiplier = value/100 — straight proportionate
+    scoring within a band (e.g. "80% to 100% = proportionate").
+    "cap": if present on a "square"/"linear" tier, the computed multiplier is
+    clamped to this ceiling — e.g. an open-ended top tier ("110%+, square of
+    achievement, capped at 169%") uses {"min": 110, "formula": "square",
+    "cap": 1.69} so unlimited overachievement still tops out at 1.69x rather
+    than climbing forever or (worse) falling through to no matching tier."""
+    tier = find_tier(value, tiers)
+    if tier is None:
+        return 0.0  # no tier matched — misconfigured template, fail safe to 0
+    formula = tier.get("formula")
+    if formula == "square":
+        result = (value / 100.0) ** 2
+    elif formula == "linear":
+        result = value / 100.0
+    else:
         return float(tier.get("multiplier") or 0.0)
-    return 0.0  # no tier matched — misconfigured template, fail safe to 0
+    cap = tier.get("cap")
+    return min(result, cap) if cap is not None else result
 
 
 METRIC_REGISTRY = {
@@ -202,14 +224,26 @@ async def compute_score(db: AsyncSession, user: User, period: str) -> dict:
             value = await calc(db, user, period) if calc else 0.0
         weight = float(p.weight_pct)
 
-        row = {"name": p.name, "weight_pct": weight, "value": round(value, 1)}
+        row = {"name": p.name, "weight_pct": weight, "value": round(value, 1),
+               "is_bonus": bool(p.is_bonus)}
         if p.calc_type == "tiered":
-            multiplier = resolve_tier_multiplier(value, p.tiers)
-            contribution = weight * multiplier
-            row["multiplier"] = round(multiplier, 3)
+            tier = find_tier(value, p.tiers) if p.is_bonus else None
+            if tier is not None and tier.get("formula") == "per_unit":
+                # Bonus-only shape: raw value (e.g. a count) x a flat point
+                # value per unit, uncapped — "0.5 pts per 5% over target"
+                # rather than a multiplier applied to a weight.
+                contribution = value * float(tier.get("unit_value") or 0)
+                row["unit_value"] = tier.get("unit_value")
+            else:
+                multiplier = resolve_tier_multiplier(value, p.tiers)
+                contribution = weight * multiplier
+                row["multiplier"] = round(multiplier, 3)
         else:
             contribution = value * (weight / 100.0)
         row["contribution"] = round(contribution, 2)
+        # Bonus lines add straight onto the total — they sit outside the
+        # 100%-weighted base split (see 0031_kra_bonus_lines.py) and are
+        # excluded from the weight-sum-to-100 validation on save.
         total += contribution
         breakdown.append(row)
 
