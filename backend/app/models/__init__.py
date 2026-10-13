@@ -269,6 +269,63 @@ class Meeting(Base):
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     # Seed-data marker — see DSRDaily.is_seed above and migration 0027.
     is_seed:          Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    # ── CSG Phase 2 — Meeting Management + AI MOM Generator (migration 0031) ──
+    # Generalizes this table beyond Sales-only BANT meetings so Service
+    # Delivery (QBR/cadence/escalation reviews) can log against it too,
+    # instead of a parallel table. source picks the persona; account_id/
+    # dsr_id/dor_id are soft refs (no FK constraint, same convention as
+    # PipelineDeal.account_id) that close the disconnect between this table
+    # and DSRDaily.virtual_meetings / DORDaily.client_meetings_held — both
+    # were manually-typed counters with no rows behind them.
+    source:              Mapped[str]  = mapped_column(String(20), default="sales", server_default="sales")  # sales | service_delivery
+    account_id:          Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    dsr_id:              Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # set when source=sales
+    dor_id:              Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # set when source=service_delivery
+    # Free string, not a DB enum — QBR/cadence_review/escalation_review/etc
+    # is a growing, config-like list; a new purpose shouldn't need a migration.
+    meeting_purpose:     Mapped[str]  = mapped_column(String(30), default="sales_discovery", server_default="sales_discovery", nullable=True)
+    # Shape grew in migration 0032 (no DDL needed, JSONB is schemaless): now
+    # [{name, email, title, side: "us"|"customer", is_external}] — email and
+    # side are new (is_external kept, derived from side, for anything still
+    # reading the old field). Validated at the Pydantic layer (see
+    # meetings.py's Attendee model), not the DB — same convention as
+    # everything else on this row.
+    attendees:           Mapped[list] = mapped_column(JSONB, nullable=True)
+    # NEW (migration 0032) — structured discussion points, one list item per
+    # row: {point, responsibility_side, responsibility_name, target_date,
+    # status}. Deliberately JSONB not a child table — see ADR-1 in
+    # fluidgo-mom-architecture-lld.md: these live and die with one meeting,
+    # nothing queries across meetings yet. Revisit if that changes (CSG
+    # Phase 4 health scoring is the likeliest trigger).
+    discussion_points:   Mapped[list] = mapped_column(JSONB, nullable=True)
+    # AI-generated Minutes of Meeting — markdown text, same pattern as every
+    # other AI output in this codebase (deal_health, deal_momentum,
+    # daily_insight); phi3:mini is too small to trust for reliable JSON
+    # extraction, so action items live inside the markdown, not a separate
+    # structured column. mom_status gives a human a required checkpoint
+    # before the AI draft is treated as authoritative.
+    ai_mom_summary:       Mapped[str]      = mapped_column(Text, nullable=True)
+    ai_mom_generated_at:  Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    mom_status:           Mapped[str]      = mapped_column(String(20), default="none", server_default="none")  # none|generated|edited|finalized
+
+
+# ── Minutes of Meeting revision history (migration 0032) ─────────────────────
+# Deliberately a real table, not a JSONB column on Meeting — see ADR-2 in
+# fluidgo-mom-architecture-lld.md. Append-only/unbounded growth is exactly
+# the shape a growing-on-every-edit JSONB blob handles badly; this is what
+# gives governance's read-only "Revision History" view (Meeting has no
+# governance_reviewed_by/at of its own — unlike DSR/DOR/scoring_results,
+# there's no money field to gate, so governance just needs to SEE this,
+# see deny_governance() usage in meetings.py) something real to show.
+class MeetingMomRevision(Base):
+    __tablename__ = "meeting_mom_revisions"
+    id:          Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    meeting_id:  Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=False)  # soft ref, matches account_id/dsr_id/dor_id on Meeting
+    actor_id:    Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=False)  # soft ref -> users.id
+    action:      Mapped[str]        = mapped_column(String(30), nullable=False)  # generated|edited|finalized|attendees_updated|discussion_points_updated
+    before:      Mapped[dict]       = mapped_column(JSONB, nullable=True)
+    after:       Mapped[dict]       = mapped_column(JSONB, nullable=True)
+    created_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -453,6 +510,11 @@ class ScoringParameter(Base):
     tiers:         Mapped[list]      = mapped_column(JSONB, nullable=True)         # only for calc_type='tiered'
     is_active:     Mapped[bool]      = mapped_column(Boolean, default=True, server_default="true")
     sort_order:    Mapped[int]       = mapped_column(Integer, default=0)
+    # Bonus line (0031): adds its contribution directly on top of the
+    # weighted 100% split instead of being part of it — for uncapped
+    # incentive KRAs (e.g. "0.5 pts per 5% over target, no ceiling").
+    # Excluded from the active-weights-must-sum-to-100 validation.
+    is_bonus:      Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
 
 class ManualMetricEntry(Base):
     """Period achievement value for a 'manual.*' metric_source, entered via UI

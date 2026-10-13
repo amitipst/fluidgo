@@ -968,3 +968,456 @@ by `gh pr merge --delete-branch` at merge time, confirmed via `git fetch
 R0 status unchanged otherwise — still functionally closed, with this one
 correction: the billing lock item goes back to ⛔ open/unconfirmed rather
 than ✅.
+
+
+## 2026-08-04 (same day, continued 5) — Roadmap reconciliation: R1 retired in favor of CSG Phase 2
+
+Before writing any R1 code (the planned `interactions` ledger +
+`health_engine` primitives), read `backend/app/models/__init__.py` in full
+to ground the design in the real schema, and found the `Account` model's
+docstring pointing at an existing Linear project doc: **"Epic 9 — Customer
+Success Governance (CSG) — Roadmap & Phasing"** (created 2026-07-11, before
+this session's assessment work existed). Stopped and read it in full via
+the Linear MCP before designing anything, per the Constitution's "does
+something similar already exist" gate.
+
+**What CSG already covers:** Phase 1 (Account entity, hunting/farming
+`deal_type`, SDM→Sales opportunity signal) is live. Phase 2 (unscheduled):
+Meeting Management + AI MOM Generator — the foundational data-capture
+layer. Phase 3: Service Improvement Plans + Customer Timeline (aggregates
+Phase 2 data per-account). Phase 4: AI Customer Intelligence (health/risk
+scoring). Phase 5: AI Opportunity Engine (auto-surfaced signals,
+supersedes Phase 1's manual flagging). Phase 6 (deferred): external
+integrations (ServiceDesk Plus, Site24x7, Seceon, Teams, Outlook).
+
+**Decision (confirmed with Amit):** this maps almost exactly onto what the
+assessment doc's R1 (interactions ledger) and later phases (health_engine
+≈ Phase 4, Farming Intelligence ≈ Phase 5) were about to independently
+propose. Running two parallel roadmaps for the same ground would be
+exactly the kind of drift the Constitution exists to prevent. **R1-R6
+numbering is retired for the customer-lifecycle thread; CSG's phase
+numbering becomes canonical for it.** The assessment's 12-area findings
+that CSG does *not* touch (Escalation Management, Governance/Compliance
+workflow polish, AI Practice Management, Knowledge Intelligence, unified
+AI Copilot, Executive Intelligence digest) stay on an independent track,
+sequenced around CSG rather than folded into it.
+
+**Next build item: CSG Phase 2 — Meeting Management + AI MOM Generator.**
+This also absorbs the open "DSR↔Meeting structural disconnect" finding
+(#3, open since 2026-07-21) — fixed as part of rebuilding how meetings are
+captured and linked, not as a separate parallel patch.
+
+**Developer/DSR question (raised by Amit):** confirmed developers should
+not use the sales-shaped DSR form (would pollute FGA/compliance metrics
+built around sales fields). Developer daily-activity logging belongs to
+the separate AI Practice Management track (skills/capacity/timesheets),
+which has no overlap with CSG. Amit confirmed this is not urgent — stays
+sequenced normally, behind CSG Phase 2.
+
+Note from the Linear doc itself: the WEP team workspace hit its free-tier
+issue cap while this doc was written (2026-07-11) — Phases 2-6 don't have
+their own Linear issues yet, tracked only in this doc and here. Not
+blocking (we don't need Linear issues to build), but worth Amit knowing
+next time issue-tracking hygiene comes up.
+
+
+## 2026-08-04 (same day, continued 6) — CSG Phase 2 built: Meeting Management + AI MOM Generator
+
+Built on `feature/csg-phase2-meeting-management` off `develop`. Extends the
+existing `meetings` table (migration 0031) rather than a parallel one:
+
+- `source` (sales|service_delivery, default sales) — mirrors `PipelineDeal.source`.
+- `account_id` — auto-resolved via the existing `account_service.get_or_create_account()`,
+  same call DOR's flag-opportunity already uses.
+- `dsr_id` / `dor_id` — soft refs, auto-linked to that user+date's DSR/DOR row
+  if one exists yet. This is the actual fix for the open "DSR↔Meeting
+  disconnect" finding (#3, open since 2026-07-21) — and it turned out to be
+  symmetric: `DORDaily.client_meetings_held` had the exact same
+  disconnected-counter problem as `DSRDaily.virtual_meetings`, so both got
+  fixed in the same migration. `GET /api/meetings?dsr_id=`/`?dor_id=` (new
+  filter params on the existing list endpoint, not a new route) is how a
+  DSR/DOR detail view can show which meetings actually back the count.
+- `meeting_purpose` — free string, not a DB enum (QBR/cadence_review/
+  escalation_review/etc is a growing, config-like list).
+- `attendees` (JSONB, manual entry for Phase 2).
+- `ai_mom_summary` / `ai_mom_generated_at` / `mom_status` — AI-generated
+  Minutes of Meeting via `POST /{id}/generate-mom`, reusing
+  `ai_service.analyse()` verbatim (same Ollama/phi3:mini call, same
+  prompt-file convention — new `app/prompts/meeting_mom.txt`). Markdown
+  output, not structured JSON (every other AI feature in this codebase is
+  markdown-only; phi3:mini isn't reliable enough for JSON extraction).
+  `PATCH /{id}/mom` is the required human review/finalize checkpoint before
+  a draft is treated as authoritative.
+- BANT scoring (existing feature) is skipped entirely for
+  `source=service_delivery` meetings rather than showing a meaningless
+  "cold" score on something that was never a sales call.
+
+**Verified locally** (danish@fluidpro.in, docker compose dev stack):
+create_meeting correctly resolved account_id + dsr_id for a sales meeting
+against an existing DSR row; generate-mom completed in ~57s and produced a
+structured 4-section markdown MOM (Summary/Key Discussion Points/Action
+Items/Next Steps — action items section got cut by the 400-token cap, a
+known phi3:mini limitation already documented in ai_service.py, which is
+exactly why the PATCH finalize step exists); PATCH finalize worked;
+`?dsr_id=` filter returned the correct row; generate-mom on a meeting with
+no notes correctly 400'd instead of calling the model; a service_delivery
+meeting with no DOR row yet resolved dor_id=null with no error. Test rows
+cleaned up from the dev DB afterward.
+
+**Not yet done:** frontend (meeting form doesn't expose source/
+meeting_purpose/attendees yet, no MOM review UI) — backend-first per this
+session's usual pattern, frontend as a follow-up. No DSR/DOR-side UI change
+yet to surface the linked-meetings count either.
+
+
+## 2026-08-04 (same day, continued 7) — PR #11 merged to develop; no tag yet
+
+Merged CSG Phase 2 (PR #11) into `develop` — fast-forward, clean. Per Amit:
+staying on `develop` without tagging yet is deliberate ("as per release
+management we can always control the version-wise development and
+testing") — `develop` keeps taking CSG Phase 2 frontend + any Phase 3 work
+before the next version tag/release checkpoint, matching the existing
+CHANGELOG.md convention (feature branches -> PR to develop -> ... -> PR
+develop to main -> tag). Also deleted 3 now-fully-merged stale remote
+branches (`feature/csg-phase2-meeting-management`,
+`docs/billing-lock-correction`, `fix/readme-stale-credentials`) — repo is
+back down to just `main` + `develop`.
+
+`develop` is currently ahead of `main`/`v1.2.0` by the CSG Phase 2 backend
+work. Not deployed anywhere (deploy still on hold pending the new UAT
+instance, per R0).
+
+
+## 2026-08-04 (same day, continued 8) — CSG Phase 2 frontend
+
+Built on `feature/csg-phase2-frontend` off `develop`. Adds the UI for the
+Phase 2 backend (PR #11):
+
+- `Meetings.tsx`: the log-meeting form now branches on a `isDeliveryMode`
+  flag (SDM role, or a `?source=service_delivery` query param — the latter
+  matters because managers can also reach `/dor`, so a role-only check
+  would land them in the wrong form) — Delivery mode swaps BANT
+  qualification for a Purpose dropdown (QBR/Cadence Review/Escalation
+  Review/Delivery Review/General) and hides the Sales-only "mark as
+  opportunity"/"convert to lead" affordances entirely, rather than showing
+  them disabled or irrelevant.
+- New `MeetingMomSection` component on each meeting card: generate (calls
+  `POST /generate-mom`), view (rendered via a new shared
+  `lib/markdown.ts` lite-renderer — same regex-based approach already used
+  on Dashboard.tsx's AI insight panel, reused instead of adding a markdown
+  library dependency for one feature), edit, and finalize (`PATCH /mom`).
+  Explicit "AI draft — please review before finalizing" notice while
+  `mom_status=generated` and unedited.
+- `DOREntry.tsx`: new "🤝 Client Meetings" card once a DOR row exists,
+  showing the real linked-meeting count against `client_meetings_held`
+  (the disconnect the backend fixed) with a "+ Log a meeting" link into
+  Meetings.tsx (pre-set to Delivery mode + the client account name).
+  Deliberately a link, not a duplicate inline form — DOR/DSR both point
+  at the one real meeting-logging surface instead of copy-pasting form
+  logic three times.
+
+**Verified:** `npx tsc --noEmit` — zero errors. Frontend hot-reloaded
+cleanly in the dev stack, no console/build errors. Not yet clicked through
+manually in a browser (no browser access to the dev box from this
+session) — Amit to sanity-check on next login before this merges.
+
+**Deferred for a later pass:** `attendees` has no UI yet (backend accepts
+it; kept out of the form for now per progressive-disclosure — the form
+was getting crowded). No equivalent "linked meetings" card added to
+DSREntry.tsx/DSRHistory.tsx yet — would need either an aggregate backend
+endpoint or accepting N+1 queries across a potentially long history list;
+not worth it for this PR, worth revisiting if reps ask for it.
+
+
+## 2026-08-04 (same day, continued 9) — Dev-only Service Delivery Manager test login
+
+Production has a real `service_delivery_manager` (Hemant Mathurkar), but
+this local dev DB's seed set never included that role (confirmed earlier
+this session — `SELECT DISTINCT role FROM users` returned 9 roles, no
+`service_delivery_manager`, no `governance`). Since PR #12 needs testing
+against dev, not production, created a dedicated dev-only test account via
+`POST /api/users` (as business_head, real hash_password() path, not a raw
+SQL insert) rather than reusing/touching Hemant's real record:
+
+- `test.sdm@fluidpro.in` / `DeliveryOps@2026!` — role
+  `service_delivery_manager`, region India - West, business fluidpro.
+- Note: first password attempt (`TestSDM@2026!`) was rejected by
+  `validate_password_policy()` — "Password cannot contain your name" — it
+  echoed the account name/email local-part ("Test SDM" / "test.sdm"), same
+  policy rule that rejected `Inside@2026!` for inside_sales earlier. Went
+  through the same must-change-password temp-swap pattern
+  smoke_test.py uses (`_clear_forced_password_change`) to land on a
+  policy-clean final password with `must_change_password: false`. Verified
+  end-to-end via a fresh `/auth/login`.
+
+This account is dev-database-only — obviously named so it's never confused
+with Hemant's real production record, and not added to the README's
+"Default Credentials" table since it's throwaway test infrastructure, not
+a real persona anyone should rely on long-term.
+
+
+## 2026-08-04 (same day, continued 10) — DOR save confirmation UX; investigated "stale form" report
+
+Amit tested PR #12 as the new Test SDM account and reported two things:
+
+**1) DOR save had no real confirmation.** True — the only feedback was the
+Save button's own label flashing "✅ Saved" for 2s, which is easy to miss,
+especially since (unlike DSREntry, which shows a full-screen "DSR
+Submitted!" success state and resets) DOR is deliberately an edit-in-place
+form that stays open for same-day resubmission — so DSR's pattern doesn't
+directly apply. Fixed:
+- A toast on save (`toast.success`, reusing the same store Meetings.tsx
+  already uses — visible regardless of scroll position, unlike the button
+  label) — also added `toast.error` on failure, which had no feedback at
+  all before.
+- A persistent "✅ Saved · Xm ago" line next to the button that doesn't
+  disappear after 2s, using a new shared `lib/time.ts` (`timeAgo`,
+  extracted from Dashboard.tsx's private copy of the same function — one
+  implementation instead of two diverging ones).
+- Button now reads "Update DOR" instead of "Save DOR" once a row for the
+  day already exists, so it's clear a save already happened even before
+  clicking again.
+
+**2) Screenshots showed the OLD Sales-only Meetings form (BANT, no Purpose
+dropdown) and no "Client Meetings" card on DOR, despite testing under the
+SDM account.** Investigated — the code is correct and present
+(`isDeliveryMode` appears 17 times in Meetings.tsx as expected, `git
+status` clean on `feature/csg-phase2-frontend`, `npx tsc --noEmit` clean).
+Almost certainly a stale browser tab: the screenshots' session was
+navigated via client-side routing (SPA), which doesn't re-fetch an
+already-loaded JS bundle — only a hard refresh/new tab does. Restarted the
+frontend container to rule out a dev-server-side staleness too. **Asked
+Amit to hard-refresh (Ctrl+F5) and retest** rather than assuming the code
+is broken; will revisit if it reproduces after a clean reload.
+
+## 2026-08-04 (cont'd) — Manual KPI Entry: fixed company-wide dropdown leak
+
+**Report (Amit, screenshot of Test SDM login on `/kpi-entry`):** the
+manager-target dropdown showed all 17 active org users (sales reps,
+inside sales, pre-sales, other SDMs) instead of being scoped to the
+logged-in manager's own reportees. Explicit spec from Amit: "person who
+is logged can be able to fill his KPIs only and if he had a manager role
+than he can approve for his reportees" — i.e. no dropdown at all unless
+you actually have bound reportees.
+
+**Root cause:** `ManualKPIEntry.tsx` called the general `GET /users`
+(visibility-scoped via `resolve_visible_user_ids`). For a `service_delivery_manager`
+(scope="team") with no `manager_id` reports bound yet, that resolver's
+"team" branch deliberately falls back to "everyone in my region+business"
+— a reasonable default for read-only dashboards, but wrong for an entry
+screen where the action is a WRITE on someone else's behalf. Confirmed via
+DB query that real managers with bound reports today (Vikram Nair,
+Rajesh Sharma, Sunita Patil) are all role=`manager`, not
+`service_delivery_manager` — so this same gap exists for the real
+production Hemant Mathurkar account today, not just the Test SDM one.
+
+**Fix (pushed to PR #12, commit b6e87a6):**
+- `GET /users` gains `direct_reports_only=true`, which uses the existing
+  `resolve_direct_report_ids()` (own manager_id chain only, already used
+  by `/users/me` and DSR approval flows — no new resolver logic, reused
+  as-is) instead of the region-fallback resolver. Empty list, not
+  everyone, when zero reports are bound.
+- `ManualKPIEntry.tsx` now calls that instead of the unfiltered list, and
+  only renders the target picker when the resulting reportee list is
+  non-empty. A manager-tier role with no bound reports now sees the exact
+  same self-only view as an individual contributor — matches the spec
+  exactly.
+
+**Verified:** `tsc --noEmit` clean, backend `ast.parse` clean, live curl
+against Test SDM: old `/users` = 17, new `/users?direct_reports_only=true`
+= 0 (correct — Test SDM has no bound reportees). Did not have credentials
+to click-through a manager account that DOES have reports (Vikram/Rajesh/
+Sunita), but `resolve_direct_report_ids` is proven code already in use
+elsewhere, so relying on that rather than re-verifying it end-to-end here.
+
+**Follow-up note for Amit:** this means Hemant Mathurkar (real SDM) will
+see an empty picker in production too, until his delivery technicians are
+actually bound to him via Team page → "Reports to (Manager)" — the fix is
+correct but exposes that the org-chart data isn't filled in yet for that
+role.
+
+## 2026-08-04 (cont'd) — MOM feature: UI/UX spec + Architecture LLD delivered
+
+Amit's spec for Minutes of Meeting (structured attendees w/ email on both
+sides, discussion points w/ owner+date, governance visibility, Excel/PDF/
+Word export, direct send-to-customer w/ CC) was run through Rambo-UIUX then
+Rambo-AI-Architect. Both docs delivered to Amit and saved to the fluidGo
+Claude Project (`claude/fluidgo-mom-uiux-spec.md`,
+`claude/fluidgo-mom-architecture-lld.md`) — full detail there, summary here.
+
+**Design (Rambo-UIUX):** promotes MOM to its own `/meetings/:id` detail
+page (existing inline accordion has no room for this) — same route for
+governance in a read-only render mode, not a parallel screen. Attendee
+chip input (not raw comma text) so each person still carries a real email
+for the CC step. Discussion points as a repeater table (point/owner/date/
+status incl. "Slipped", not just done/not-done). Collapsed revision-history
+timeline. Download dropdown (xlsx/pdf/docx) + a Send-to-Customer modal
+with To/Cc pre-filled from attendee emails.
+
+**Architecture (Rambo-AI-Architect) — grounded directly in the current
+`meetings.py`/`Meeting` model, not assumed:**
+- **P0 finding, independent of this feature:** governance can currently
+  WRITE to any meeting org-wide (`create`/`generate-mom`/`update-mom` never
+  got the `deny_governance()` guard every other domain — dsr/dor/fga/
+  incentives/analytics — already uses). Scheduled to close in the same PR.
+- `discussion_points`: new JSONB column on `meetings` (ADR — matches
+  `attendees`' own precedent, not a child table; revisit if CSG Phase 4
+  ever needs to query commitments across meetings).
+- Revision history: NEW table `meeting_mom_revisions` — deliberately NOT
+  JSONB (ADR — append-only/unbounded growth is the wrong shape for a
+  column that gets rewritten on every edit).
+- No `GET /meetings/{id}` exists today — required new endpoint, the detail
+  page has nothing to fetch from otherwise.
+- `email_service.py` only sends to one recipient, no Cc, no attachments —
+  needs extending (stdlib `smtplib`/`email.mime` already sufficient, no
+  new dependency).
+- No xlsx/pdf/docx libraries installed. Recommended: `openpyxl` +
+  `python-docx` (no real alternative) + `reportlab` for PDF (scored
+  against weasyprint/fpdf2 — reportlab wins on zero system deps, matters
+  on the single-EC2-box Docker Compose deploy; weasyprint needs Cairo/
+  Pango in the image).
+- Migration 0032, additive-only, same convention as 0031.
+
+**Sequencing:** RBAC fix first (ships alone) → migration 0032 + detail/
+revisions endpoints → export/send endpoints → `meeting_mom.txt` prompt
+update → frontend build. Not yet started — design/architecture phase only
+so far, per Amit's own "use Rambo Commander" instruction before building.
+
+## 2026-08-04 (cont'd) — MOM feature: built, tested live, shipped end to end
+
+Amit: "ok keep the implementation" → built the full design+architecture
+above in sequence, exactly as planned, each step verified live against the
+dev stack before moving to the next. Also gave an explicit standing verdict
+mid-build: **multi-tenancy stays out of scope for now, but every new piece
+of architecture must keep the door open for it** — applied concretely as a
+new `APP_NAME` setting (config.py) used in export/email content instead of
+a hardcoded org string, no premature `tenant_id` column added since nothing
+else in the schema has one yet. This is now the standing rule for all
+future work, not a one-off note.
+
+**1. RBAC fix (commit `bb967b7`):** `deny_governance()` added to
+`create_meeting`/`generate_mom`/`update_mom` — closed the P0 gap flagged
+in the architecture doc. Live-verified: governance gets 403 on writes,
+200 on reads.
+
+**2. Migration 0032 (commit `dc8f46f`):** `meetings.discussion_points`
+JSONB + new `meeting_mom_revisions` table + index. Applied and schema-
+verified live against the dev Postgres.
+
+**3. Detail/revisions endpoints (commit `6231962`):** `GET/PATCH
+/meetings/{id}`, `GET /meetings/{id}/revisions`. Live end-to-end tested —
+create with attendees → normalize → PATCH discussion_points → persisted →
+revision logged with correct actor name; governance read-allowed,
+write-blocked.
+
+**4. Export + send (commit `45b6d52`):** new `mom_export_service.py`
+(xlsx via openpyxl, pdf via reportlab, docx via python-docx — all pure-
+Python, zero system deps, per the architecture doc's ADR-3). `GET
+/meetings/{id}/export?format=`, `POST /meetings/{id}/send`. Extended
+`email_service.send_email()` for multi-To/Cc/attachment (MIME mixed vs
+alternative depending on attachment presence). Caught and fixed a
+regression this signature change would have caused in `feedback.py` (was
+passing a bare string where a list is now required) before it shipped.
+Live-verified: xlsx/pdf/docx all produce valid non-trivial output (pdf
+confirmed via `%PDF-1.4` magic bytes), send logs instead of failing when
+SMTP is unconfigured, empty-To send correctly 400s.
+
+**5. AI prompt update (commit `6218f7c`):** `generate_mom()` now builds a
+"Structured discussion points (owner, due date, status)" block from
+`discussion_points` when present and feeds it to Ollama; `meeting_mom.txt`
+updated to treat it as authoritative for Key Discussion Points/Action
+Items rather than re-deriving from free text. Live-verified: a meeting
+with 2 discussion_points + free-text notes produced a MOM that correctly
+carried forward the structured owner/side/due-date/status for both.
+
+**6. Frontend `/meetings/:id` page (commit `0e12610`):** the full
+Rambo-UIUX spec built out — attendee chip inputs (Us/Customer, comma/
+Enter commit, "Name \<email\>" paste parsing, missing-email warning),
+discussion-points repeater, the AI MOM flow moved here full-width,
+collapsible revision history with per-entry diff, export dropdown
+(blob download), Send-to-Customer modal (To/Cc pre-filled from attendee
+emails). Governance renders the same route read-only. Closed the
+"governance has zero nav access to Meetings" gap flagged in the UIUX
+spec §7 — added a read-only nav link (backend already allowed the reads;
+this was a missing link, not a missing permission). List card's inline
+MOM accordion removed in favor of a status-chip link into the new page,
+per the spec's IA decision. `tsc --noEmit` clean; live-tested that `GET
+/meetings/{id}` returns the new `rep_name` field the header needs.
+
+**Test data hygiene:** every test meeting created during this build
+(`Export Test Co`, `Prompt Test Co`, `Detail Page Test Co`, plus the
+earlier `MOM Test Co`) and its revision rows were deleted from the dev DB
+immediately after each verification pass — none of this is in the dev
+database now. Scratch PowerShell test scripts were deleted from the repo
+root after use, never committed.
+
+**Status:** MOM feature (CSG Phase 2 extension) is code-complete on
+`feature/csg-phase2-frontend`, all 6 commits pushed. Not yet merged to
+`develop`/`main` or deployed — that's Amit's call on timing, not assumed
+here.
+
+## 2026-08-04 (cont'd 2) — Stale-frontend diagnosis + Rambo-AI-Frontend review pass
+
+Amit shared 8 screenshots showing the OLD UI (governance sidebar missing
+the new Meetings link) and asked for a review via `/rambo-ai-frontend
+/rambo-ai-qa`.
+
+**Root cause of the stale UI:** not a code, build, or routing bug.
+Docker Desktop on Windows does not reliably forward native filesystem
+change events from the `./frontend:/app` bind mount into the container's
+inotify, so Vite's default `fs.watch`-based HMR can go stale even though
+a fresh page load/hard-refresh would already serve current code (Vite
+transforms modules per-request from disk, not from a cached snapshot).
+Ruled out bind-mount desync (confirmed new code was present in-container
+via `docker compose exec grep`) and nginx misrouting/caching (reviewed
+`nginx/dev.conf`, confirmed correct proxy/WS headers, no cache
+directives, no decoy stack on port 80) before landing on this. Fixed via
+`vite.config.ts`'s `server.watch.usePolling`, commit `df228f9`.
+
+**Rambo-AI-Frontend review** (against `fluidgo-mom-uiux-spec.md` +
+WCAG 2.1 AA) of `MeetingDetail.tsx`/`Meetings.tsx`/`Layout.tsx` found 6
+concrete, file:line-referenced gaps — fixed and committed same session
+(`f1b64c2`, pushed):
+
+1. `SendMomModal` had none of the focus-trap/Escape/focus-restore
+   behavior spec Sec4.5/Sec5 explicitly required. Added `role="dialog"`,
+   `aria-modal`, `aria-labelledby`, a real focus trap.
+2. "Attach as" radios used `className="hidden"` (`display:none`),
+   removing them from the tab order — keyboard users could not pick
+   PDF/Word/Inline at all. Switched to `sr-only` + added the missing
+   `name` attribute (radios weren't even grouped).
+3. Attendee chip click-to-edit was a bare `<span onClick>` — mouse-only.
+   Added `role="button"`, `tabIndex`, Enter/Space handling.
+4. Chip remove (`×`) button was 24×24px vs. spec's explicit ≥44×44px
+   touch-target requirement. Kept the compact visual chip, added an
+   invisible hit-slop overlay to reach 44×44 without resizing it.
+5. Send modal's Subject `<label>` had no `htmlFor`/`id` pairing.
+6. Revision History showed "No changes recorded yet" while still
+   loading — indistinguishable from a genuinely-empty history. Added its
+   own `isLoading` state.
+
+`tsc --noEmit` clean; verified the running dev server actually serves
+this content (not another stale-HMR false alarm) via a direct
+in-container fetch of Vite's own module endpoint.
+
+**Flagged, not fixed this session** (bigger surface, needs Amit's
+prioritization call before more scope goes in):
+- Spec Sec4.2's "Us"-side org-directory autocomplete — not implemented at
+  all; both attendee sides are free-text only today.
+- Spec Sec4.3's discussion-point Responsibility-name autocomplete against
+  attendee chips — not implemented.
+- **Zero automated test coverage** for any MOM extension endpoint
+  (attendees, discussion_points, generate-mom, revisions, export, send)
+  or for `MeetingDetail.tsx` — confirmed empirically (`vertical_slice_test.py`
+  / `test_endpoints.py` have zero references to `discussion_points`,
+  `generate-mom`, `/send`, `/export`, `revisions`, or `attendees`; the
+  frontend has no `.spec`/`.test` files at all, so this is inherited debt
+  the feature adds to, not something unique to it). Rambo-AI-QA
+  recommendation: prioritize backend RBAC tests for
+  `deny_governance()` on generate-mom/update-mom/patch/send first (a
+  permission regression there is a real data-leak risk), then
+  export/send integration tests, before frontend component tests.
+
+**Status:** still code-complete on `feature/csg-phase2-frontend`
+(6 feature commits + this fix, all pushed). Not yet merged to
+`develop`/`main` or deployed — Amit's call on timing.

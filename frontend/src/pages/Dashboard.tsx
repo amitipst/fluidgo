@@ -5,6 +5,7 @@ import api from '@/hooks/useApi'
 import { format } from 'date-fns'
 import { Link, Navigate } from 'react-router-dom'
 import { getQuoteOfDay } from '@/lib/quotes'
+import { timeAgo } from '@/lib/time'
 
 // Compact Indian-format currency (₹2.5Cr / ₹1.5L / ₹5,000)
 function inrShort(n: number): string {
@@ -61,16 +62,6 @@ function KPICard({ label, value, sub, accentColor, icon, loading }: {
 }
 
 // ── AI Panel ──────────────────────────────────────────────────────────────────
-function timeAgo(iso: string | null): string {
-  if (!iso) return ''
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.round(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.round(hrs / 24)}d ago`
-}
-
 function AIPanel({ userId }: { userId: string }) {
   const qc = useQueryClient()
 
