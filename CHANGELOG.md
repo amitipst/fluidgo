@@ -23,6 +23,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   (18 May 2026), owner shown as "Name (Side)", AI summary rendered from markdown instead of raw `##`/`-`,
   fluidPro (portfolio) and wepsol (company) logos on a white letterhead strip, with the fluidGo platform name in the footer only, landscape A4 page layout (PDF/Word/Excel print setup) and page footer with page numbers. Fixes black "■" separator glyphs in the PDF and "(no email)" noise.
 - Meeting detail page: purpose shown as "Sales Discovery" (not `sales_discovery`), friendly date.
+- Send-to-Customer: the dialog shows the logged-in user as the sender and Cc's their reporting manager by default
+  (editable; `GET /meetings/{id}/send-defaults`). Mail goes out as "<User> via fluidGo" with Reply-To = the user;
+  set `SMTP_SEND_AS_USER=true` to send From the user's own address once M365 Send-As is granted (auto-falls back if refused).
 - Tests: `backend/tests/test_mom_export_service.py`.
 
 ### Added

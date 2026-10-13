@@ -490,6 +490,26 @@ def _render_send_body(doc) -> tuple[str, str]:
     return export_svc.render_email_html(doc)
 
 
+@router.get("/{meeting_id}/send-defaults")
+async def send_defaults(meeting_id: str, db: AsyncSession = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    """Pre-fills the Send-to-Customer dialog: the sender is always the logged-in user
+    (shown read-only) and the user's line manager is Cc'd by default — same visibility
+    rule as every other mail-client style flow in leading CRMs. The human can still edit
+    the Cc list; the audit log records who was actually copied."""
+    await _get_meeting_or_404(meeting_id, db, user)
+    manager = None
+    if user.manager_id:
+        manager = (await db.execute(
+            select(User).where(User.id == user.manager_id, User.is_active == True)  # noqa: E712
+        )).scalar_one_or_none()
+    return {
+        "from": {"name": user.name, "email": user.email},
+        "cc": [{"name": manager.name, "email": manager.email, "reason": "manager"}] if manager else [],
+        "no_manager": manager is None,
+    }
+
+
 class SendMeetingIn(BaseModel):
     to: List[EmailStr]
     cc: List[EmailStr] = []
@@ -529,11 +549,12 @@ async def send_meeting(meeting_id: str, body: SendMeetingIn, request: Request,
         cc_emails=[str(e) for e in body.cc],
         subject=subject, html_body=html_body, text_body=text_body,
         attachment=attachment,
+        sender_name=user.name, sender_email=user.email,
     )
 
     background_tasks.add_task(
         audit, db, user, "SEND_MOM", "meeting", meeting_id,
-        f"{m.company}: minutes sent to {', '.join(str(e) for e in body.to)}"
+        f"{m.company}: minutes sent by {user.email} to {', '.join(str(e) for e in body.to)}"
         + (f" (cc: {', '.join(str(e) for e in body.cc)})" if body.cc else ""),
         request=request
     )

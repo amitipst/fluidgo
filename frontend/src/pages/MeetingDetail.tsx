@@ -278,6 +278,24 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
   const [cc, setCc] = useState<AttendeeDraft[]>(
     attendees.filter(a => a.side === 'us' && a.email).map(a => ({ ...a }))
   )
+  // Sender (read-only) and the line manager as a default Cc come from the server, so the
+  // rule lives in one place and the manager lookup never depends on client state.
+  const [fromInfo, setFromInfo] = useState<{ name: string; email: string } | null>(null)
+  const [noManager, setNoManager] = useState(false)
+  useEffect(() => {
+    let alive = true
+    api.get(`/meetings/${meeting.id}/send-defaults`).then(res => {
+      if (!alive) return
+      setFromInfo(res.data.from)
+      setNoManager(!!res.data.no_manager)
+      const mgr = (res.data.cc ?? []).map((c: any) => ({ name: c.name, email: c.email, side: 'us' as const }))
+      setCc(prev => {
+        const have = new Set(prev.map(p => (p.email ?? '').toLowerCase()))
+        return [...mgr.filter((m: AttendeeDraft) => !have.has((m.email ?? '').toLowerCase())), ...prev]
+      })
+    }).catch(() => { /* defaults are a convenience; sending still works without them */ })
+    return () => { alive = false }
+  }, [meeting.id])
   const [subject, setSubject] = useState(`Minutes of Meeting — ${meeting.company} — ${meeting.date}`)
   const [attachAs, setAttachAs] = useState<'pdf' | 'docx' | 'inline'>('pdf')
   const [sending, setSending] = useState(false)
@@ -361,6 +379,14 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
           </div>
         )}
 
+        {fromInfo && (
+          <div className="mb-3 text-xs text-wep-muted">
+            <span className="form-label mr-2">From</span>
+            <span className="font-semibold text-wep-navy">{fromInfo.name}</span> &lt;{fromInfo.email}&gt;
+            <span className="ml-2">· replies come to you</span>
+          </div>
+        )}
+
         <label className="form-label block mb-1">To</label>
         <div className="form-input h-auto py-1">
           <AttendeeChipInput side="customer" attendees={to} onChange={next => setTo(next)} readOnly={false} />
@@ -370,6 +396,9 @@ function SendMomModal({ meeting, attendees, onClose }: { meeting: any; attendees
         <div className="form-input h-auto py-1">
           <AttendeeChipInput side="us" attendees={cc} onChange={next => setCc(next)} readOnly={false} />
         </div>
+        {noManager
+          ? <p className="mt-1 text-[11px] text-amber-700">No reporting manager is set on your profile, so nobody was added to Cc automatically.</p>
+          : <p className="mt-1 text-[11px] text-wep-muted">Your manager is copied by default — remove them only if you have a reason.</p>}
 
         <label htmlFor="send-mom-subject" className="form-label block mb-1 mt-3">Subject</label>
         <input id="send-mom-subject" className="form-input" value={subject} onChange={e => setSubject(e.target.value)} />

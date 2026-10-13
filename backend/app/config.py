@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     SMTP_USER:      str = ""          # e.g. fluidgo-noreply@wepsol.com
     SMTP_PASSWORD:  str = ""          # app password from M365
     SMTP_FROM:      str = "fluidGo <fluidgo-noreply@wepsol.com>"
+    # Minutes/other user-initiated mail: show the logged-in user as the sender.
+    # False (default, always deliverable): From = "<User name> via fluidGo <SMTP_FROM address>"
+    #   with Reply-To = the user's own address. True: From = the user's own address, which
+    #   needs the M365 "Send As" permission for the relay mailbox on each user (or an
+    #   equivalent relay); if the server refuses the sender we fall back automatically.
+    SMTP_SEND_AS_USER: bool = False
     APP_BASE_URL:   str = "https://fluidgo.wepsol.com"   # for building reset links
     RESET_TOKEN_TTL_MINUTES: int = 30
 

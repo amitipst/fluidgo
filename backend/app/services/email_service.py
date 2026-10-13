@@ -18,21 +18,40 @@ import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
+from email.utils import formataddr, parseaddr
 from app.config import settings
 
 log = logging.getLogger("fluidgo.email")
 
 
+def _sender_headers(sender_name: str | None, sender_email: str | None, as_user: bool):
+    """(From header, envelope sender, Reply-To) for a user-initiated message.
+    Default: "<Name> via fluidGo <relay mailbox>" + Reply-To user — always deliverable
+    (SPF/DMARC and M365 reject From addresses the relay isn't allowed to send as)."""
+    relay_name, relay_addr = parseaddr(settings.SMTP_FROM)
+    if not sender_email:
+        return settings.SMTP_FROM, relay_addr, None
+    shown = (sender_name or sender_email).strip()
+    if as_user:
+        return formataddr((shown, sender_email)), sender_email, sender_email
+    return formataddr((f"{shown} via {relay_name or settings.APP_NAME}", relay_addr)), relay_addr, sender_email
+
+
 def _send_sync(to_emails: list[str], subject: str, html_body: str, text_body: str,
                cc_emails: list[str] | None = None,
-               attachment: tuple[str, bytes, str] | None = None):
+               attachment: tuple[str, bytes, str] | None = None,
+               sender_name: str | None = None, sender_email: str | None = None):
     # "mixed" (not "alternative") once there's an attachment — alternative is
     # for html/plain versions of the SAME content, mixed is for content +
     # attachments. Using the wrong one is the standard way this silently
     # produces an email the attachment never actually reaches.
     msg = MIMEMultipart("mixed" if attachment else "alternative")
     msg["Subject"] = subject
-    msg["From"]    = settings.SMTP_FROM
+    as_user = bool(settings.SMTP_SEND_AS_USER and sender_email)
+    from_hdr, envelope_from, reply_to = _sender_headers(sender_name, sender_email, as_user)
+    msg["From"]    = from_hdr
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg["To"]      = ", ".join(to_emails)
     if cc_emails:
         msg["Cc"] = ", ".join(cc_emails)
@@ -51,15 +70,30 @@ def _send_sync(to_emails: list[str], subject: str, html_body: str, text_body: st
     # The envelope recipient list is separate from the To/Cc HEADERS above —
     # smtplib doesn't read them back out of the message, both need setting.
     envelope_recipients = list(to_emails) + list(cc_emails or [])
-    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as server:
-        server.starttls()
-        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.sendmail(settings.SMTP_FROM, envelope_recipients, msg.as_string())
+    def _deliver(from_header: str, env_from: str):
+        del msg["From"]
+        msg["From"] = from_header
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as server:
+            server.starttls()
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.sendmail(env_from, envelope_recipients, msg.as_string())
+
+    try:
+        _deliver(from_hdr, envelope_from)
+    except (smtplib.SMTPSenderRefused, smtplib.SMTPDataError) as e:
+        if not as_user:
+            raise
+        # The relay refused "send as this user" (no Send-As permission): fall back to the
+        # always-deliverable form rather than losing the customer's minutes.
+        log.warning("Send-as-user refused for %s (%s); falling back to relay sender", sender_email, e)
+        f2, e2, _ = _sender_headers(sender_name, sender_email, False)
+        _deliver(f2, e2)
 
 
 async def send_email(to_emails: list[str], subject: str, html_body: str, text_body: str,
                       cc_emails: list[str] | None = None,
-                      attachment: tuple[str, bytes, str] | None = None) -> bool:
+                      attachment: tuple[str, bytes, str] | None = None,
+                      sender_name: str | None = None, sender_email: str | None = None) -> bool:
     """Returns True if actually sent, False if only logged (SMTP not configured).
     attachment, if given, is (filename, content_bytes, mimetype)."""
     if not settings.email_configured:
@@ -70,7 +104,7 @@ async def send_email(to_emails: list[str], subject: str, html_body: str, text_bo
         return False
     try:
         await asyncio.to_thread(_send_sync, to_emails, subject, html_body, text_body,
-                                 cc_emails, attachment)
+                                 cc_emails, attachment, sender_name, sender_email)
         log.info("Sent '%s' to %s (cc: %s)", subject, to_emails, cc_emails or [])
         return True
     except Exception as e:

@@ -56,3 +56,24 @@ def test_email_html_escapes_and_has_no_raw_markdown():
     html, text = s.render_email_html(s.build_minutes_document(m))
     assert "<b>&</b> Co" not in html and "A &lt;b&gt;" in html
     assert "##" not in html and "##" not in text
+
+
+# ── Sender identity for Send-to-Customer ─────────────────────────────────────
+def test_sender_headers_default_is_via_relay_with_reply_to(monkeypatch):
+    from app.services import email_service as es
+    monkeypatch.setattr(es.settings, "SMTP_FROM", "fluidGo <fluidgo-noreply@wepsol.com>")
+    frm, env, reply = es._sender_headers("Danish Sayyed", "danish@fluidpro.in", as_user=False)
+    assert "Danish Sayyed via fluidGo" in frm and "fluidgo-noreply@wepsol.com" in frm
+    assert env == "fluidgo-noreply@wepsol.com" and reply == "danish@fluidpro.in"
+
+
+def test_sender_headers_as_user(monkeypatch):
+    from app.services import email_service as es
+    frm, env, reply = es._sender_headers("Danish Sayyed", "danish@fluidpro.in", as_user=True)
+    assert frm == "Danish Sayyed <danish@fluidpro.in>" and env == reply == "danish@fluidpro.in"
+
+
+def test_sender_headers_without_sender_uses_relay(monkeypatch):
+    from app.services import email_service as es
+    frm, env, reply = es._sender_headers(None, None, as_user=False)
+    assert reply is None and env == "fluidgo-noreply@wepsol.com"
