@@ -5,7 +5,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, Query
-from pydantic import BaseModel, EmailStr, Field
+from typing import Literal
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,10 +21,20 @@ from app.services import contact_service as cs
 router = APIRouter()
 
 
+Salutation = Literal["Mr.", "Ms.", "Mrs.", "Mx.", "Dr.", "Prof.", "CA", "CS", "Er."]
+
+
+def _name_v(v, required=True):
+    try:
+        return cs.valid_person_name(v, required=required)
+    except ValueError as e:
+        raise ValueError(str(e))
+
+
 class ContactIn(BaseModel):
     account_id: Optional[uuid.UUID] = None
     account_name: Optional[str] = None          # alternative to account_id (get-or-create)
-    salutation: Optional[str] = None
+    salutation: Optional[Salutation] = None
     first_name: str = Field(min_length=1, max_length=100)
     last_name: Optional[str] = None
     designation: Optional[str] = None
@@ -35,10 +46,25 @@ class ContactIn(BaseModel):
     reports_to_contact_id: Optional[uuid.UUID] = None
     is_primary_contact: bool = False
     allow_duplicate_reason: Optional[str] = None
+    previous_contact_id: Optional[uuid.UUID] = None   # set when this person moved here from another company
+
+    @field_validator("first_name")
+    @classmethod
+    def _fn(cls, v): return _name_v(v)
+
+    @field_validator("last_name")
+    @classmethod
+    def _ln(cls, v): return _name_v(v, required=False)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def _li(cls, v):
+        try: return cs.valid_linkedin(v)
+        except ValueError as e: raise ValueError(str(e))
 
 
 class ContactPatch(BaseModel):
-    salutation: Optional[str] = None
+    salutation: Optional[Salutation] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     designation: Optional[str] = None
@@ -51,6 +77,20 @@ class ContactPatch(BaseModel):
     is_primary_contact: Optional[bool] = None
     status: Optional[str] = None                # active | left
     do_not_contact: Optional[bool] = None
+
+    @field_validator("first_name")
+    @classmethod
+    def _fn(cls, v): return _name_v(v) if v is not None else v
+
+    @field_validator("last_name")
+    @classmethod
+    def _ln(cls, v): return _name_v(v, required=False)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def _li(cls, v):
+        try: return cs.valid_linkedin(v)
+        except ValueError as e: raise ValueError(str(e))
 
 
 class DeleteRequestIn(BaseModel):
@@ -145,7 +185,12 @@ async def create_contact(body: ContactIn, bg: BackgroundTasks, request: Request,
         if len(reason) < 5:
             raise HTTPException(409, {"message": "Possible duplicate contact on this account",
                                       "duplicates": dups})
-    c = Contact(account_id=acct.id, salutation=body.salutation, first_name=cand["first_name"],
+    prev = None
+    if body.previous_contact_id:
+        prev = await _load(db, body.previous_contact_id)
+        if prev.account_id == acct.id:
+            raise HTTPException(422, "A person who moved must be added to a different company")
+    c = Contact(account_id=acct.id, salutation=body.salutation, previous_contact_id=prev.id if prev else None, first_name=cand["first_name"],
                 last_name=cand["last_name"], designation=body.designation, department=body.department,
                 email=str(body.email).lower() if body.email else None, phone_primary=phone,
                 phone_secondary=phone2, linkedin_url=body.linkedin_url,
@@ -220,6 +265,14 @@ async def get_contact(contact_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     acct = (await db.execute(select(Account).where(Account.id == c.account_id))).scalar_one_or_none()
     out = cs.serialize(c, acct.name if acct else None)
     out["can_edit"] = user.role != "governance" and await _can_edit(db, user, c)
+    # job-change history: where this person went / where they came from
+    moved_to = (await db.execute(select(Contact, Account.name).join(Account, Account.id == Contact.account_id)
+                .where(Contact.previous_contact_id == c.id, Contact.deleted_at.is_(None)))).all()
+    out["moved_to"] = [{"id": str(m.id), "account_id": str(m.account_id), "account_name": n} for m, n in moved_to]
+    if c.previous_contact_id:
+        pc = (await db.execute(select(Contact, Account.name).join(Account, Account.id == Contact.account_id)
+              .where(Contact.id == c.previous_contact_id))).first()
+        out["moved_from"] = {"id": str(pc[0].id), "account_name": pc[1]} if pc else None
     return out
 
 
@@ -252,6 +305,8 @@ async def patch_contact(contact_id: uuid.UUID, body: ContactPatch, bg: Backgroun
         if getattr(c, k) != v:
             changed[k] = v
             setattr(c, k, v)
+    if "status" in changed:
+        c.left_at = datetime.now(timezone.utc) if c.status == "left" else None
     if c.phone_primary:
         c.incomplete = False
     c.updated_at = datetime.now(timezone.utc)
