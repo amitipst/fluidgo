@@ -62,9 +62,9 @@ def test_approver_slot():
 
 
 def test_can_complete_contact():
-    assert cs.can_complete_contact(NS(phone_primary="+919876543210", incomplete=False))
-    assert not cs.can_complete_contact(NS(phone_primary=None, incomplete=True))
-    assert not cs.can_complete_contact(NS(phone_primary="+919876543210", incomplete=True))
+    assert cs.can_complete_contact(NS(phone_primary="+919876543210", email="a@b.com", incomplete=False))
+    assert not cs.can_complete_contact(NS(phone_primary=None, email="a@b.com", incomplete=True))
+    assert not cs.can_complete_contact(NS(phone_primary="+919876543210", email="a@b.com", incomplete=True))
 
 
 @pytest.mark.parametrize("name,ok", [
@@ -93,3 +93,13 @@ def test_valid_linkedin():
 def test_company_key_dedupes_legal_suffixes():
     assert cs.company_key("Acme Pvt. Ltd.") == cs.company_key("ACME private limited") == cs.company_key("acme")
     assert cs.company_key("abc company") != cs.company_key("xyz company")
+
+
+def test_primary_email_is_mandatory_for_mom_and_flagged_when_missing():
+    ok = NS(phone_primary="+919876543210", email="a@b.com", incomplete=False)
+    no_email = NS(phone_primary="+919876543210", email=None, incomplete=False)
+    no_phone = NS(phone_primary=None, email="a@b.com", incomplete=False)
+    assert cs.can_complete_contact(ok)
+    assert not cs.can_complete_contact(no_email) and not cs.can_complete_contact(no_phone)
+    assert cs.missing_details(no_email) == ["email"] and cs.missing_details(no_phone) == ["phone"]
+    assert cs.missing_details(NS(phone_primary=None, email=None)) == ["phone", "email"]

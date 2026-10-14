@@ -39,7 +39,7 @@ class ContactIn(BaseModel):
     last_name: Optional[str] = None
     designation: Optional[str] = None
     department: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: EmailStr                           # primary email — mandatory
     phone_primary: str
     phone_secondary: Optional[str] = None
     linkedin_url: Optional[str] = None
@@ -143,7 +143,7 @@ async def list_contacts(q: Optional[str] = None, account_id: Optional[uuid.UUID]
     if account_id:
         stmt = stmt.where(Contact.account_id == account_id)
     if incomplete:
-        stmt = stmt.where(or_(Contact.incomplete.is_(True), Contact.phone_primary.is_(None)))
+        stmt = stmt.where(or_(Contact.incomplete.is_(True), Contact.phone_primary.is_(None), Contact.email.is_(None)))
     if not include_left:
         stmt = stmt.where(Contact.status == "active")
     if q:
@@ -298,6 +298,8 @@ async def patch_contact(contact_id: uuid.UUID, body: ContactPatch, bg: Backgroun
         raise HTTPException(422, "First name can't be blank")
     if data.get("status") not in (None, "active", "left"):
         raise HTTPException(422, "status must be 'active' or 'left'")
+    if "email" in data and not data["email"]:
+        raise HTTPException(422, "A primary email is required (it can't be blanked)")
     if data.get("email"):
         data["email"] = str(data["email"]).lower()
     changed = {}
@@ -307,7 +309,7 @@ async def patch_contact(contact_id: uuid.UUID, body: ContactPatch, bg: Backgroun
             setattr(c, k, v)
     if "status" in changed:
         c.left_at = datetime.now(timezone.utc) if c.status == "left" else None
-    if c.phone_primary:
+    if c.phone_primary and c.email:
         c.incomplete = False
     c.updated_at = datetime.now(timezone.utc)
     await db.commit()

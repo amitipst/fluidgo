@@ -18,7 +18,7 @@ from app.services.deps import get_current_user, deny_governance
 from app.services.permission_service import resolve_visible_user_ids
 from app.services.audit_service import audit
 from app.services import contact_service as cs
-from app.services import geo_service
+from app.services import geo_service, website_service
 
 router = APIRouter()
 
@@ -71,12 +71,14 @@ def _address(data: dict) -> dict:
 
 
 def _clean_website(w: Optional[str]) -> Optional[str]:
+    """Optional. Stored in canonical form (https://…); a site being unreachable
+    never blocks saving — only a malformed address does."""
     if not w or not w.strip():
         return None
-    w = w.strip()
-    if " " in w or "." not in w or len(w) < 4:
-        raise HTTPException(422, "Website doesn't look valid (e.g. www.acme.com)")
-    return w
+    try:
+        return website_service.normalize_url(w)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
 
 def _ser(a: Account, contact_count: int = 0) -> dict:
@@ -94,6 +96,19 @@ async def _similar(db: AsyncSession, name: str, business: str, exclude_id=None) 
     key = cs.company_key(name)
     rows = (await db.execute(select(Account).where(Account.business == business))).scalars().all()
     return [a for a in rows if a.id != exclude_id and key and cs.company_key(a.name) == key]
+
+
+class WebsiteCheckIn(BaseModel):
+    url: str = Field(max_length=300)
+
+
+@router.post("/check-website")
+async def check_website(body: WebsiteCheckIn, user: User = Depends(get_current_user)):
+    """Is this company website live? Advisory only — the UI warns but never blocks."""
+    _guard(user, write=False)
+    if website_service.rate_limited(str(user.id)):
+        raise HTTPException(429, "Too many website checks — wait a minute and try again")
+    return await website_service.check_website(body.url)
 
 
 @router.get("/geo")

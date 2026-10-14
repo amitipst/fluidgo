@@ -180,8 +180,19 @@ def approver_slot(approver, requester, existing_slots: set[str]) -> Optional[str
 
 
 def can_complete_contact(contact) -> bool:
-    """A contact can be added to a MOM only with a primary number on file."""
-    return bool(getattr(contact, "phone_primary", None)) and not getattr(contact, "incomplete", False)
+    """A contact can be added to a MOM only with BOTH a primary number and a
+    primary email on file (both are mandatory for every contact)."""
+    return (bool(getattr(contact, "phone_primary", None)) and bool(getattr(contact, "email", None))
+            and not getattr(contact, "incomplete", False))
+
+
+def missing_details(contact) -> list[str]:
+    out = []
+    if not getattr(contact, "phone_primary", None):
+        out.append("phone")
+    if not getattr(contact, "email", None):
+        out.append("email")
+    return out
 
 
 # ── async helpers ───────────────────────────────────────────────────────────
@@ -194,7 +205,8 @@ def serialize(c: Contact, account_name: Optional[str] = None) -> dict:
         "email": c.email, "phone_primary": c.phone_primary, "phone_secondary": c.phone_secondary,
         "linkedin_url": c.linkedin_url, "reports_to_contact_id": str(c.reports_to_contact_id) if c.reports_to_contact_id else None,
         "is_primary_contact": bool(c.is_primary_contact), "status": c.status,
-        "do_not_contact": bool(c.do_not_contact), "incomplete": bool(c.incomplete) or not c.phone_primary,
+        "do_not_contact": bool(c.do_not_contact), "incomplete": bool(c.incomplete) or not c.phone_primary or not c.email,
+        "missing": missing_details(c),
         "owner_user_id": str(c.owner_user_id) if c.owner_user_id else None,
         "created_by": str(c.created_by) if c.created_by else None,
         "last_activity_at": c.last_activity_at.isoformat() if c.last_activity_at else None,
@@ -270,7 +282,8 @@ async def validate_attendee_contacts(db: AsyncSession, attendees: Optional[list]
         if account_id is not None and c.account_id != account_id:
             return f"Contact '{a.get('name')}' belongs to a different account than this meeting"
         if not can_complete_contact(c):
-            return f"Add a primary phone number for '{full_name(c.first_name, c.last_name)}' before adding them to a MOM"
+            need = " and ".join({"phone": "a primary phone number", "email": "a primary email"}[m] for m in missing_details(c)) or "their details"
+            return f"Add {need} for '{full_name(c.first_name, c.last_name)}' before adding them to a MOM"
     return None
 
 
