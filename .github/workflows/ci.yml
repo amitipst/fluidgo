@@ -1,17 +1,17 @@
 name: CI
 
-# Blocking quality gate. Runs on every pull request and on pushes to
-# develop/main. Make the single "CI Gate" job a required status check in
+# Quality gate. Make the single "CI Gate" job a required status check in
 # branch protection so nothing merges unless every check below is green.
 #
 # Replaces the old non-blocking "Test Suite" job in release.yml, which ran a
 # stale script (vertical_slice_test.py) and was marked continue-on-error.
 # The deploy pipeline (release.yml) is changed separately.
+# MANUAL ONLY (2026-10-14). The authoritative gate is scripts/ci_local.sh, which
+# scripts/deploy.sh runs on the server before every deploy, so it does not depend
+# on GitHub Actions being available. This workflow is kept, run by hand from the
+# Actions tab (or switch the triggers back to pull_request/push once Actions
+# billing is sorted), and is identical in content to ci_local.sh.
 on:
-  pull_request:
-    branches: [main, develop]
-  push:
-    branches: [main, develop]
   workflow_dispatch:
 
 permissions:

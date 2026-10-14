@@ -1,200 +1,25 @@
 name: fluidGo Release Pipeline
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TRIGGER STRATEGY (v2 — single host, matches actual EC2 deploy practice)
+# v3 (2026-10-14): this workflow NO LONGER TESTS OR DEPLOYS.
 # ─────────────────────────────────────────────────────────────────────────────
-# This replaces the original two-host (UAT_HOST + PROD_HOST) / GHCR-image
-# design. As of 2026-08-01 there is ONE EC2 instance (the promoted UAT box),
-# and every deploy this project has actually run has been git pull + docker
-# compose build in place over SSH — never a GHCR image pull. This workflow
-# now does exactly that, instead of a design that was never wired up.
+# Production deploys run on the EC2 box with scripts/deploy.sh (backup, CI gate,
+# build, swap, health check, automatic rollback) and scripts/rollback.sh,
+# started from the VS Code SSH session. GitHub Actions is not relied on because
+# the free account's Actions runs can be blocked by billing, and the old Deploy
+# job here ran plain `docker compose` + `git reset --hard` with no backup, which
+# must never fire against production.
 #
-# develop / PR   → tests only (non-blocking), no deploy
-# main           → tests (non-blocking) + deploy to the single EC2 instance,
-#                  gated behind a manual approval (GitHub Environment
-#                  "production" — add a required reviewer in repo settings,
-#                  see the bottom of this file)
-# tag v*.*.*     → creates a GitHub Release with notes only. Does NOT
-#                  redeploy — the commit was already deployed when it
-#                  landed on main; the tag just marks which SHA is
-#                  officially that version (v1.0.5, v1.0.6, ...)
-# workflow_dispatch → manual deploy trigger (emergency / re-run same SHA)
+# What is left: pushing a tag vX.Y.Z creates a GitHub Release with notes.
 # ══════════════════════════════════════════════════════════════════════════════
 on:
   push:
-    branches: [main, develop]
-    tags:     ['v*.*.*']
-  pull_request:
-    branches: [main, develop]
-  workflow_dispatch:
-    inputs:
-      skip_tests:
-        description: 'Skip vertical slice tests (emergency deploy only)'
-        type: boolean
-        default: false
+    tags: ['v*.*.*']
 
 permissions:
-  contents: write   # required for tag-release job to create GitHub Releases
+  contents: write   # required to create GitHub Releases
 
 jobs:
-  # ════════════════════════════════════════════════════════════════════════
-  # JOB 1 — TEST SUITE (informational — never blocks a deploy)
-  # ─────────────────────────────────────────────────────────────────────────
-  # vertical_slice_test.py + seed_v3.py drifted out of sync with the app's
-  # current RBAC/schema (34 failing checks as of 2026-07-15 — 403s on
-  # endpoints that work correctly in manual QA, e.g. rep DSR submission).
-  # continue-on-error keeps a stale test suite from ever blocking a real
-  # release; fixing the suite itself is tracked as separate follow-up work.
-  # Remove continue-on-error once it's confirmed back in sync with the app.
-  # ════════════════════════════════════════════════════════════════════════
-  test:
-    name: 🧪 Test Suite (non-blocking)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    if: ${{ !inputs.skip_tests }}
-
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB:       fluidgo_test
-          POSTGRES_USER:     fluidgo
-          POSTGRES_PASSWORD: ci_test_pass
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U fluidgo"
-          --health-interval 5s --health-timeout 5s --health-retries 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install dependencies
-        working-directory: backend
-        run: pip install -r requirements.txt
-
-      - name: Apply DB migrations
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://fluidgo:ci_test_pass@localhost:5432/fluidgo_test
-          JWT_SECRET:   ci-test-secret-not-for-production
-          OLLAMA_URL:   http://localhost:11434
-        run: alembic upgrade head
-
-      - name: Seed test data
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://fluidgo:ci_test_pass@localhost:5432/fluidgo_test
-          JWT_SECRET:   ci-test-secret-not-for-production
-          OLLAMA_URL:   http://localhost:11434
-        run: python seed_v3.py
-        timeout-minutes: 5
-
-      - name: Run vertical slice acceptance tests
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://fluidgo:ci_test_pass@localhost:5432/fluidgo_test
-          JWT_SECRET:   ci-test-secret-not-for-production
-          OLLAMA_URL:   http://localhost:11434
-        run: |
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-          SERVER_PID=$!
-          for i in $(seq 1 20); do
-            if curl -sf http://localhost:8000/api/health > /dev/null 2>&1; then
-              echo "Server ready after ${i}s"
-              break
-            fi
-            sleep 1
-          done
-          python vertical_slice_test.py 2>&1 | tee test_results.txt || true
-          if grep -q "❌ FAIL" test_results.txt; then
-            echo "::warning::Vertical slice tests have failing checks (non-blocking) — see uploaded artifact"
-          else
-            echo "✅ All vertical slice checks passed"
-          fi
-          kill $SERVER_PID
-        timeout-minutes: 15
-
-      - name: TypeScript type check (frontend)
-        working-directory: frontend
-        run: |
-          npm install --legacy-peer-deps --silent
-          npx tsc --noEmit
-        timeout-minutes: 5
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ github.sha }}
-          path: backend/test_results.txt
-          retention-days: 30
-
-  # ════════════════════════════════════════════════════════════════════════
-  # JOB 2 — DEPLOY (single EC2 instance)
-  # ─────────────────────────────────────────────────────────────────────────
-  # Only fires on a direct push to main, or manual dispatch — never on
-  # develop or PRs. Runs the exact sequence that's been manually run and
-  # verified working all session: git pull, build in place, migrate.
-  # Gated behind the "production" GitHub Environment — add a required
-  # reviewer at Settings → Environments → production so every deploy needs
-  # a manual approval click, even though the trigger itself is automatic.
-  # ════════════════════════════════════════════════════════════════════════
-  deploy:
-    name: 🚀 Deploy
-    runs-on: ubuntu-latest
-    needs: test
-    if: |
-      always() &&
-      (github.ref == 'refs/heads/main' && github.event_name != 'pull_request')
-    environment:
-      name: production
-      url: https://fluidgo.wepsol.com
-
-    steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host:     ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key:      ${{ secrets.EC2_SSH_KEY }}
-          timeout:  300s
-          script: |
-            set -euo pipefail
-            cd /opt/fluidgo/app
-            echo "▶ Deploying $(git rev-parse --short HEAD) → $(git rev-parse --short origin/main 2>/dev/null || echo pulling)"
-            git fetch origin main
-            git reset --hard origin/main
-
-            docker compose build backend frontend
-            docker compose up -d backend frontend
-            docker compose exec -T backend alembic upgrade head
-
-            # Verify backend health before declaring success
-            sleep 10
-            for i in $(seq 1 12); do
-              if curl -sf http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
-                echo "✅ Backend healthy after ${i}x5s"
-                break
-              fi
-              echo "Waiting for backend... ($i/12)"
-              sleep 5
-            done
-
-            echo "✅ Deploy complete — $(git rev-parse --short HEAD)"
-            echo "$(git rev-parse --short HEAD) deployed at $(date -u)" >> /opt/fluidgo/deployments.log
-
-  # ════════════════════════════════════════════════════════════════════════
-  # JOB 3 — GITHUB RELEASE on version tag push
-  # ─────────────────────────────────────────────────────────────────────────
-  # Notes only — does NOT redeploy. The tagged commit was already deployed
-  # via its own main-branch push in JOB 2 above; this just records which
-  # SHA is officially that semver version.
   # ════════════════════════════════════════════════════════════════════════
   tag-release:
     name: 🏷️ Create GitHub Release
@@ -219,17 +44,3 @@ jobs:
               `v1.0.x` tags) until `v1.1.0` is ready.
             - `develop` — active feature development for the next minor
               release (`v1.1.0`). Merges into `main` only when ready to ship.
-
-# ══════════════════════════════════════════════════════════════════════════════
-# REQUIRED GITHUB CONFIGURATION
-# ──────────────────────────────────────────────────────────────────────────────
-# Secrets (Settings → Secrets and variables → Actions):
-#   EC2_HOST    — the EC2 instance's public IP or hostname
-#   EC2_USER    — SSH user (ubuntu)
-#   EC2_SSH_KEY — private key content (-----BEGIN OPENSSH PRIVATE KEY-----)
-#
-# Environment (Settings → Environments → production):
-#   Required reviewers: add yourself (amit@wepsol.com) — this is the manual
-#   approval gate before every deploy actually runs, even on auto push to main.
-#   URL: https://fluidgo.wepsol.com
-# ══════════════════════════════════════════════════════════════════════════════
