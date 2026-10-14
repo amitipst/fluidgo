@@ -7,10 +7,11 @@ import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/store/toastStore'
 import { renderMarkdownLite } from '@/lib/markdown'
 import { MOM_STATUS_CFG, DELIVERY_PURPOSES } from '@/pages/Meetings'
+import ContactPicker from '@/components/ContactPicker'
 
 // ── Types (draft shapes used while editing — looser than the API's Pydantic
 // models so the UI can hold in-progress/invalid rows without blowing up) ────
-type AttendeeDraft = { name: string; email?: string; side: 'us' | 'customer' }
+type AttendeeDraft = { name: string; email?: string; side: 'us' | 'customer'; title?: string; contact_id?: string; phone?: string }
 type DiscussionPointDraft = {
   point: string
   responsibility_side: 'us' | 'customer'
@@ -518,7 +519,7 @@ export default function MeetingDetail() {
   // with a network round-trip's worth of staleness).
   useEffect(() => {
     if (!meeting) return
-    const a = (meeting.attendees ?? []).map((x: any) => ({ name: x.name, email: x.email, side: x.side }))
+    const a = (meeting.attendees ?? []).map((x: any) => ({ name: x.name, email: x.email, side: x.side, title: x.title, contact_id: x.contact_id, phone: x.phone }))
     const p = (meeting.discussion_points ?? []).map((x: any) => ({
       point: x.point, responsibility_side: x.responsibility_side,
       responsibility_name: x.responsibility_name, target_date: x.target_date ?? '', status: x.status,
@@ -542,7 +543,7 @@ export default function MeetingDetail() {
     mutationFn: () => {
       const payload: any = {}
       if (JSON.stringify(attendees) !== JSON.stringify(committedAttendees)) {
-        payload.attendees = attendees.map(a => ({ name: a.name, email: a.email || undefined, side: a.side }))
+        payload.attendees = attendees.map(a => ({ name: a.name, email: a.email || undefined, side: a.side, title: a.title || undefined, contact_id: a.contact_id || undefined, phone: a.phone || undefined }))
       }
       if (JSON.stringify(points) !== JSON.stringify(committedPoints)) {
         payload.discussion_points = points
@@ -641,6 +642,13 @@ export default function MeetingDetail() {
           <div>
             <div className="text-[10px] font-bold text-wep-muted uppercase tracking-wide mb-1">Customer</div>
             <AttendeeChipInput side="customer" attendees={attendees} onChange={setAttendees} readOnly={readOnly} />
+            {!readOnly && meeting?.account_id && (
+              <ContactPicker accountId={meeting.account_id} accountName={meeting.company}
+                addedIds={attendees.map(a => a.contact_id).filter(Boolean) as string[]}
+                onPick={(c) => setAttendees(prev => prev.some(a => a.contact_id === c.id) ? prev : [...prev, {
+                  name: c.name, email: c.email || undefined, side: 'customer',
+                  title: c.designation || undefined, contact_id: c.id, phone: c.phone_primary || undefined }])} />
+            )}
           </div>
         </div>
       </div>
