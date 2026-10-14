@@ -593,6 +593,75 @@ class Account(Base):
     primary_owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # usually the Sales rep/manager who owns this account
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
+class Contact(Base):
+    """Contacts master (v1.4.0-A, migration 0034) — the one place a customer
+    person lives, instead of free-text `contact_name` on meetings/leads and
+    attendee JSON on meetings. Belongs to an Account (soft ref, same
+    convention as Meeting.account_id: no FK constraint). One account per
+    contact for now (decided 2026-10-14); multi-account links are a later
+    increment.
+
+    `phone_primary` is required by the API for every new/edited record but
+    NOT by the database, so legacy contacts backfilled from old meetings
+    (which never captured a number) can exist; those carry incomplete=true
+    and cannot be added to a MOM until a primary number is saved.
+    Nobody hard-deletes: deletion is a request that needs approval and ends
+    in a soft delete (`deleted_at`) — see ContactDeleteRequest.
+    See fluidgo-mom-action-governance-design.md §9/§9a/§10."""
+    __tablename__ = "contacts"
+    id:                   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id:           Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    salutation:           Mapped[str]       = mapped_column(String(20), nullable=True)
+    first_name:           Mapped[str]       = mapped_column(String(120), nullable=False)
+    last_name:            Mapped[str]       = mapped_column(String(120), nullable=True)
+    designation:          Mapped[str]       = mapped_column(String(150), nullable=True)
+    department:           Mapped[str]       = mapped_column(String(120), nullable=True)
+    reports_to_contact_id:Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    email:                Mapped[str]       = mapped_column(String(255), nullable=True)
+    phone_primary:        Mapped[str]       = mapped_column(String(30), nullable=True)   # normalised, e.g. +919876543210
+    phone_secondary:      Mapped[str]       = mapped_column(String(30), nullable=True)
+    linkedin_url:         Mapped[str]       = mapped_column(String(300), nullable=True)
+    is_primary_contact:   Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    status:               Mapped[str]       = mapped_column(String(10), default="active", server_default="active")  # active | left
+    do_not_contact:       Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    incomplete:           Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")  # legacy row with no primary number
+    owner_user_id:        Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_by:           Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    last_activity_at:     Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at:           Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)  # soft delete (recycle bin)
+    deleted_by:           Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at:           Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at:           Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    is_seed:              Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+
+
+class ContactDeleteRequest(Base):
+    """A request to delete a contact. Approved only when the requester's
+    reporting manager AND one of governance / inside sales have approved;
+    any rejection stops it; pending requests expire after 14 days."""
+    __tablename__ = "contact_delete_requests"
+    id:           Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contact_id:   Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    requested_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    reason:       Mapped[str]       = mapped_column(Text, nullable=False)
+    status:       Mapped[str]       = mapped_column(String(12), default="pending", server_default="pending")  # pending|approved|rejected|expired|cancelled
+    created_at:   Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at:   Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at:   Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ContactDeleteApproval(Base):
+    """One approver's decision on a delete request (append-only)."""
+    __tablename__ = "contact_delete_approvals"
+    id:               Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_id:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    approver_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    approver_slot:    Mapped[str]       = mapped_column(String(20), nullable=False)  # manager | governance | inside_sales
+    decision:         Mapped[str]       = mapped_column(String(10), nullable=False)  # approve | reject
+    comment:          Mapped[str]       = mapped_column(Text, nullable=True)
+    decided_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class ScoringResult(Base):
     """Cached computed score per user/period — with full FGA approval workflow state."""
     __tablename__ = "scoring_results"

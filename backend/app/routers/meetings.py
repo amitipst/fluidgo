@@ -13,6 +13,7 @@ from app.services.deps import get_current_user, deny_governance
 from app.services.rigor_service import bant_score, score_lead
 from app.services.audit_service import audit
 from app.services.account_service import get_or_create_account
+from app.services import contact_service
 from app.services import ai_service, email_service
 from app.services import mom_export_service as export_svc
 from app.models import User
@@ -34,6 +35,11 @@ class Attendee(BaseModel):
     # it doesn't break; _normalize_attendees() derives it from `side` at
     # both write and read time, callers never need to set it themselves.
     is_external: Optional[bool] = None
+    # Contacts master (v1.4.0-A): optional link to a contacts row plus a
+    # snapshot of the primary number at the time of the meeting. Free-text
+    # attendees (no contact_id) remain valid for backward compatibility.
+    contact_id: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class DiscussionPoint(BaseModel):
@@ -132,6 +138,9 @@ async def create_meeting(body: MeetingIn, db: AsyncSession = Depends(get_db),
     data["attendees"] = _normalize_attendees(data.get("attendees"))
 
     account = await get_or_create_account(db, body.company, business=user.business or "fluidpro")
+    err = await contact_service.validate_attendee_contacts(db, data.get("attendees"), account.id)
+    if err:
+        raise HTTPException(422, err)
 
     dsr_id = None
     dor_id = None
@@ -147,6 +156,7 @@ async def create_meeting(body: MeetingIn, db: AsyncSession = Depends(get_db),
     m = Meeting(user_id=user.id, account_id=account.id, dsr_id=dsr_id, dor_id=dor_id, **data)
     db.add(m)
     await db.flush()
+    await contact_service.touch_contacts(db, data.get("attendees"), account.id)
     # BANT is a Sales pipeline-qualification concept — skip it for Delivery
     # meetings (QBR/cadence/escalation review) rather than showing a
     # meaningless "cold" score on something that was never a sales call.
@@ -345,6 +355,10 @@ async def patch_meeting(meeting_id: str, body: MeetingPatchIn, request: Request,
     if body.attendees is not None:
         before = m.attendees
         after = _normalize_attendees([a.model_dump() for a in body.attendees])
+        err = await contact_service.validate_attendee_contacts(db, after, m.account_id)
+        if err:
+            raise HTTPException(422, err)
+        await contact_service.touch_contacts(db, after, m.account_id)
         m.attendees = after
         db.add(MeetingMomRevision(meeting_id=m.id, actor_id=user.id,
                                    action="attendees_updated", before=before, after=after))

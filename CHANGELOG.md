@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.0] — 2026-10-14
+
+> Contacts master (increment A). **Database:** one additive migration, `0034`
+> (three new tables; backfill from existing meeting attendees, meeting/lead
+> contact names). Existing MOM data keeps working: free-text attendees remain valid.
+
+### Added
+- **Contacts** page (Directory, Needs number, Delete requests, Recycle bin) and `/api/contacts`.
+- Contacts belong to an account; primary phone required (normalised, +91 default); duplicate guard per account
+  (same number/email/name) with "use existing" or "create anyway with reason".
+- Mark as left, soft delete with recycle bin; deletion needs the requester's manager plus one of governance /
+  inside sales (any rejection stops it, 14-day expiry). No hard delete.
+- MOM attendee picker: choose customer attendees from the account's contacts or add one inline;
+  attendee carries `contact_id` + phone snapshot; saving a MOM stamps the contact's last activity.
+- Legacy contacts backfilled as "incomplete" until a primary number is added.
+
+### Notes
+- Soft-deleted contacts are retained; the 30-day purge job arrives with the scheduler in the governance-alerts release.
+- Governance is read-only on contacts (except approving deletions and restoring); HR/Finance have no access.
+
+---
+
 ## [1.3.0] — Unreleased (release candidate on `release/v1.3.0`)
 
 > Batches CSG Phase 2 (Meeting Management + AI Minutes of Meeting), the first

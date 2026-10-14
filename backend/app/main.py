@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.version import APP_VERSION
-from app.routers import (auth, dsr, meetings, leads, pipeline, analytics,
+from app.routers import (contacts, auth, dsr, meetings, leads, pipeline, analytics,
                           ai, users, opportunities, scoring, roles,
                           fga_approval, incentives, audit, system, dor,
                           feedback, compliance, governance)
@@ -36,6 +36,7 @@ app.include_router(dor.router,          prefix="/api/dor",         tags=["dor"])
 app.include_router(feedback.router,     prefix="/api/feedback",    tags=["feedback"])
 app.include_router(compliance.router,   prefix="/api/compliance",  tags=["compliance"])
 app.include_router(governance.router,   prefix="/api/governance",  tags=["governance"])
+app.include_router(contacts.router,     prefix="/api/contacts",    tags=["contacts"])
 
 @app.get("/api/health")
 async def health():

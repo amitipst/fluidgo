@@ -13,6 +13,7 @@ import DSRHistory from '@/pages/DSRHistory'
 import Meetings from '@/pages/Meetings'
 import MeetingDetail from '@/pages/MeetingDetail'
 import Leads from '@/pages/Leads'
+import Contacts from '@/pages/Contacts'
 import Pipeline from '@/pages/Pipeline'
 import Analytics from '@/pages/Analytics'
 import Team from '@/pages/Team'
@@ -51,6 +52,8 @@ function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?
 }
 
 const MANAGER_ROLES = ['manager','regional_manager','bu_head','business_head','ceo','super_admin']
+// Everyone except hr/finance (backend contacts router denies them)
+const CONTACT_ROLES = ['rep','inside_sales','pre_sales','service_delivery_manager','governance', ...MANAGER_ROLES, 'practice_head', 'coo']
 const MGMT_FINANCE  = [...MANAGER_ROLES, 'hr', 'finance']
 const KPI_ENTRY_ROLES = [...MANAGER_ROLES, 'service_delivery_manager', 'rep', 'inside_sales', 'pre_sales']
 // Matches backend feedback.py's REVIEW_LEVEL (role_level >= 40)
@@ -85,6 +88,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                   MeetingDetail.tsx's isGovernance check — one screen to
                   maintain instead of a parallel governance-only view. */}
               <Route path="meetings/:id"  element={<MeetingDetail />} />
+              <Route path="contacts" element={
+                <ProtectedRoute roles={CONTACT_ROLES}><Contacts /></ProtectedRoute>
+              } />
               <Route path="leads"         element={<Leads />} />
               <Route path="pipeline"      element={<Pipeline />} />
               <Route path="opportunities" element={<Opportunities />} />

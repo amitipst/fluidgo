@@ -22,6 +22,7 @@ const NAV_CORE = [
   { to: '/dsr',           icon: '✏️', label: 'Submit DSR',   fieldOnly: true },
   { to: '/dsr/history',   icon: '📋', label: 'My DSR Log',   fieldOnly: true },
   { to: '/meetings',      icon: '🤝', label: 'Meetings'                },
+  { to: '/contacts',      icon: '📇', label: 'Contacts',                 noHrFinance: true },
   { to: '/leads',         icon: '🎯', label: 'Leads',                    salesOnly: true },
   { to: '/pipeline',      icon: '📊', label: 'Pipeline',                 salesOnly: true },
   { to: '/opportunities', icon: '🧭', label: 'Opportunities',            salesOnly: true },
@@ -57,6 +58,7 @@ const NAV_GOVERNANCE = { to: '/governance', icon: '🛡️', label: 'Governance'
 // permission. Meetings.tsx pins governance to scope=team (no "mine") and
 // hides write affordances; MeetingDetail.tsx renders read-only.
 const NAV_MEETINGS_GOV = { to: '/meetings', icon: '🤝', label: 'Meetings' }
+const NAV_CONTACTS_GOV = { to: '/contacts', icon: '📇', label: 'Contacts' }
 
 // ── fluidGo compact logo for sidebar header ──────────────────────────────────
 function SidebarLogo() {
@@ -178,6 +180,7 @@ export default function Layout() {
   const coreNav = isGovernance ? [] : NAV_CORE.filter(n => {
     if ((n as any).fieldOnly && !isFieldRole) return false
     if ((n as any).salesOnly && (isSDM || isHR)) return false
+    if ((n as any).noHrFinance && (isHR || user?.role === 'finance')) return false
     if (n.to === '/gamification' && canSeeTeam) return false
     return true
   })
@@ -230,6 +233,7 @@ export default function Layout() {
               <NavSection label="Validation" />
               <SideLink {...NAV_GOVERNANCE} />
               <SideLink {...NAV_MEETINGS_GOV} />
+              <SideLink {...NAV_CONTACTS_GOV} />
             </>
           ) : (
           <>
