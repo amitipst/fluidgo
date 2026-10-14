@@ -18,6 +18,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 > Existing MOM data keeps working: free-text attendees remain valid.
 
 ### Added
+- **Website live check**: entering a company website is optional, but fluidGo checks it is reachable (server-side, SSRF-guarded,
+  public addresses only, rate-limited) and asks for a correct one if not; advisory only, never blocks saving.
+- **Primary phone and primary email are both mandatory** to save a contact; existing contacts missing either are flagged
+  "Needs details" and must be completed before being added to a MOM.
+- **UI polish**: shared modal/field/avatar/skeleton/empty-state components, accessible tabs and dialogs, 44px targets,
+  reject-with-reason dialog replaces the browser prompt.
 - **Companies first**: Companies tab and company page (`/api/accounts`); contacts are added inside a company.
   Companies have a global address (country list, India states/UTs, per-country postal-code rules) and a duplicate-name guard
   that ignores legal suffixes (Pvt / Ltd / Inc …).
@@ -25,8 +31,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Mark as left**: asks whether to add a replacement, or whether the person moved to a company already in fluidGo or a new one
   (recorded as a new linked contact so the team can pursue opportunities with them there).
 - **Log a Meeting** suggests existing companies and their contacts (free text still allowed).
-- **Contacts** page (Companies, All contacts, Needs number, Delete requests, Recycle bin) and `/api/contacts`.
-- Contacts belong to an account; primary phone required (normalised, +91 default); duplicate guard per account
+- **Contacts** page (Companies, All contacts, Needs details, Delete requests, Recycle bin) and `/api/contacts`.
+- Contacts belong to an account; primary phone and email required (normalised, +91 default); duplicate guard per account
   (same number/email/name) with "use existing" or "create anyway with reason".
 - Mark as left, soft delete with recycle bin; deletion needs the requester's manager plus one of governance /
   inside sales (any rejection stops it, 14-day expiry). No hard delete.

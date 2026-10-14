@@ -31,8 +31,8 @@ export function phoneError(v: string, required: boolean): string | null {
   return normalizePhone(v) ? null : `Not a valid number — ${PHONE_HELP}`
 }
 
-export function emailError(v: string): string | null {
-  if (!v.trim()) return null
+export function emailError(v: string, required = false): string | null {
+  if (!v.trim()) return required ? 'Primary email is required' : null
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) ? null : 'Enter a valid email (name@company.com)'
 }
 
