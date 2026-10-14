@@ -152,7 +152,22 @@ async def get_account(account_id: uuid.UUID, db: AsyncSession = Depends(get_db),
         stmt = stmt.join(Account, Account.id == Contact.account_id).where(vf)
     contacts = (await db.execute(stmt.order_by(Contact.status, Contact.first_name))).scalars().all()
     out = _ser(a, sum(1 for c in contacts if c.status == "active"))
-    out["contacts"] = [cs.serialize(c, a.name) for c in contacts]
+    # job-change links: where did people who left go, and who came from elsewhere
+    ids = [c.id for c in contacts]
+    moved_to: dict = {}
+    if ids:
+        rows = (await db.execute(select(Contact, Account).join(Account, Account.id == Contact.account_id)
+                .where(Contact.previous_contact_id.in_(ids), Contact.deleted_at.is_(None)))).all()
+        for m, acc in rows:
+            moved_to.setdefault(m.previous_contact_id, []).append({"id": str(m.id), "account_id": str(acc.id), "account_name": acc.name})
+    prev_ids = [c.previous_contact_id for c in contacts if c.previous_contact_id]
+    from_names: dict = {}
+    if prev_ids:
+        rows = (await db.execute(select(Contact.id, Account.name).join(Account, Account.id == Contact.account_id)
+                .where(Contact.id.in_(prev_ids)))).all()
+        from_names = {cid: n for cid, n in rows}
+    out["contacts"] = [{**cs.serialize(c, a.name), "moved_to": moved_to.get(c.id, []),
+                        "moved_from_account": from_names.get(c.previous_contact_id)} for c in contacts]
     out["can_edit"] = user.role != "governance"
     return out
 

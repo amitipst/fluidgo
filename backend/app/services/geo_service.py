@@ -11,7 +11,8 @@ COUNTRY_CODES = {c for c, _ in COUNTRIES}
 def geo_payload() -> dict:
     return {"countries": [{"code": c, "name": n} for c, n in COUNTRIES],
             "states": STATES,
-            "postal_hints": {c: h for c, (_, h) in POSTAL_RULES.items()}}
+            "postal_hints": {**{c: h for c, (_, h) in POSTAL_RULES.items()}, "_default": POSTAL_GENERIC[1]},
+            "postal_patterns": {**{c: p for c, (p, _) in POSTAL_RULES.items()}, "_default": POSTAL_GENERIC[0]}}
 
 
 def normalize_postal(country: Optional[str], postal: Optional[str]) -> Optional[str]:

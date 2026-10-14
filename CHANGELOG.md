@@ -12,12 +12,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [1.4.0] — 2026-10-14
 
-> Contacts master (increment A). **Database:** one additive migration, `0034`
+> Contacts master (increment A), company-first. **Database:** two additive migrations, `0034`
 > (three new tables; backfill from existing meeting attendees, meeting/lead
-> contact names). Existing MOM data keeps working: free-text attendees remain valid.
+> contact names) and `0035` (company address/industry/website; contact left/move links).
+> Existing MOM data keeps working: free-text attendees remain valid.
 
 ### Added
-- **Contacts** page (Directory, Needs number, Delete requests, Recycle bin) and `/api/contacts`.
+- **Companies first**: Companies tab and company page (`/api/accounts`); contacts are added inside a company.
+  Companies have a global address (country list, India states/UTs, per-country postal-code rules) and a duplicate-name guard
+  that ignores legal suffixes (Pvt / Ltd / Inc …).
+- **Contact form**: salutation, alternate phone number, "Save & add another person", edit contact, inline validation.
+- **Mark as left**: asks whether to add a replacement, or whether the person moved to a company already in fluidGo or a new one
+  (recorded as a new linked contact so the team can pursue opportunities with them there).
+- **Log a Meeting** suggests existing companies and their contacts (free text still allowed).
+- **Contacts** page (Companies, All contacts, Needs number, Delete requests, Recycle bin) and `/api/contacts`.
 - Contacts belong to an account; primary phone required (normalised, +91 default); duplicate guard per account
   (same number/email/name) with "use existing" or "create anyway with reason".
 - Mark as left, soft delete with recycle bin; deletion needs the requester's manager plus one of governance /
@@ -25,6 +33,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - MOM attendee picker: choose customer attendees from the account's contacts or add one inline;
   attendee carries `contact_id` + phone snapshot; saving a MOM stamps the contact's last activity.
 - Legacy contacts backfilled as "incomplete" until a primary number is added.
+
+### Changed (UAT feedback, 2026-10-14)
+- Stricter validation: phone (10-digit Indian mobile, 0+10-digit landline, or `+country code`; short/fragment numbers rejected),
+  email, person names (letters only, any script), LinkedIn URL, website, postal code per country.
 
 ### Notes
 - Soft-deleted contacts are retained; the 30-day purge job arrives with the scheduler in the governance-alerts release.

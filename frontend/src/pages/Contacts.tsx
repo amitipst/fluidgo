@@ -1,12 +1,16 @@
 import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/store/toastStore'
-import { NewContactForm, AddNumberInline, type ContactLite } from '@/components/ContactPicker'
+import { AddNumberInline, type ContactLite } from '@/components/ContactPicker'
+import CompanyForm, { type Company } from '@/components/CompanyForm'
+import MarkLeftFlow from '@/components/MarkLeftFlow'
+import DeleteRequestDialog from '@/components/DeleteRequestDialog'
 
-type Tab = 'directory' | 'incomplete' | 'requests' | 'bin'
+type Tab = 'companies' | 'directory' | 'incomplete' | 'requests' | 'bin'
 const BIN_ROLES = ['governance', 'super_admin', 'business_head', 'practice_head', 'coo', 'ceo']
 
 function fmt(d?: string | null) { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—' } catch { return '—' } }
@@ -14,16 +18,21 @@ function fmt(d?: string | null) { try { return d ? format(new Date(d), 'dd MMM y
 export default function Contacts() {
   const { user } = useAuthStore()
   const qc = useQueryClient()
+  const nav = useNavigate()
   const isGov = user?.role === 'governance'
-  const [tab, setTab] = useState<Tab>('directory')
+  const [tab, setTab] = useState<Tab>('companies')
   const [q, setQ] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [newAccount, setNewAccount] = useState('')
-  const [delFor, setDelFor] = useState<any | null>(null)
-  const [delReason, setDelReason] = useState('')
+  const [addingCo, setAddingCo] = useState(false)
+  const [delFor, setDelFor] = useState<ContactLite | null>(null)
+  const [leaving, setLeaving] = useState<ContactLite | null>(null)
   const [fixing, setFixing] = useState<string | null>(null)
-  const refresh = () => { qc.invalidateQueries({ queryKey: ['contacts'] }); qc.invalidateQueries({ queryKey: ['contact-requests'] }) }
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['contacts'] }); qc.invalidateQueries({ queryKey: ['contact-requests'] }); qc.invalidateQueries({ queryKey: ['accounts'] }) }
 
+  const companies = useQuery({
+    queryKey: ['accounts', 'list', q],
+    queryFn: () => api.get('/accounts', { params: { q: q || undefined } }).then(r => r.data),
+    enabled: tab === 'companies',
+  })
   const list = useQuery({
     queryKey: ['contacts', 'list', tab, q],
     queryFn: () => api.get('/contacts', { params: { q: q || undefined, incomplete: tab === 'incomplete' || undefined } }).then(r => r.data),
@@ -38,15 +47,9 @@ export default function Contacts() {
     queryFn: () => api.get('/contacts/recycle-bin').then(r => r.data.items as any[]),
     enabled: tab === 'bin' && BIN_ROLES.includes(user?.role ?? ''),
   })
-
-  const patch = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: any }) => api.patch(`/contacts/${id}`, body).then(r => r.data),
-    onSuccess: () => { refresh(); toast.success('Updated.') },
-    onError: (e: any) => toast.error(getErrorMessage(e)),
-  })
-  const reqDelete = useMutation({
-    mutationFn: () => api.post(`/contacts/${delFor.id}/delete-request`, { reason: delReason.trim() }).then(r => r.data),
-    onSuccess: () => { setDelFor(null); setDelReason(''); refresh(); toast.success('Deletion requested — awaiting approval.') },
+  const reactivate = useMutation({
+    mutationFn: (id: string) => api.patch(`/contacts/${id}`, { status: 'active' }).then(r => r.data),
+    onSuccess: () => { refresh(); toast.success('Reactivated.') },
     onError: (e: any) => toast.error(getErrorMessage(e)),
   })
   const decide = useMutation({
@@ -61,29 +64,23 @@ export default function Contacts() {
   })
 
   const pendingForMe = (reqs.data ?? []).filter(r => r.status === 'pending' && r.can_decide).length
-  const tabs: [Tab, string][] = [['directory', 'Directory'], ['incomplete', 'Needs number'],
+  const tabs: [Tab, string][] = [['companies', 'Companies'], ['directory', 'All contacts'], ['incomplete', 'Needs number'],
     ['requests', `Delete requests${pendingForMe ? ` (${pendingForMe})` : ''}`]]
   if (BIN_ROLES.includes(user?.role ?? '')) tabs.push(['bin', 'Recycle bin'])
-
   const rows: any[] = list.data?.items ?? []
+  const cos: Company[] = companies.data?.items ?? []
 
   return (
     <div className="max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
-          <h1 className="text-xl font-bold text-wep-text">Contacts</h1>
-          <p className="text-xs text-wep-muted">Customer people, by account. Used for MOM attendees; deletions need approval.</p>
+          <h1 className="text-xl font-bold text-wep-text">Companies &amp; Contacts</h1>
+          <p className="text-xs text-wep-muted">Add the company first, then the people in it. Deletions need approval.</p>
         </div>
-        {!isGov && <button className="btn-primary text-sm" onClick={() => setAdding(a => !a)}>+ New contact</button>}
+        {!isGov && tab === 'companies' && <button className="btn-primary text-sm" onClick={() => setAddingCo(a => !a)}>+ New company</button>}
       </div>
 
-      {adding && (
-        <div className="card mb-4 space-y-2">
-          <input className="form-input" placeholder="Account / company name *" value={newAccount} onChange={e => setNewAccount(e.target.value)} />
-          {newAccount.trim() && <NewContactForm accountName={newAccount.trim()}
-            onCreated={() => { setAdding(false); setNewAccount(''); refresh() }} onCancel={() => setAdding(false)} />}
-        </div>
-      )}
+      {addingCo && <div className="card mb-4"><CompanyForm onSaved={(c) => { setAddingCo(false); refresh(); nav(`/companies/${c.id}`) }} onCancel={() => setAddingCo(false)} /></div>}
 
       <div className="flex gap-1 mb-3 border-b border-wep-border overflow-x-auto">
         {tabs.map(([k, label]) => (
@@ -92,29 +89,49 @@ export default function Contacts() {
         ))}
       </div>
 
+      {tab === 'companies' && (
+        <>
+          <input className="form-input mb-3" placeholder="Search companies…" value={q} onChange={e => setQ(e.target.value)} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {cos.map(c => (
+              <Link key={c.id} to={`/companies/${c.id}`} className="card hover:border-wep-border-strong flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-sm">{c.name}</div>
+                  <div className="text-xs text-wep-muted">{[c.industry, c.city].filter(Boolean).join(' · ') || '—'}</div>
+                </div>
+                <span className="text-xs text-wep-muted whitespace-nowrap">{c.contact_count ?? 0} {c.contact_count === 1 ? 'contact' : 'contacts'}</span>
+              </Link>
+            ))}
+            {cos.length === 0 && <div className="card text-center text-sm text-wep-muted md:col-span-2">{companies.isLoading ? 'Loading…' : 'No companies found.'}</div>}
+          </div>
+        </>
+      )}
+
       {(tab === 'directory' || tab === 'incomplete') && (
         <>
-          {tab === 'directory' && <input className="form-input mb-3" placeholder="Search name, email, phone or account…" value={q} onChange={e => setQ(e.target.value)} />}
+          {tab === 'directory' && <input className="form-input mb-3" placeholder="Search name, email, phone or company…" value={q} onChange={e => setQ(e.target.value)} />}
           {tab === 'incomplete' && <p className="text-xs text-wep-muted mb-3">Imported from earlier meetings and leads. Add a primary number so they can be added to a MOM.</p>}
           <div className="card overflow-x-auto p-0">
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[11px] uppercase text-wep-muted border-b border-wep-border">
-                <th className="p-2">Name</th><th className="p-2">Account</th><th className="p-2">Designation</th>
+                <th className="p-2">Name</th><th className="p-2">Company</th><th className="p-2">Designation</th>
                 <th className="p-2">Phone</th><th className="p-2">Email</th><th className="p-2">Last activity</th><th className="p-2"></th></tr></thead>
               <tbody>
-                {rows.map((c: ContactLite & any) => (
+                {rows.map((c: any) => (
                   <tr key={c.id} className="border-b border-wep-border last:border-0">
-                    <td className="p-2 font-medium">{c.name}{c.status === 'left' && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-wep-border text-wep-muted">Left</span>}
+                    <td className="p-2 font-medium">{c.salutation ? `${c.salutation} ` : ''}{c.name}{c.status === 'left' && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-wep-border text-wep-muted">Left</span>}
                       {c.do_not_contact && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">DNC</span>}</td>
-                    <td className="p-2">{c.account_name}</td><td className="p-2">{c.designation ?? '—'}</td>
+                    <td className="p-2"><Link to={`/companies/${c.account_id}`} className="text-brand-pink">{c.account_name}</Link></td>
+                    <td className="p-2">{c.designation ?? '—'}</td>
                     <td className="p-2">{c.phone_primary ?? (fixing === c.id
                       ? <AddNumberInline contact={c} onDone={() => { setFixing(null); refresh() }} />
                       : !isGov && <button className="text-xs text-wep-amber font-semibold" onClick={() => setFixing(c.id)}>⚠️ Add number</button>)}</td>
                     <td className="p-2">{c.email ?? '—'}</td><td className="p-2">{fmt(c.last_activity_at)}</td>
                     <td className="p-2 text-right whitespace-nowrap">
                       {!isGov && <>
-                        <button className="text-xs text-wep-muted mr-3" onClick={() => patch.mutate({ id: c.id, body: { status: c.status === 'left' ? 'active' : 'left' } })}>
-                          {c.status === 'left' ? 'Mark active' : 'Mark as left'}</button>
+                        {c.status === 'left'
+                          ? <button className="text-xs text-wep-muted mr-3" onClick={() => reactivate.mutate(c.id)}>Reactivate</button>
+                          : <button className="text-xs text-wep-muted mr-3" onClick={() => setLeaving(c)}>Mark as left</button>}
                         <button className="text-xs text-red-600" onClick={() => setDelFor(c)}>Request deletion</button></>}
                     </td>
                   </tr>
@@ -164,19 +181,8 @@ export default function Contacts() {
         </div>
       )}
 
-      {delFor && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDelFor(null)}>
-          <div className="bg-white rounded-xl p-5 w-full max-w-md space-y-3" onClick={e => e.stopPropagation()}>
-            <h3 className="font-bold">Request deletion of {delFor.name}</h3>
-            <p className="text-xs text-wep-muted">Needs your reporting manager and one of governance / inside sales to approve. If the person simply left the company, use “Mark as left” instead.</p>
-            <textarea className="form-input w-full" rows={3} placeholder="Reason (min 5 characters)" value={delReason} onChange={e => setDelReason(e.target.value)} />
-            <div className="flex justify-end gap-2">
-              <button className="btn-outline text-sm" onClick={() => setDelFor(null)}>Cancel</button>
-              <button className="btn-primary text-sm disabled:opacity-40" disabled={delReason.trim().length < 5 || reqDelete.isPending} onClick={() => reqDelete.mutate()}>Send request</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {delFor && <DeleteRequestDialog contact={delFor} onClose={() => setDelFor(null)} />}
+      {leaving && <MarkLeftFlow contact={leaving} accountName={(leaving as any).account_name ?? undefined} onClose={() => { setLeaving(null); refresh() }} />}
     </div>
   )
 }

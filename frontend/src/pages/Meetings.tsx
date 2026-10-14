@@ -115,6 +115,20 @@ export default function Meetings() {
   // just be a confusing dead end. It's pinned to team scope above instead.
   const isManager = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
 
+  // Company / contact suggestions from the Companies master (free text still allowed
+  // — an unknown company is created on save exactly as before).
+  const { data: companyList = [] } = useQuery({
+    queryKey: ['accounts', 'names'],
+    queryFn: () => api.get('/accounts', { params: { limit: 1000 } }).then(r => r.data.items as { id: string; name: string }[]),
+    staleTime: 60_000,
+  })
+  const matchedCompany = companyList.find(a => a.name.toLowerCase() === form.company.trim().toLowerCase())
+  const { data: companyContacts = [] } = useQuery({
+    queryKey: ['contacts', 'account', matchedCompany?.id, 'names'],
+    queryFn: () => api.get('/contacts', { params: { account_id: matchedCompany!.id, include_left: false } }).then(r => r.data.items as { id: string; name: string; designation?: string }[]),
+    enabled: !!matchedCompany,
+  })
+
   const { data: meetings = [], isLoading } = useQuery({
     queryKey: ['meetings', scope],
     queryFn: () => api.get(`/meetings?scope=${scope}`).then(r => r.data),
@@ -198,13 +212,16 @@ export default function Meetings() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="form-label block mb-1">{isDeliveryMode ? 'Client / Account *' : 'Company *'}</label>
-              <input className="form-input" placeholder="e.g. Infosys Pune" required
+              <input className="form-input" placeholder="Start typing — pick an existing company or enter a new one" required list="company-options"
                 value={form.company} onChange={e => setForm(f => ({ ...f, company: e.target.value }))} />
+              <datalist id="company-options">{companyList.map(a => <option key={a.id} value={a.name} />)}</datalist>
+              {form.company.trim() && !matchedCompany && <div className="text-[10px] text-wep-muted mt-0.5">New company — it will be added to Companies.</div>}
             </div>
             <div>
               <label className="form-label block mb-1">Contact Name</label>
-              <input className="form-input" placeholder="e.g. Mr. Anil Kumar"
+              <input className="form-input" placeholder={matchedCompany ? 'Pick a contact or type a name' : 'e.g. Mr. Anil Kumar'} list="contact-options"
                 value={form.contact_name} onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))} />
+              <datalist id="contact-options">{companyContacts.map(c => <option key={c.id} value={c.name}>{c.designation ?? ''}</option>)}</datalist>
             </div>
             <div>
               <label className="form-label block mb-1">Date</label>

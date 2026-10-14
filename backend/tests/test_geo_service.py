@@ -6,6 +6,7 @@ def test_geo_payload_shape():
     p = g.geo_payload()
     assert len(p["countries"]) > 200 and {"code": "IN", "name": "India"} in p["countries"]
     assert "Karnataka" in p["states"]["IN"] and p["postal_hints"]["IN"]
+    assert p["postal_patterns"]["IN"] and p["postal_patterns"]["_default"]
 
 
 @pytest.mark.parametrize("country,postal,ok", [
