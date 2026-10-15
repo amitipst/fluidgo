@@ -592,6 +592,16 @@ class Account(Base):
     region:           Mapped[str]       = mapped_column(String(100), nullable=True)
     primary_owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # usually the Sales rep/manager who owns this account
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Company-first Contacts (migration 0035) — all optional descriptive fields
+    industry:         Mapped[str]       = mapped_column(String(100), nullable=True)
+    website:          Mapped[str]       = mapped_column(String(255), nullable=True)
+    address_line1:    Mapped[str]       = mapped_column(String(200), nullable=True)
+    address_line2:    Mapped[str]       = mapped_column(String(200), nullable=True)
+    city:             Mapped[str]       = mapped_column(String(100), nullable=True)
+    state:            Mapped[str]       = mapped_column(String(100), nullable=True)
+    country:          Mapped[str]       = mapped_column(String(2), nullable=True)    # ISO 3166-1 alpha-2
+    postal_code:      Mapped[str]       = mapped_column(String(20), nullable=True)
+    created_by:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 class Contact(Base):
     """Contacts master (v1.4.0-A, migration 0034) — the one place a customer
@@ -633,6 +643,11 @@ class Contact(Base):
     created_at:           Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at:           Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     is_seed:              Mapped[bool]      = mapped_column(Boolean, default=False, server_default="false")
+    # migration 0035 — job-change continuity. When a person leaves, the old row
+    # stays (history, MOMs) with status='left'/left_at; if they surface at
+    # another company they become a NEW contact there pointing back here.
+    left_at:              Mapped[datetime]  = mapped_column(DateTime(timezone=True), nullable=True)
+    previous_contact_id:  Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
 class ContactDeleteRequest(Base):

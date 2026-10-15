@@ -9,6 +9,8 @@ from app.services import contact_service as cs
     ("09876543210", "+919876543210"), ("919876543210", "+919876543210"),
     ("+1 (415) 555-2671", "+14155552671"), ("00441234567890", "+441234567890"),
     ("12345", None), ("abc", None), ("", None), (None, None),
+    ("98766555", None), ("+9198766555", None), ("98765x4321", None), ("1234567890", None),
+    ("022 2345 6789", "+912223456789"), ("+44 20 7946 0958", "+442079460958"),
 ])
 def test_normalize_phone(raw, exp):
     assert cs.normalize_phone(raw) == exp
@@ -60,6 +62,44 @@ def test_approver_slot():
 
 
 def test_can_complete_contact():
-    assert cs.can_complete_contact(NS(phone_primary="+919876543210", incomplete=False))
-    assert not cs.can_complete_contact(NS(phone_primary=None, incomplete=True))
-    assert not cs.can_complete_contact(NS(phone_primary="+919876543210", incomplete=True))
+    assert cs.can_complete_contact(NS(phone_primary="+919876543210", email="a@b.com", incomplete=False))
+    assert not cs.can_complete_contact(NS(phone_primary=None, email="a@b.com", incomplete=True))
+    assert not cs.can_complete_contact(NS(phone_primary="+919876543210", email="a@b.com", incomplete=True))
+
+
+@pytest.mark.parametrize("name,ok", [
+    ("ab kumar", True), ("Dr. O'Neil-Smith", True), ("Åsa Öberg", True), ("राहुल शर्मा", True),
+    ("R2D2", False), ("x@y", False), ("", False), ("   ", False), ("a" * 101, False),
+])
+def test_valid_person_name(name, ok):
+    if ok:
+        assert cs.valid_person_name(name)
+    else:
+        with pytest.raises(ValueError):
+            cs.valid_person_name(name)
+
+
+def test_valid_person_name_optional_blank():
+    assert cs.valid_person_name("", required=False) is None
+
+
+def test_valid_linkedin():
+    assert cs.valid_linkedin("https://www.linkedin.com/in/ab-kumar")
+    assert cs.valid_linkedin("") is None
+    with pytest.raises(ValueError):
+        cs.valid_linkedin("https://evil.com/in/x")
+
+
+def test_company_key_dedupes_legal_suffixes():
+    assert cs.company_key("Acme Pvt. Ltd.") == cs.company_key("ACME private limited") == cs.company_key("acme")
+    assert cs.company_key("abc company") != cs.company_key("xyz company")
+
+
+def test_primary_email_is_mandatory_for_mom_and_flagged_when_missing():
+    ok = NS(phone_primary="+919876543210", email="a@b.com", incomplete=False)
+    no_email = NS(phone_primary="+919876543210", email=None, incomplete=False)
+    no_phone = NS(phone_primary=None, email="a@b.com", incomplete=False)
+    assert cs.can_complete_contact(ok)
+    assert not cs.can_complete_contact(no_email) and not cs.can_complete_contact(no_phone)
+    assert cs.missing_details(no_email) == ["email"] and cs.missing_details(no_phone) == ["phone"]
+    assert cs.missing_details(NS(phone_primary=None, email=None)) == ["phone", "email"]

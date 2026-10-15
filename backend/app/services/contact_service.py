@@ -18,6 +18,7 @@ Rules implemented (decisions 2026-10-13 / 2026-10-14, design doc §9, §9a, §9b
     pending requests expire after 14 days; final approval soft-deletes.
 """
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Iterable
@@ -38,32 +39,84 @@ RESTORE_ROLES = {"governance", "super_admin", "business_head", "practice_head", 
 
 # ── pure helpers ────────────────────────────────────────────────────────────
 def normalize_phone(raw: Optional[str], default_cc: str = "+91") -> Optional[str]:
-    """Return a canonical phone string, or None if it is not a plausible number.
+    """Canonical phone string (E.164-style), or None if not a valid number.
 
-    10-digit Indian mobiles (start 6-9) and 0-prefixed 11-digit numbers get
-    +91; anything starting with + or 00 keeps its own country code. Digits only
-    otherwise; 8-15 digits overall."""
+    Rules (deliberately strict — bad numbers were getting through UAT):
+      * Indian mobile: exactly 10 digits starting 6-9 (optionally with +91/91/0 prefix).
+      * Indian landline: 0 + 10 digits (STD code + number), or +91 + 10 digits.
+      * International: must start with + (or 00), 8-15 digits in total.
+      * Anything else (too short, letters, 8-digit fragments) is rejected.
+    Spaces, dashes, dots and brackets are ignored."""
     if raw is None:
         return None
     s = str(raw).strip()
-    if not s:
+    if not s or re.search(r"[A-Za-z]", s):
         return None
-    has_plus = s.startswith("+")
+    if re.search(r"[^\d\s\-\.\(\)\+]", s):
+        return None
+    intl = s.startswith("+") or s.startswith("00")
     digits = re.sub(r"\D", "", s)
-    if s.startswith("00") and not has_plus:
-        has_plus, digits = True, digits[2:]
-    if has_plus:
-        return f"+{digits}" if 8 <= len(digits) <= 15 else None
+    if s.startswith("00") and not s.startswith("+"):
+        digits = digits[2:]
+    if intl:
+        if not (8 <= len(digits) <= 15):
+            return None
+        if digits.startswith("91"):                      # +91 numbers must be a full 10-digit national number
+            nat = digits[2:]
+            return f"+91{nat}" if len(nat) == 10 and nat[0] != "0" else None
+        return f"+{digits}"
     if len(digits) == 10 and digits[0] in "6789":
         return f"{default_cc}{digits}"
-    if len(digits) == 11 and digits.startswith("0") and digits[1] in "6789":
+    if len(digits) == 11 and digits[0] == "0" and digits[1] != "0":
         return f"{default_cc}{digits[1:]}"
     if len(digits) == 12 and digits.startswith("91") and digits[2] in "6789":
         return f"+{digits}"
-    if 8 <= len(digits) <= 15 and not digits.startswith("0"):
-        # landline / other formats typed without a country code: keep digits
-        return f"{default_cc}{digits}" if len(digits) <= 11 else f"+{digits}"
     return None
+
+
+SALUTATIONS = ["Mr.", "Ms.", "Mrs.", "Mx.", "Dr.", "Prof.", "CA", "CS", "Er."]
+def _name_chars_ok(v: str) -> bool:
+    """Letters and combining marks of any script, plus space . ' - ; must start
+    with a letter and contain no digits or symbols."""
+    if not unicodedata.category(v[0]).startswith("L"):
+        return False
+    return all(unicodedata.category(ch)[0] in ("L", "M") or ch in " .'-" for ch in v)
+
+
+def valid_person_name(v: Optional[str], required: bool = True) -> Optional[str]:
+    """Letters (any script), spaces, dots, hyphens, apostrophes; no digits.
+    Returns the cleaned name, or None when empty and not required;
+    raises ValueError with a user-readable message otherwise."""
+    v = " ".join((v or "").split())
+    if not v:
+        if required:
+            raise ValueError("Name is required")
+        return None
+    if len(v) > 100:
+        raise ValueError("Name is too long (max 100 characters)")
+    if not _name_chars_ok(v):
+        raise ValueError("Name can contain only letters, spaces, . ' and -")
+    return v
+
+
+def valid_linkedin(url: Optional[str]) -> Optional[str]:
+    if not url or not url.strip():
+        return None
+    u = url.strip()
+    if not re.match(r"^https?://([a-z0-9-]+\.)*linkedin\.com/\S+$", u, re.I):
+        raise ValueError("LinkedIn URL must look like https://www.linkedin.com/in/…")
+    return u
+
+
+_COMPANY_NOISE = re.compile(r"\b(pvt|private|ltd|limited|llp|inc|incorporated|corp|corporation|co|company|india|the)\b")
+
+
+def company_key(name: str) -> str:
+    """Comparison key so 'Acme Pvt. Ltd.', 'ACME private limited' and 'acme'
+    are treated as the same company when guarding against duplicates."""
+    n = re.sub(r"[^a-z0-9 ]+", " ", (name or "").lower())
+    n = _COMPANY_NOISE.sub(" ", n)
+    return re.sub(r"\s+", "", n)
 
 
 def split_name(full: str) -> tuple[str, Optional[str]]:
@@ -127,8 +180,19 @@ def approver_slot(approver, requester, existing_slots: set[str]) -> Optional[str
 
 
 def can_complete_contact(contact) -> bool:
-    """A contact can be added to a MOM only with a primary number on file."""
-    return bool(getattr(contact, "phone_primary", None)) and not getattr(contact, "incomplete", False)
+    """A contact can be added to a MOM only with BOTH a primary number and a
+    primary email on file (both are mandatory for every contact)."""
+    return (bool(getattr(contact, "phone_primary", None)) and bool(getattr(contact, "email", None))
+            and not getattr(contact, "incomplete", False))
+
+
+def missing_details(contact) -> list[str]:
+    out = []
+    if not getattr(contact, "phone_primary", None):
+        out.append("phone")
+    if not getattr(contact, "email", None):
+        out.append("email")
+    return out
 
 
 # ── async helpers ───────────────────────────────────────────────────────────
@@ -141,12 +205,15 @@ def serialize(c: Contact, account_name: Optional[str] = None) -> dict:
         "email": c.email, "phone_primary": c.phone_primary, "phone_secondary": c.phone_secondary,
         "linkedin_url": c.linkedin_url, "reports_to_contact_id": str(c.reports_to_contact_id) if c.reports_to_contact_id else None,
         "is_primary_contact": bool(c.is_primary_contact), "status": c.status,
-        "do_not_contact": bool(c.do_not_contact), "incomplete": bool(c.incomplete) or not c.phone_primary,
+        "do_not_contact": bool(c.do_not_contact), "incomplete": bool(c.incomplete) or not c.phone_primary or not c.email,
+        "missing": missing_details(c),
         "owner_user_id": str(c.owner_user_id) if c.owner_user_id else None,
         "created_by": str(c.created_by) if c.created_by else None,
         "last_activity_at": c.last_activity_at.isoformat() if c.last_activity_at else None,
         "deleted_at": c.deleted_at.isoformat() if c.deleted_at else None,
         "created_at": c.created_at.isoformat() if c.created_at else None,
+        "left_at": c.left_at.isoformat() if getattr(c, "left_at", None) else None,
+        "previous_contact_id": str(c.previous_contact_id) if getattr(c, "previous_contact_id", None) else None,
     }
 
 
@@ -215,7 +282,8 @@ async def validate_attendee_contacts(db: AsyncSession, attendees: Optional[list]
         if account_id is not None and c.account_id != account_id:
             return f"Contact '{a.get('name')}' belongs to a different account than this meeting"
         if not can_complete_contact(c):
-            return f"Add a primary phone number for '{full_name(c.first_name, c.last_name)}' before adding them to a MOM"
+            need = " and ".join({"phone": "a primary phone number", "email": "a primary email"}[m] for m in missing_details(c)) or "their details"
+            return f"Add {need} for '{full_name(c.first_name, c.last_name)}' before adding them to a MOM"
     return None
 
 

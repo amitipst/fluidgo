@@ -75,11 +75,8 @@
   .form-input {
     @apply w-full border border-wep-border rounded-xl px-3.5 py-2.5 text-sm
            text-wep-text bg-white placeholder-wep-light
-           focus:outline-none transition-all duration-150;
-    &:focus {
-      border-color: #F0115E;
-      box-shadow: 0 0 0 3px rgba(240,17,94,0.08);
-    }
+           focus:outline-none transition-all duration-150
+           focus:border-brand-pink focus:ring-4 focus:ring-brand-pink/10;
   }
 
   .form-select {

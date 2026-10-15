@@ -1,29 +1,58 @@
 import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
+import { Search, Plus, Building2, Users, UserMinus, Trash2, RotateCcw, ChevronRight, ShieldCheck, Inbox, Archive } from 'lucide-react'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/store/toastStore'
-import { NewContactForm, AddNumberInline, type ContactLite } from '@/components/ContactPicker'
+import { type ContactLite } from '@/components/ContactPicker'
+import CompanyForm, { type Company } from '@/components/CompanyForm'
+import ContactRow from '@/components/ContactRow'
+import MarkLeftFlow from '@/components/MarkLeftFlow'
+import DeleteRequestDialog from '@/components/DeleteRequestDialog'
+import Modal from '@/components/ui/Modal'
+import { Avatar, Skeleton, EmptyState, Pill, RowAction } from '@/components/ui/bits'
 
-type Tab = 'directory' | 'incomplete' | 'requests' | 'bin'
+type Tab = 'companies' | 'directory' | 'incomplete' | 'requests' | 'bin'
 const BIN_ROLES = ['governance', 'super_admin', 'business_head', 'practice_head', 'coo', 'ceo']
+const STATUS_TONE: Record<string, 'warn' | 'ok' | 'danger' | 'muted'> = { pending: 'warn', approved: 'ok', rejected: 'danger', expired: 'muted', cancelled: 'muted' }
 
 function fmt(d?: string | null) { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—' } catch { return '—' } }
+
+function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <div className="relative mb-4">
+      <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-wep-light" aria-hidden />
+      <input className="form-input pl-10 min-h-[44px]" type="search" aria-label={placeholder} placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} />
+    </div>
+  )
+}
+
+function ListSkeleton({ n = 4 }: { n?: number }) {
+  return <div className="space-y-2" aria-busy="true">{Array.from({ length: n }).map((_, i) => <Skeleton key={i} className="h-[72px]" />)}</div>
+}
 
 export default function Contacts() {
   const { user } = useAuthStore()
   const qc = useQueryClient()
+  const nav = useNavigate()
   const isGov = user?.role === 'governance'
-  const [tab, setTab] = useState<Tab>('directory')
+  const [tab, setTab] = useState<Tab>('companies')
   const [q, setQ] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [newAccount, setNewAccount] = useState('')
-  const [delFor, setDelFor] = useState<any | null>(null)
-  const [delReason, setDelReason] = useState('')
+  const [addingCo, setAddingCo] = useState(false)
+  const [delFor, setDelFor] = useState<ContactLite | null>(null)
+  const [leaving, setLeaving] = useState<ContactLite | null>(null)
+  const [rejecting, setRejecting] = useState<any | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
   const [fixing, setFixing] = useState<string | null>(null)
-  const refresh = () => { qc.invalidateQueries({ queryKey: ['contacts'] }); qc.invalidateQueries({ queryKey: ['contact-requests'] }) }
+  const refresh = () => { ;['contacts', 'contact-requests', 'accounts', 'account'].forEach(k => qc.invalidateQueries({ queryKey: [k] })) }
 
+  const companies = useQuery({
+    queryKey: ['accounts', 'list', q],
+    queryFn: () => api.get('/accounts', { params: { q: q || undefined } }).then(r => r.data),
+    enabled: tab === 'companies',
+  })
   const list = useQuery({
     queryKey: ['contacts', 'list', tab, q],
     queryFn: () => api.get('/contacts', { params: { q: q || undefined, incomplete: tab === 'incomplete' || undefined } }).then(r => r.data),
@@ -38,20 +67,14 @@ export default function Contacts() {
     queryFn: () => api.get('/contacts/recycle-bin').then(r => r.data.items as any[]),
     enabled: tab === 'bin' && BIN_ROLES.includes(user?.role ?? ''),
   })
-
-  const patch = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: any }) => api.patch(`/contacts/${id}`, body).then(r => r.data),
-    onSuccess: () => { refresh(); toast.success('Updated.') },
-    onError: (e: any) => toast.error(getErrorMessage(e)),
-  })
-  const reqDelete = useMutation({
-    mutationFn: () => api.post(`/contacts/${delFor.id}/delete-request`, { reason: delReason.trim() }).then(r => r.data),
-    onSuccess: () => { setDelFor(null); setDelReason(''); refresh(); toast.success('Deletion requested — awaiting approval.') },
+  const reactivate = useMutation({
+    mutationFn: (id: string) => api.patch(`/contacts/${id}`, { status: 'active' }).then(r => r.data),
+    onSuccess: () => { refresh(); toast.success('Reactivated.') },
     onError: (e: any) => toast.error(getErrorMessage(e)),
   })
   const decide = useMutation({
     mutationFn: ({ id, decision, comment }: any) => api.post(`/contacts/delete-requests/${id}/decision`, { decision, comment }).then(r => r.data),
-    onSuccess: () => { refresh(); toast.success('Decision recorded.') },
+    onSuccess: () => { refresh(); setRejecting(null); setRejectReason(''); toast.success('Decision recorded.') },
     onError: (e: any) => toast.error(getErrorMessage(e)),
   })
   const restore = useMutation({
@@ -61,122 +84,142 @@ export default function Contacts() {
   })
 
   const pendingForMe = (reqs.data ?? []).filter(r => r.status === 'pending' && r.can_decide).length
-  const tabs: [Tab, string][] = [['directory', 'Directory'], ['incomplete', 'Needs number'],
-    ['requests', `Delete requests${pendingForMe ? ` (${pendingForMe})` : ''}`]]
+  const tabs: [Tab, string, number?][] = [['companies', 'Companies'], ['directory', 'All contacts'], ['incomplete', 'Needs details'],
+    ['requests', 'Delete requests', pendingForMe]]
   if (BIN_ROLES.includes(user?.role ?? '')) tabs.push(['bin', 'Recycle bin'])
-
   const rows: any[] = list.data?.items ?? []
+  const cos: Company[] = companies.data?.items ?? []
+  const switchTab = (t: Tab) => { setTab(t); setQ('') }
 
   return (
     <div className="max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div className="flex items-start justify-between mb-5 flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-wep-text">Contacts</h1>
-          <p className="text-xs text-wep-muted">Customer people, by account. Used for MOM attendees; deletions need approval.</p>
+          <h1 className="text-xl font-bold text-wep-text">Companies &amp; Contacts</h1>
+          <p className="text-xs text-wep-muted mt-0.5">Add the company first, then the people in it. Deletions need approval.</p>
         </div>
-        {!isGov && <button className="btn-primary text-sm" onClick={() => setAdding(a => !a)}>+ New contact</button>}
+        {!isGov && tab === 'companies' && <button className="btn-primary" onClick={() => setAddingCo(true)}><Plus size={16} aria-hidden />New company</button>}
       </div>
 
-      {adding && (
-        <div className="card mb-4 space-y-2">
-          <input className="form-input" placeholder="Account / company name *" value={newAccount} onChange={e => setNewAccount(e.target.value)} />
-          {newAccount.trim() && <NewContactForm accountName={newAccount.trim()}
-            onCreated={() => { setAdding(false); setNewAccount(''); refresh() }} onCancel={() => setAdding(false)} />}
-        </div>
-      )}
-
-      <div className="flex gap-1 mb-3 border-b border-wep-border overflow-x-auto">
-        {tabs.map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 ${tab === k ? 'border-brand-pink text-brand-pink' : 'border-transparent text-wep-muted'}`}>{label}</button>
+      <div role="tablist" aria-label="Contacts sections" className="flex gap-1 mb-4 border-b border-wep-border overflow-x-auto">
+        {tabs.map(([k, label, badge]) => (
+          <button key={k} role="tab" aria-selected={tab === k} onClick={() => switchTab(k)}
+            className={`px-3.5 min-h-[44px] text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-pink
+              ${tab === k ? 'border-brand-pink text-brand-pink' : 'border-transparent text-wep-muted hover:text-wep-text'}`}>
+            {label}{!!badge && <span className="ml-1.5 text-[10px] font-bold bg-brand-pink text-white rounded-full px-1.5 py-0.5">{badge}</span>}
+          </button>
         ))}
       </div>
 
+      {tab === 'companies' && (
+        <div role="tabpanel">
+          <SearchBox value={q} onChange={setQ} placeholder="Search companies…" />
+          {companies.isLoading ? <ListSkeleton /> : cos.length === 0 ? (
+            <EmptyState icon={<Building2 size={22} />} title={q ? 'No companies match your search' : 'No companies yet'}
+              hint={q ? 'Try a different name.' : 'Start by adding the company, then add the people you meet there.'}
+              action={!isGov && !q ? <button className="btn-primary" onClick={() => setAddingCo(true)}><Plus size={16} aria-hidden />Add your first company</button> : undefined} />
+          ) : (
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {cos.map(c => (
+                <li key={c.id}>
+                  <Link to={`/companies/${c.id}`} className="card-hover flex items-center gap-3 !p-3.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-pink">
+                    <Avatar name={c.name} size={44} square />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm text-wep-text truncate">{c.name}</div>
+                      <div className="text-xs text-wep-muted truncate">{[c.industry, c.city].filter(Boolean).join(' · ') || 'No details yet'}</div>
+                    </div>
+                    <Pill><Users size={11} aria-hidden />{c.contact_count ?? 0}</Pill>
+                    <ChevronRight size={16} className="text-wep-light shrink-0" aria-hidden />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {(tab === 'directory' || tab === 'incomplete') && (
-        <>
-          {tab === 'directory' && <input className="form-input mb-3" placeholder="Search name, email, phone or account…" value={q} onChange={e => setQ(e.target.value)} />}
-          {tab === 'incomplete' && <p className="text-xs text-wep-muted mb-3">Imported from earlier meetings and leads. Add a primary number so they can be added to a MOM.</p>}
-          <div className="card overflow-x-auto p-0">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase text-wep-muted border-b border-wep-border">
-                <th className="p-2">Name</th><th className="p-2">Account</th><th className="p-2">Designation</th>
-                <th className="p-2">Phone</th><th className="p-2">Email</th><th className="p-2">Last activity</th><th className="p-2"></th></tr></thead>
-              <tbody>
-                {rows.map((c: ContactLite & any) => (
-                  <tr key={c.id} className="border-b border-wep-border last:border-0">
-                    <td className="p-2 font-medium">{c.name}{c.status === 'left' && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-wep-border text-wep-muted">Left</span>}
-                      {c.do_not_contact && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">DNC</span>}</td>
-                    <td className="p-2">{c.account_name}</td><td className="p-2">{c.designation ?? '—'}</td>
-                    <td className="p-2">{c.phone_primary ?? (fixing === c.id
-                      ? <AddNumberInline contact={c} onDone={() => { setFixing(null); refresh() }} />
-                      : !isGov && <button className="text-xs text-wep-amber font-semibold" onClick={() => setFixing(c.id)}>⚠️ Add number</button>)}</td>
-                    <td className="p-2">{c.email ?? '—'}</td><td className="p-2">{fmt(c.last_activity_at)}</td>
-                    <td className="p-2 text-right whitespace-nowrap">
-                      {!isGov && <>
-                        <button className="text-xs text-wep-muted mr-3" onClick={() => patch.mutate({ id: c.id, body: { status: c.status === 'left' ? 'active' : 'left' } })}>
-                          {c.status === 'left' ? 'Mark active' : 'Mark as left'}</button>
-                        <button className="text-xs text-red-600" onClick={() => setDelFor(c)}>Request deletion</button></>}
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-wep-muted text-sm">{list.isLoading ? 'Loading…' : 'No contacts found.'}</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
+        <div role="tabpanel">
+          {tab === 'directory'
+            ? <SearchBox value={q} onChange={setQ} placeholder="Search name, email, phone or company…" />
+            : <p className="text-xs text-wep-muted mb-3">These need a primary phone and email (both mandatory) before they can be added to a MOM — most came from earlier meetings and leads.</p>}
+          {list.isLoading ? <ListSkeleton /> : rows.length === 0 ? (
+            <EmptyState icon={tab === 'incomplete' ? <ShieldCheck size={22} /> : <Users size={22} />}
+              title={tab === 'incomplete' ? 'Everything is complete' : q ? 'No contacts match your search' : 'No contacts yet'}
+              hint={tab === 'incomplete' ? 'Every contact has a primary phone and email.' : 'Open a company and add the people you meet there.'} />
+          ) : (
+            <div className="space-y-2">
+              {rows.map((c: any) => (
+                <ContactRow key={c.id} c={c} showCompany fixing={fixing === c.id} onFix={() => setFixing(c.id)} onFixed={() => { setFixing(null); refresh() }}>
+                  {!isGov && <>
+                    {c.status === 'left'
+                      ? <RowAction icon={<RotateCcw size={13} aria-hidden />} onClick={() => reactivate.mutate(c.id)}>Reactivate</RowAction>
+                      : <RowAction icon={<UserMinus size={13} aria-hidden />} onClick={() => setLeaving(c)}>Mark as left</RowAction>}
+                    <RowAction danger icon={<Trash2 size={13} aria-hidden />} onClick={() => setDelFor(c)}>Request deletion</RowAction></>}
+                </ContactRow>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'requests' && (
-        <div className="space-y-2">
-          {(reqs.data ?? []).map(r => (
-            <div key={r.id} className="card flex items-start justify-between gap-3 flex-wrap">
-              <div className="text-sm">
-                <div className="font-semibold">{r.contact_name} <span className="text-xs font-normal text-wep-muted">— requested by {r.requested_by_name} · expires {fmt(r.expires_at)}</span></div>
-                <div className="text-xs text-wep-muted mt-0.5">“{r.reason}”</div>
-                <div className="text-xs mt-1">Status: <b>{r.status}</b>
-                  {r.approvals.map((a: any, i: number) => <span key={i} className="ml-2">· {a.slot}: {a.decision}{a.comment ? ` (${a.comment})` : ''}</span>)}</div>
-                {r.status === 'pending' && <div className="text-[11px] text-wep-muted">Needs the reporting manager + one of governance / inside sales.</div>}
+        <div role="tabpanel" className="space-y-2.5">
+          {reqs.isLoading ? <ListSkeleton n={2} /> : (reqs.data ?? []).length === 0 ? (
+            <EmptyState icon={<Inbox size={22} />} title="No deletion requests" hint="Requests to delete a contact appear here for approval." />
+          ) : (reqs.data ?? []).map(r => (
+            <div key={r.id} className="card !p-4 flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0 flex-1 basis-72">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-sm">{r.contact_name}</span>
+                  <Pill tone={STATUS_TONE[r.status] ?? 'muted'}>{r.status}</Pill>
+                </div>
+                <div className="text-xs text-wep-muted mt-0.5">Requested by {r.requested_by_name} · expires {fmt(r.expires_at)}</div>
+                <blockquote className="text-sm mt-2 pl-3 border-l-2 border-wep-border-strong text-wep-text">{r.reason}</blockquote>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {r.approvals.map((a: any, i: number) => <Pill key={i} tone={a.decision === 'approve' ? 'ok' : 'danger'}>{a.slot.replace('_', ' ')}: {a.decision}{a.comment ? ` — ${a.comment}` : ''}</Pill>)}
+                  {r.status === 'pending' && <span className="text-[11px] text-wep-muted self-center">Needs the reporting manager + one of governance / inside sales.</span>}
+                </div>
               </div>
               {r.can_decide && (
                 <div className="flex gap-2">
-                  <button className="btn-primary text-xs px-3 py-1.5" onClick={() => decide.mutate({ id: r.id, decision: 'approve' })}>Approve ({r.my_slot})</button>
-                  <button className="btn-outline text-xs px-3 py-1.5" onClick={() => {
-                    const c = window.prompt('Reason for rejecting (required):'); if (c && c.trim()) decide.mutate({ id: r.id, decision: 'reject', comment: c.trim() })
-                  }}>Reject</button>
+                  <button className="btn-primary" disabled={decide.isPending} onClick={() => decide.mutate({ id: r.id, decision: 'approve' })}>Approve ({r.my_slot?.replace('_', ' ')})</button>
+                  <button className="btn-outline" onClick={() => setRejecting(r)}>Reject</button>
                 </div>
               )}
             </div>
           ))}
-          {(reqs.data ?? []).length === 0 && <div className="card text-center text-sm text-wep-muted">No deletion requests.</div>}
         </div>
       )}
 
       {tab === 'bin' && (
-        <div className="space-y-2">
-          <p className="text-xs text-wep-muted">Deleted contacts are kept here and can be restored.</p>
-          {(bin.data ?? []).map(c => (
-            <div key={c.id} className="card flex items-center justify-between">
-              <div className="text-sm"><b>{c.name}</b> · {c.account_name} <span className="text-xs text-wep-muted">deleted {fmt(c.deleted_at)}</span></div>
-              <button className="btn-outline text-xs px-3 py-1.5" onClick={() => restore.mutate(c.id)}>Restore</button>
+        <div role="tabpanel" className="space-y-2">
+          <p className="text-xs text-wep-muted mb-1">Deleted contacts are kept here and can be restored.</p>
+          {bin.isLoading ? <ListSkeleton n={2} /> : (bin.data ?? []).length === 0 ? (
+            <EmptyState icon={<Archive size={22} />} title="Recycle bin is empty" />
+          ) : (bin.data ?? []).map(c => (
+            <div key={c.id} className="card !p-3.5 flex items-center gap-3">
+              <Avatar name={c.name} /><div className="flex-1 min-w-0 text-sm"><b>{c.name}</b><span className="text-wep-muted"> · {c.account_name}</span><div className="text-xs text-wep-muted">Deleted {fmt(c.deleted_at)}</div></div>
+              <button className="btn-outline" onClick={() => restore.mutate(c.id)}><RotateCcw size={14} aria-hidden />Restore</button>
             </div>
           ))}
-          {(bin.data ?? []).length === 0 && <div className="card text-center text-sm text-wep-muted">Recycle bin is empty.</div>}
         </div>
       )}
 
-      {delFor && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDelFor(null)}>
-          <div className="bg-white rounded-xl p-5 w-full max-w-md space-y-3" onClick={e => e.stopPropagation()}>
-            <h3 className="font-bold">Request deletion of {delFor.name}</h3>
-            <p className="text-xs text-wep-muted">Needs your reporting manager and one of governance / inside sales to approve. If the person simply left the company, use “Mark as left” instead.</p>
-            <textarea className="form-input w-full" rows={3} placeholder="Reason (min 5 characters)" value={delReason} onChange={e => setDelReason(e.target.value)} />
-            <div className="flex justify-end gap-2">
-              <button className="btn-outline text-sm" onClick={() => setDelFor(null)}>Cancel</button>
-              <button className="btn-primary text-sm disabled:opacity-40" disabled={delReason.trim().length < 5 || reqDelete.isPending} onClick={() => reqDelete.mutate()}>Send request</button>
-            </div>
+      {addingCo && <Modal title="New company" subtitle="Add the company first, then its people." onClose={() => setAddingCo(false)} size="lg">
+        <CompanyForm onSaved={(c) => { setAddingCo(false); refresh(); nav(`/companies/${c.id}`) }} onCancel={() => setAddingCo(false)} /></Modal>}
+      {delFor && <DeleteRequestDialog contact={delFor} onClose={() => setDelFor(null)} />}
+      {leaving && <MarkLeftFlow contact={leaving} accountName={(leaving as any).account_name ?? undefined} onClose={() => { setLeaving(null); refresh() }} />}
+      {rejecting && (
+        <Modal title={`Reject deletion of ${rejecting.contact_name}`} subtitle="Rejecting stops the request. A reason is required." onClose={() => { setRejecting(null); setRejectReason('') }} size="sm">
+          <div><label htmlFor="rej" className="form-label block mb-1">Reason <span className="text-brand-pink" aria-hidden>*</span></label>
+            <textarea id="rej" className="form-input" rows={3} autoFocus value={rejectReason} onChange={e => setRejectReason(e.target.value)} /></div>
+          <div className="flex justify-end gap-2">
+            <button className="btn-outline" onClick={() => { setRejecting(null); setRejectReason('') }}>Cancel</button>
+            <button className="btn-danger disabled:opacity-50" disabled={!rejectReason.trim() || decide.isPending}
+              onClick={() => decide.mutate({ id: rejecting.id, decision: 'reject', comment: rejectReason.trim() })}>Reject request</button>
           </div>
-        </div>
-      )}
+        </Modal>)}
     </div>
   )
 }
