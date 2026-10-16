@@ -6,6 +6,7 @@ import { useAuthStore } from '@/store/authStore'
 import CloseDealModal from '@/components/CloseDealModal'
 import PipelineHistory from '@/components/PipelineHistory'
 import DealMomentum from '@/components/DealMomentum'
+import PipelineSheet from '@/components/PipelineSheet'
 
 // Must match every stage the backend can actually set (pipeline.py's DealIn
 // Literal) — "qualification" (default landing stage when a lead is converted,
@@ -57,6 +58,7 @@ export default function Pipeline() {
   const [reassigningId, setReassigningId] = useState<string | null>(null)
   const [reassignTo, setReassignTo] = useState('')
   const [showArchived, setShowArchived] = useState(false)
+  const [view, setView] = useState<'cards' | 'sheet'>('cards')
 
   const { user } = useAuthStore()
   const canReassign = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
@@ -152,7 +154,7 @@ export default function Pipeline() {
   const pipelineVal = active.reduce((s: number, d: any) => s + parseFloat(d.deal_value || 0), 0)
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto">
+    <div className={`p-4 md:p-6 mx-auto ${view === 'sheet' ? 'max-w-7xl' : 'max-w-5xl'}`}>
 
       {/* Header */}
       <div className="flex items-start justify-between mb-5 flex-wrap gap-3">
@@ -162,7 +164,12 @@ export default function Pipeline() {
             {filtered.length} of {(deals as any[]).length} deals
           </p>
         </div>
-        <button onClick={() => {
+        <div role="tablist" aria-label="Pipeline view" className="inline-flex rounded-xl border border-wep-border overflow-hidden">
+          {([['cards', 'Cards'], ['sheet', 'Sheet by rep']] as const).map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
+              className={`px-4 min-h-[44px] text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-pink ${view === k ? 'bg-brand-pink text-white' : 'text-wep-muted hover:bg-wep-surface'}`}>{label}</button>))}
+        </div>
+        {view === 'cards' && <button onClick={() => {
           if (showAdd) {
             setForm({ company:'', stage:'cold', deal_value:'', closure_eta:'', todays_update:'', next_step:'' })
             setAddErr('')
@@ -170,8 +177,10 @@ export default function Pipeline() {
           setShowAdd(v => !v)
         }} className="btn-primary">
           {showAdd ? '✕ Cancel' : '➕ Add Deal'}
-        </button>
+        </button>}
       </div>
+
+      {view === 'sheet' ? <PipelineSheet /> : <>
 
       {/* Summary bar */}
       <div className="grid grid-cols-3 gap-3 mb-5">
@@ -451,6 +460,7 @@ export default function Pipeline() {
           }}
         />
       )}
+      </>}
     </div>
   )
 }

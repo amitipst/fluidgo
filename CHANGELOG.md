@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Pipeline sheet by sales rep** (Pipeline → "Sheet by rep"): one table per rep with ARR, One time, Total, Win probability % and Target month,
+  rep subtotals, weighted total and a grand total; closed-won rows green, lost rows greyed and excluded from totals; download as Excel.
+- **Target-month history**: every change to a deal's target month/note or a move to/from Hold is recorded, and earlier targets show struck through
+  (optional reason when editing). Win probability is the rep's own number; open deals without one stay blank rather than guessed.
+- Database: migration `0036` (additive): `pipeline.win_probability`, `pipeline.target_note`, `pipeline_target_changes`.
+  API: `GET /api/pipeline/sheet`, `GET /api/pipeline/sheet.xlsx`, `PATCH /api/pipeline/{id}/forecast`. Uses the existing pipeline table and visibility rules.
+
 ---
 
 ## [1.4.0] — 2026-10-14
