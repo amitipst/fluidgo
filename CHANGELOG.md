@@ -8,6 +8,29 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.4.2] — 2026-10-23
+
+### Fixed
+- **Team page — exited members were invisible in Manage Team**: deactivated members never appeared in the Manage Team / Leadership &amp; Admin
+  list (only in the separate performance table), so there was no way to find one again to reactivate them even though the Reactivate button
+  itself always worked. Now shares the existing "Show exited members" checkbox with the performance table.
+- **Version display lagging behind what's actually deployed**: `backend/app/version.py`, `frontend/src/version.ts` and `frontend/package.json`
+  were left at 1.4.0 when `v1.4.1` (Pipeline sheet by rep) was tagged and deployed on 2026-10-22, so the UI kept reporting the old version even
+  though the new code was live. Bumped to 1.4.2 here, and `scripts/ci_local.sh`'s version-sync check now also validates against the release tag
+  being deployed (`CI_RELEASE_REF`, set by `scripts/deploy.sh`), not just that the files agree with each other, so a missed bump fails the gate
+  instead of passing silently.
+
+### Added
+- **CRM Admin role** (`crm_admin`): org-wide read + reassign on Leads/Pipeline/Contacts, user provisioning for any role except `super_admin`,
+  for Inside Sales/Marketing Ops who administer the CRM itself (access, onboarding/offboarding). Decoupled `can_provision_any_role` capability
+  flag rather than a numeric level bump, so it never inherits level-gated authority elsewhere (FGA approval, DSR approval chains). See PR #22.
+
+---
+
+## [1.4.1] — 2026-10-22
+
 ### Added
 - **Pipeline sheet by sales rep** (Pipeline → "Sheet by rep"): one table per rep with ARR, One time, Total, Win probability % and Target month,
   rep subtotals, weighted total and a grand total; closed-won rows green, lost rows greyed and excluded from totals; download as Excel.

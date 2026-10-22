@@ -29,7 +29,17 @@ trap cleanup EXIT
 
 run_version() {
   echo "== Version strings agree =="
-  python3 scripts/check_version_sync.py
+  # CI_RELEASE_REF (set by deploy.sh's gate step to the tag being deployed,
+  # e.g. "v1.4.2") makes this ALSO check the files against the actual
+  # release tag, not just against each other. Without it, three files that
+  # all forgot to bump still "agree" and the gate passes silently — exactly
+  # what happened on v1.4.1 (2026-10-22): version.py/version.ts/package.json
+  # stayed at 1.4.0 while the tag moved to 1.4.1, and nothing caught it
+  # because deploy.sh never told this script what tag it was deploying.
+  # GitHub Actions CI still gets the equivalent for free via GITHUB_REF_NAME
+  # (check_version_sync.py already reads that) — this just closes the same
+  # gap on the manual EC2 deploy path.
+  python3 scripts/check_version_sync.py ${CI_RELEASE_REF:+"$CI_RELEASE_REF"}
   record "Version strings agree" $?
 }
 
