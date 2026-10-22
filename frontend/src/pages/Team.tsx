@@ -270,9 +270,17 @@ export default function Team() {
     enabled: canManageUsers,
   })
 
+  // Bug fix 2026-10-23 (Amit): this previously never passed include_inactive,
+  // so a deactivated member vanished from the Manage Team / Leadership list
+  // entirely — there was no way to find them again to reactivate them, even
+  // though the Reactivate button itself (MemberRow, below) always worked
+  // fine once a row was actually on screen. Now shares the same
+  // "Show exited members" checkbox as the performance table (teamData,
+  // above) instead of a second, separate toggle — one switch, one mental
+  // model, and the query key includes showExited so toggling it refetches.
   const { data: allUsers = [] } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get('/users').then(r => r.data),
+    queryKey: ['users', showExited],
+    queryFn: () => api.get(`/users${showExited ? '?include_inactive=true' : ''}`).then(r => r.data),
     enabled: canManageUsers && showManage
   })
 
@@ -565,7 +573,7 @@ export default function Team() {
 
           <label className="flex items-center gap-2 text-xs text-wep-muted mb-3">
             <input type="checkbox" checked={showExited} onChange={e => setShowExited(e.target.checked)} />
-            Show exited members in the performance table below
+            Show exited members (performance table below, and the Manage Team list)
           </label>
 
           <div className="mb-4">

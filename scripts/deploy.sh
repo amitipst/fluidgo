@@ -52,7 +52,9 @@ elif [ "$DRY_RUN" = "1" ]; then
 else
   GATE_DIR="$(mktemp -d /var/tmp/fluidgo-gate.XXXXXX)"
   git worktree add --detach "$GATE_DIR" "$NEW_SHA" >/dev/null 2>&1 || die "could not create gate worktree"
-  ( cd "$GATE_DIR" && scripts/ci_local.sh ); gate_rc=$?
+  # Tell the gate which tag it's actually deploying, so the version-sync
+  # check can catch a forgotten version bump (see ci_local.sh's run_version).
+  ( cd "$GATE_DIR" && CI_RELEASE_REF="$REF" scripts/ci_local.sh ); gate_rc=$?
   git worktree remove --force "$GATE_DIR" >/dev/null 2>&1 || true
   [ "$gate_rc" -eq 0 ] || die "CI gate FAILED, nothing was changed on the server"
 fi
