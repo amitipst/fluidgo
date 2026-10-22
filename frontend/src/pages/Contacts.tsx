@@ -15,7 +15,7 @@ import Modal from '@/components/ui/Modal'
 import { Avatar, Skeleton, EmptyState, Pill, RowAction } from '@/components/ui/bits'
 
 type Tab = 'companies' | 'directory' | 'incomplete' | 'requests' | 'bin'
-const BIN_ROLES = ['governance', 'super_admin', 'business_head', 'practice_head', 'coo', 'ceo']
+const BIN_ROLES = ['governance', 'super_admin', 'business_head', 'practice_head', 'coo', 'ceo', 'crm_admin']
 const STATUS_TONE: Record<string, 'warn' | 'ok' | 'danger' | 'muted'> = { pending: 'warn', approved: 'ok', rejected: 'danger', expired: 'muted', cancelled: 'muted' }
 
 function fmt(d?: string | null) { try { return d ? format(new Date(d), 'dd MMM yyyy') : '—' } catch { return '—' } }

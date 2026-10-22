@@ -20,6 +20,12 @@ export type Role =
   // entry, no approval authority, no visibility into revenue/incentive/
   // score figures (see backend can_see_financials() / deny_governance()).
   | 'governance'
+  // Inside Sales/Marketing Ops — administers the CRM itself (user access,
+  // onboarding/offboarding) and has org-wide read+reassign on Leads/
+  // Pipeline/Opportunities (see backend can_provision_any_role()). Unlike
+  // governance, DOES see financial figures (can_see_financials defaults
+  // True for this role) — added 2026-10-22.
+  | 'crm_admin'
 
 export type OrgRoleKey =
   | 'sales' | 'presales' | 'service_delivery' | 'manager' | 'bu_head'

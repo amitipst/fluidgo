@@ -131,8 +131,8 @@ export default function Layout() {
   const { user, clearAuth } = useAuthStore()
   const navigate = useNavigate()
 
-  const canSeeTeam    = ['manager','regional_manager','bu_head','inside_sales','business_head','ceo','super_admin'].includes(user?.role ?? '')
-  const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const canSeeTeam    = ['manager','regional_manager','bu_head','inside_sales','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
+  const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
   const canSeeFGA     = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
   const canSeeScoring = ['regional_manager','bu_head','business_head','practice_head','ceo','super_admin'].includes(user?.role ?? '')
   const isSDM = user?.role === 'service_delivery_manager'
@@ -192,7 +192,7 @@ export default function Layout() {
     manager: 'Manager', service_delivery_manager: 'Service Delivery Manager',
     regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
     practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', coo: 'COO', ceo: 'CEO',
-    super_admin: 'Super Admin', governance: 'Governance',
+    super_admin: 'Super Admin', governance: 'Governance', crm_admin: 'CRM Admin',
   }
 
   // Org label — role-aware, region-aware, never hardcoded
@@ -202,7 +202,7 @@ export default function Layout() {
     // entirely for these scopes (hr/finance = "all users", coo = scope="all"
     // same as ceo/super_admin), so showing a single region/business here
     // would misrepresent what they actually see.
-    if (['ceo', 'super_admin', 'coo', 'hr', 'finance', 'governance'].includes(r)) return 'All Regions · All Businesses'
+    if (['ceo', 'super_admin', 'coo', 'hr', 'finance', 'governance', 'crm_admin'].includes(r)) return 'All Regions · All Businesses'
     if (r === 'business_head') return `${user?.business?.toUpperCase() ?? 'fluidPro'} · Global`
     const region = user?.region || user?.bu
     return region ? `${region} · ${user?.business ?? 'fluidPro'}` : 'fluidPro'
