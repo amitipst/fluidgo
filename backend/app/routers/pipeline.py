@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, Request, BackgroundTasks, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date, datetime, timezone
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
-from app.models import PipelineDeal, User, role_level, PipelineUpdate
+from app.models import PipelineDeal, User, role_level, PipelineUpdate, PipelineTargetChange
 from app.services.deps import get_current_user, deny_governance
 from app.services.audit_service import audit
+from app.services import pipeline_sheet_service as sheet
 
 router = APIRouter()
 
@@ -70,6 +71,8 @@ class DealIn(BaseModel):
     proposal_version: Optional[str] = None
     last_activity_at: Optional[datetime] = None
     next_followup_at: Optional[datetime] = None
+    win_probability: Optional[int] = Field(default=None, ge=0, le=100)
+    target_note: Optional[str] = Field(default=None, max_length=60)
 
 @router.post("")
 async def create_deal(body: DealIn, db: AsyncSession = Depends(get_db),
@@ -78,6 +81,40 @@ async def create_deal(body: DealIn, db: AsyncSession = Depends(get_db),
     db.add(deal)
     await db.commit()
     return {"id": str(deal.id), **body.model_dump()}
+
+async def _visible_deals_query(db: AsyncSession, user: User, include_archived: bool, include_seed: bool):
+    """The one place that decides which deals a user may see (shared by the
+    Pipeline list and the forecast sheet): governance blocked, owner scope via
+    resolve_visible_user_ids, archived/seed excluded unless opted in."""
+    deny_governance(user)
+    from app.services.permission_service import resolve_visible_user_ids
+    visible = await resolve_visible_user_ids(db, user)
+    show_seed = include_seed and role_level(user.role) >= 40
+    q = select(PipelineDeal)
+    if visible is not None:
+        q = q.where(PipelineDeal.user_id.in_(visible))
+    if not include_archived:
+        q = q.where(PipelineDeal.archived == False)
+    if not show_seed:
+        q = q.where(PipelineDeal.is_seed == False)
+    return q.order_by(PipelineDeal.updated_at.desc())
+
+
+def _ledger_label(stage: str, eta, note) -> Optional[str]:
+    """Target label worth recording in the change ledger; None once closed or when unset."""
+    if stage in sheet.CLOSED:
+        return None
+    lbl = sheet.target_label(stage, eta, note)
+    return None if lbl == "—" else lbl
+
+
+def _log_target_change(db: AsyncSession, deal: PipelineDeal, old: Optional[str], new: Optional[str],
+                       user: User, reason: Optional[str] = None):
+    if old and old != new:
+        db.add(PipelineTargetChange(deal_id=deal.id, old_label=old, new_label=new,
+                                    reason=(reason or None), changed_by=user.id,
+                                    changed_at=datetime.utcnow()))
+
 
 @router.get("")
 async def list_deals(include_archived: bool = False, include_seed: bool = False,
@@ -108,19 +145,7 @@ async def list_deals(include_archived: bool = False, include_seed: bool = False,
     field-by-field — deal_value appears on every row, and Pipeline isn't
     part of what governance validates (DSR/DMR/DOR/FGA) in the first
     place."""
-    deny_governance(user)
-    from app.services.permission_service import resolve_visible_user_ids
-    from app.models import role_level
-    visible = await resolve_visible_user_ids(db, user)
-    show_seed = include_seed and role_level(user.role) >= 40
-    q = select(PipelineDeal)
-    if visible is not None:
-        q = q.where(PipelineDeal.user_id.in_(visible))
-    if not include_archived:
-        q = q.where(PipelineDeal.archived == False)
-    if not show_seed:
-        q = q.where(PipelineDeal.is_seed == False)
-    q = q.order_by(PipelineDeal.updated_at.desc())
+    q = await _visible_deals_query(db, user, include_archived, include_seed)
     result = await db.execute(q)
     now = datetime.now(timezone.utc)
     rows = []
@@ -192,9 +217,11 @@ async def update_deal(deal_id: str, body: DealIn, request: Request,
     # so a change to them is worth an explicit audit entry.
     old_value = float(deal.deal_value) if deal.deal_value is not None else None
     old_stage = deal.stage
+    old_target = _ledger_label(deal.stage, deal.closure_eta, deal.target_note)
 
     for k, v in updates.items():
         setattr(deal, k, v)
+    _log_target_change(db, deal, old_target, _ledger_label(deal.stage, deal.closure_eta, deal.target_note), user)
     # Any edit counts as activity — keeps "stale deal" logic honest.
     deal.last_activity_at = datetime.utcnow()
 
@@ -454,7 +481,9 @@ async def close_deal(deal_id: str, body: CloseDealIn, request: Request,
     if body.category not in valid:
         raise HTTPException(400, f"category for {body.outcome} must be one of: {', '.join(valid)}")
 
+    old_target = _ledger_label(deal.stage, deal.closure_eta, deal.target_note)
     deal.stage               = body.outcome
+    _log_target_change(db, deal, old_target, _ledger_label(deal.stage, deal.closure_eta, deal.target_note), user)
     deal.outcome_category    = body.category
     deal.outcome_detail      = body.detail
     deal.outcome_competitor  = body.competitor
@@ -646,3 +675,77 @@ async def win_back_done(deal_id: str, request: Request, background_tasks: Backgr
     deal.reengage_done = True
     await db.commit()
     return {"id": deal_id, "reengage_done": True}
+
+
+# ── Forecast sheet (v1.5.0): rep-wise view, inline forecast edit, Excel export ──
+class ForecastIn(BaseModel):
+    win_probability: Optional[int] = Field(default=None, ge=0, le=100)
+    closure_eta: Optional[date] = None
+    target_note: Optional[str] = Field(default=None, max_length=60)
+    reason: Optional[str] = Field(default=None, max_length=300)
+
+
+@router.patch("/{deal_id}/forecast")
+async def update_forecast(deal_id: str, body: ForecastIn, request: Request,
+                          background_tasks: BackgroundTasks,
+                          db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Edit only the forecast cells (win %, target month/note). A changed target is
+    written to the ledger so the earlier month stays visible (struck through)."""
+    deny_governance(user)
+    deal = (await db.execute(select(PipelineDeal).where(PipelineDeal.id == deal_id))).scalar_one_or_none()
+    if not deal:
+        raise HTTPException(404, "Deal not found")
+    _check_deal_access(deal, user)
+    sent = body.model_fields_set
+    if "win_probability" in sent:
+        deal.win_probability = body.win_probability
+    old_target = _ledger_label(deal.stage, deal.closure_eta, deal.target_note)
+    if "closure_eta" in sent:
+        deal.closure_eta = body.closure_eta
+    if "target_note" in sent:
+        deal.target_note = (body.target_note or "").strip() or None
+    _log_target_change(db, deal, old_target, _ledger_label(deal.stage, deal.closure_eta, deal.target_note),
+                       user, body.reason)
+    deal.last_activity_at = datetime.utcnow()
+    await db.commit()
+    background_tasks.add_task(audit, db, user, "UPDATE", "pipeline", deal_id,
+                              f"{deal.company}: forecast edited", request=request)
+    return {"id": deal_id, "updated": True}
+
+
+async def _sheet_data(db: AsyncSession, user: User, include_closed: bool, include_seed: bool, rep_id: Optional[str]):
+    q = await _visible_deals_query(db, user, False, include_seed)
+    if rep_id:
+        q = q.where(PipelineDeal.user_id == rep_id)
+    if not include_closed:
+        q = q.where(PipelineDeal.stage.notin_(sorted(sheet.CLOSED)))
+    deals = (await db.execute(q.order_by(PipelineDeal.created_at))).scalars().all()
+    if not deals:
+        return {"groups": [], "totals": sheet._sum([])}
+    ids = [d.id for d in deals]
+    hist: dict = {}
+    for ch in (await db.execute(select(PipelineTargetChange).where(PipelineTargetChange.deal_id.in_(ids))
+                                .order_by(PipelineTargetChange.changed_at))).scalars().all():
+        hist.setdefault(ch.deal_id, []).append(ch.old_label)
+    names = {u.id: u.name for u in (await db.execute(
+        select(User).where(User.id.in_({d.user_id for d in deals})))).scalars().all()}
+    items = [(str(d.user_id), names.get(d.user_id, "Unassigned"), sheet.build_row(d, hist.get(d.id, [])))
+             for d in deals]
+    return sheet.group_by_rep(items)
+
+
+@router.get("/sheet")
+async def pipeline_sheet(include_closed: bool = True, include_seed: bool = False, rep_id: Optional[str] = None,
+                         db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    return await _sheet_data(db, user, include_closed, include_seed, rep_id)
+
+
+@router.get("/sheet.xlsx")
+async def pipeline_sheet_xlsx(include_closed: bool = True, include_seed: bool = False, rep_id: Optional[str] = None,
+                              db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    from fastapi.responses import Response
+    from app.services.pipeline_sheet_export import build_xlsx
+    data = await _sheet_data(db, user, include_closed, include_seed, rep_id)
+    return Response(content=build_xlsx(data),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="pipeline-{date.today().isoformat()}.xlsx"'})

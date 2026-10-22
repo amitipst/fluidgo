@@ -440,6 +440,25 @@ class PipelineDeal(Base):
     # a real deal; is_seed marks a deal seed_v3.py created that was never real
     # in the first place. Both get excluded from analytics/scoring by default.
     is_seed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # ── Forecast sheet (v1.5.0, migration 0036) ───────────────────────────────
+    # win_probability is the REP's own call (0-100), distinct from ai_closure_pct.
+    # target_note is free text for ranges the date can't express ("Oct/Nov",
+    # "Jan-Feb 27"); closure_eta stays the machine-readable target month.
+    win_probability: Mapped[int] = mapped_column(SmallInteger, nullable=True)
+    target_note:     Mapped[str] = mapped_column(String(60), nullable=True)
+
+class PipelineTargetChange(Base):
+    """Append-only ledger of every target-date / target-note / hold change on a
+    deal, so a slipped month is never silently overwritten (the struck-through
+    history on the forecast sheet). deal_id/changed_by are soft references."""
+    __tablename__ = "pipeline_target_changes"
+    id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    old_label:  Mapped[str]       = mapped_column(String(60), nullable=True)
+    new_label:  Mapped[str]       = mapped_column(String(60), nullable=True)
+    reason:     Mapped[str]       = mapped_column(String(300), nullable=True)
+    changed_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    changed_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 class PipelineUpdate(Base):
     """Append-only remark history for a pipeline deal. `todays_update`/`next_step`
