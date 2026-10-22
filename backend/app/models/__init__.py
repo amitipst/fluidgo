@@ -75,6 +75,24 @@ ROLE_HIERARCHY: dict[str, dict] = {
     # can't see money" all at once. Level 35 (between regional_manager/30
     # and business_head/40) is descriptive of seniority only.
     "governance":         {"level": 35, "scope": "all", "can_see_financials": False},
+    # CRM Admin — Inside Sales/Marketing Ops role that administers the CRM
+    # itself rather than running a sales number: user access (onboarding/
+    # offboarding/role assignment), and org-wide read + reassign visibility
+    # into Leads/Pipeline/Opportunities (see leads.py/pipeline.py). scope="all"
+    # gives it the same org-wide read reach as coo/ceo/governance for free via
+    # resolve_visible_user_ids — zero new scope-resolution code needed. Its
+    # user-provisioning authority ("give access to anyone except super_admin")
+    # is DELIBERATELY NOT modeled as a high numeric level — that would also
+    # hand it every other level-gated authority in the codebase (FGA approval,
+    # DSR approval chains, financial dashboards) it was never asked to have.
+    # Instead it's the same decoupled-capability-axis pattern as
+    # can_see_financials above: can_provision_any_role (see helper below),
+    # True only for this role, defaulting False for everyone else. Level 30
+    # is descriptive of seniority only (same tier as regional_manager), and
+    # can_see_financials is left at its True default — unlike governance,
+    # Amit explicitly scoped this role to include financial visibility
+    # (closures/opportunity value), 2026-10-22.
+    "crm_admin":          {"level": 30, "scope": "all", "can_provision_any_role": True},
     # business_head == practice_head (same level, same scope) — heads ONE
     # business line (fluidpro/fluidprint/floxtax/hooks) across ALL its regions.
     "business_head":  {"level": 40, "scope": "business"},
@@ -98,6 +116,20 @@ def is_cross_org(role: str) -> bool: return role_level(role) >= 45
 # gate on this, not on role_level, since level also controls unrelated
 # visibility scope.
 def can_see_financials(role: str) -> bool: return ROLE_HIERARCHY.get(role, {}).get("can_see_financials", True)
+# Same decoupled pattern as can_see_financials — independent of role_level/
+# scope on purpose. True only for roles explicitly granted org-wide user-
+# provisioning authority (create/edit/deactivate/reassign/reset-password on
+# ANY account except super_admin) regardless of their own numeric level.
+# Lets crm_admin (level 30) administer accounts up to and including ceo
+# without inheriting ceo-level authority anywhere else — see the "crm_admin"
+# entry above for why a high level number would have been the wrong tool
+# for this. super_admin itself is never covered by this flag; it is, and
+# stays, the one account tier nobody provisions via this axis — see every
+# call site in users.py (_can_create_role, update_user, set_user_status,
+# reset_user_password, list_roles), each of which blocks a super_admin
+# target explicitly rather than relying on this helper to do it. Defaults
+# False via .get() — zero behavior change for every existing role.
+def can_provision_any_role(role: str) -> bool: return ROLE_HIERARCHY.get(role, {}).get("can_provision_any_role", False)
 
 # ── Gamification models ───────────────────────────────────────────────────────
 class IncentiveScheme(Base):

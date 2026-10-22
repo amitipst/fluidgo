@@ -54,7 +54,7 @@ async def test_field_role_with_personal_reports_sees_them_too():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["coo", "ceo", "super_admin", "governance"])
+@pytest.mark.parametrize("role", ["coo", "ceo", "super_admin", "governance", "crm_admin"])
 async def test_all_scope_roles_see_everyone(role):
     result = await resolve_visible_user_ids(_db(), _user(role))
     assert result is None  # None == no restriction

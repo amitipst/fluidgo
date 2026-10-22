@@ -6,7 +6,7 @@ from datetime import date
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
-from app.models import Lead, PipelineDeal, User
+from app.models import Lead, PipelineDeal, User, ROLE_HIERARCHY, role_level
 from app.services.deps import get_current_user
 from app.services.rigor_service import score_lead
 from app.services.audit_service import audit
@@ -33,15 +33,69 @@ async def create_lead(body: LeadIn, db: AsyncSession = Depends(get_db),
 
 @router.get("")
 async def list_leads(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    """Always own-only (no team scope on this endpoint) — so unlike
-    list_deals()/list_meetings(), there's no admin verification use case for
-    an include_seed toggle here. Seeded leads (seed_v3.py, see migration
-    0029) are excluded unconditionally, same reasoning as dsr.py's /history."""
-    result = await db.execute(
-        select(Lead).where(Lead.user_id == user.id, Lead.is_seed == False)
-        .order_by(Lead.date.desc())
-    )
+    """Own-only for everyone below scope="all" — unlike list_deals()/
+    list_meetings(), this endpoint never grew a manager/team-scope tier, and
+    that gap is left as-is here (not this pass's problem to solve).
+    scope="all" roles (coo/ceo/super_admin/governance/crm_admin) DO see every
+    rep's leads org-wide — the same reach resolve_visible_user_ids already
+    gives them on Pipeline/Meetings/DSR; Leads was simply the one place that
+    rule hadn't been applied yet, surfaced by the 2026-10-22 crm_admin ask
+    ("see the leads of all people"). Seeded leads (seed_v3.py, see migration
+    0029) are excluded unconditionally either way, same reasoning as
+    dsr.py's /history."""
+    is_org_wide = ROLE_HIERARCHY.get(user.role, {}).get("scope") == "all"
+    query = select(Lead).where(Lead.is_seed == False)
+    if not is_org_wide:
+        query = query.where(Lead.user_id == user.id)
+    result = await db.execute(query.order_by(Lead.date.desc()))
     return [{c.name: getattr(l, c.name) for c in l.__table__.columns} for l in result.scalars().all()]
+
+
+class ReassignLeadIn(BaseModel):
+    new_owner_id: str
+
+
+@router.post("/{lead_id}/reassign")
+async def reassign_lead(lead_id: str, body: ReassignLeadIn, request: Request,
+                        background_tasks: BackgroundTasks,
+                        db: AsyncSession = Depends(get_db),
+                        user: User = Depends(get_current_user)):
+    """Change a lead's owner — mirrors pipeline.py's reassign_deal exactly
+    (same manager-tier+ gate, same visible-scope check on both the current
+    and new owner). Built for crm_admin (scope="all", so both checks below
+    are a no-op for it — every lead/user is in its visible scope) but not
+    restricted to it: any manager-tier+ role already relies on the same
+    pattern elsewhere, so there's no reason to special-case this endpoint
+    to one role."""
+    if role_level(user.role) < 20:
+        raise HTTPException(403, "Only managers and above can reassign leads")
+
+    lead = (await db.execute(select(Lead).where(Lead.id == uuid.UUID(lead_id)))).scalar_one_or_none()
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+
+    from app.services.permission_service import resolve_visible_user_ids
+    visible = await resolve_visible_user_ids(db, user)
+    if visible is not None and lead.user_id not in visible:
+        raise HTTPException(403, "You cannot reassign this lead")
+
+    new_owner_id = uuid.UUID(body.new_owner_id)
+    new_owner = (await db.execute(select(User).where(User.id == new_owner_id))).scalar_one_or_none()
+    if not new_owner:
+        raise HTTPException(404, "New owner not found")
+    if visible is not None and new_owner_id not in visible:
+        raise HTTPException(403, "You cannot assign this lead to someone outside your scope")
+
+    old_owner_id = lead.user_id
+    lead.user_id = new_owner_id
+    await db.commit()
+
+    if old_owner_id != new_owner_id:
+        background_tasks.add_task(
+            audit, db, user, "REASSIGN", "lead", lead_id,
+            f"{lead.company}: reassigned to {new_owner.name}", request=request,
+        )
+    return {"id": lead_id, "new_owner_id": str(new_owner_id), "message": f"Lead reassigned to {new_owner.name}."}
 
 
 # ── Convert a lead → pipeline deal / opportunity (funnel step 2) ──────────────

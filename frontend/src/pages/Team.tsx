@@ -36,6 +36,7 @@ const V3_ROLES = [
   { key: 'hr',            label: '👥 HR',                     level: 25 },
   { key: 'finance',       label: '💰 Finance',                level: 25 },
   { key: 'governance',    label: '🛡️ Governance',             level: 35 },
+  { key: 'crm_admin',     label: '📇 CRM Admin',               level: 30 },
   { key: 'ceo',           label: '👑 CEO',                    level: 50 },
   { key: 'super_admin',   label: '⚙️ Super Admin',            level: 99 },
 ]
@@ -50,7 +51,7 @@ const TRACKS: Track[] = [
   { key: 'presales',   label: '🔧 Pre-Sales',   roles: ['pre_sales'] },
   { key: 'operations', label: '🛠️ Operations',  roles: ['service_delivery_manager'] },
 ]
-const LEADERSHIP_ROLES = ['regional_manager', 'bu_head', 'business_head', 'coo', 'hr', 'finance', 'ceo', 'super_admin', 'governance']
+const LEADERSHIP_ROLES = ['regional_manager', 'bu_head', 'business_head', 'coo', 'hr', 'finance', 'ceo', 'super_admin', 'governance', 'crm_admin']
 
 // Company-level roles — backend's resolve_visible_user_ids ignores
 // business/region entirely for these (hr/finance = "all users org-wide",
@@ -58,7 +59,7 @@ const LEADERSHIP_ROLES = ['regional_manager', 'bu_head', 'business_head', 'coo',
 // Region pick on these roles in the onboarding form is misleading, since
 // it has no effect on what they actually see — the fields are hidden for
 // them instead of asking for a choice that doesn't do anything.
-const COMPANY_WIDE_ROLES = ['hr', 'finance', 'coo', 'ceo', 'super_admin']
+const COMPANY_WIDE_ROLES = ['hr', 'finance', 'coo', 'ceo', 'super_admin', 'crm_admin']
 
 const BUSINESSES = [
   { key: 'fluidpro',   label: 'fluidPro (IT Infra)' },
@@ -232,7 +233,13 @@ export default function Team() {
   const qc = useQueryClient()
   const today = format(new Date(), 'yyyy-MM-dd')
   const currentMonth = format(new Date(), 'yyyy-MM')
-  const canManageUsers = ['manager','regional_manager','bu_head','business_head','ceo','super_admin'].includes(user?.role ?? '')
+  const canManageUsers = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
+  // crm_admin's provisioning authority (create/edit/deactivate/reset-password
+  // on anyone except super_admin) is a decoupled capability, not a level —
+  // see can_provision_any_role() on the backend. myLevel-based comparison
+  // below would otherwise wrongly hide manage actions for any target at or
+  // above crm_admin's own level (30), e.g. a business_head or ceo row.
+  const isCrmAdmin = user?.role === 'crm_admin'
   const [activeTrack, setActiveTrack] = useState<typeof TRACKS[number]['key']>('sales')
   const [showManage, setShowManage] = useState(false)
   const [showExited, setShowExited] = useState(false)
@@ -390,7 +397,8 @@ export default function Team() {
   // Own level, used to hide (not just block) Edit/Deactivate for equal-or-higher accounts —
   // matches the backend rule in update_user / set_user_status exactly.
   const myLevel = V3_ROLES.find(r => r.key === user?.role)?.level ?? 0
-  const canManageTarget = (u: any) => u.id === user?.id || u.role_level < myLevel
+  const canManageTarget = (u: any) =>
+    u.id === user?.id || (isCrmAdmin && u.role !== 'super_admin') || u.role_level < myLevel
 
   const submittedToday = new Set(todayDSRs.map((d: any) => d.user_id))
   const todayDORs = new Set(dorTeamMonth.filter((d: any) => d.date === today).map((d: any) => d.user_id))

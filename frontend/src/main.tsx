@@ -54,7 +54,7 @@ function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?
 
 const MANAGER_ROLES = ['manager','regional_manager','bu_head','business_head','ceo','super_admin']
 // Everyone except hr/finance (backend contacts router denies them)
-const CONTACT_ROLES = ['rep','inside_sales','pre_sales','service_delivery_manager','governance', ...MANAGER_ROLES, 'practice_head', 'coo']
+const CONTACT_ROLES = ['rep','inside_sales','pre_sales','service_delivery_manager','governance', ...MANAGER_ROLES, 'practice_head', 'coo', 'crm_admin']
 const MGMT_FINANCE  = [...MANAGER_ROLES, 'hr', 'finance']
 const KPI_ENTRY_ROLES = [...MANAGER_ROLES, 'service_delivery_manager', 'rep', 'inside_sales', 'pre_sales']
 // Matches backend feedback.py's REVIEW_LEVEL (role_level >= 40)
@@ -119,12 +119,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               } />
               {/* Management — manager+ */}
               <Route path="team" element={
-                <ProtectedRoute roles={[...MANAGER_ROLES, 'inside_sales']}>
+                <ProtectedRoute roles={[...MANAGER_ROLES, 'inside_sales', 'crm_admin']}>
                   <Team />
                 </ProtectedRoute>
               } />
               <Route path="revenue" element={
-                <ProtectedRoute roles={MANAGER_ROLES}>
+                <ProtectedRoute roles={[...MANAGER_ROLES, 'crm_admin']}>
                   <RevenueIntelligence />
                 </ProtectedRoute>
               } />

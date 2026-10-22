@@ -6,8 +6,8 @@ import { APP_VERSION, APP_BUILD_DATE } from '@/version'
 // sync with Layout.tsx if the nav gating changes.
 const FIELD_ROLES = ['rep', 'inside_sales', 'pre_sales', 'manager']
 const DSR_MANAGER_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin']
-const TEAM_ROLES = ['manager', 'regional_manager', 'bu_head', 'inside_sales', 'business_head', 'ceo', 'super_admin']
-const REVENUE_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin']
+const TEAM_ROLES = ['manager', 'regional_manager', 'bu_head', 'inside_sales', 'business_head', 'ceo', 'super_admin', 'crm_admin']
+const REVENUE_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin', 'crm_admin']
 const FGA_ROLES = ['manager', 'regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin', 'hr', 'finance']
 const SCORING_ROLES = ['regional_manager', 'bu_head', 'business_head', 'practice_head', 'ceo', 'super_admin']
 const FEEDBACK_ADMIN_ROLES = ['business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
@@ -18,7 +18,7 @@ const ROLE_LABELS: Record<string, string> = {
   manager: 'Manager', service_delivery_manager: 'Service Delivery Manager',
   regional_manager: 'Regional Manager', bu_head: 'Regional Manager', business_head: 'Business Head',
   practice_head: 'Practice Head', hr: 'HR', finance: 'Finance', coo: 'COO', ceo: 'CEO',
-  super_admin: 'Super Admin', governance: 'Governance',
+  super_admin: 'Super Admin', governance: 'Governance', crm_admin: 'CRM Admin',
 }
 
 function Section({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {

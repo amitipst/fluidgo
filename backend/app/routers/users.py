@@ -5,7 +5,7 @@ from sqlalchemy import select
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
-from app.models import User, ROLE_HIERARCHY, role_level
+from app.models import User, ROLE_HIERARCHY, role_level, can_provision_any_role
 from app.services.deps import get_current_user, require_level
 from app.services.auth_service import hash_password, generate_temp_password
 from app.services.permission_service import resolve_visible_user_ids
@@ -18,7 +18,7 @@ router = APIRouter()
 V3_ROLES = Literal[
     "rep", "inside_sales", "pre_sales", "manager", "service_delivery_manager",
     "regional_manager", "bu_head", "business_head", "coo", "hr", "finance", "ceo", "super_admin",
-    "governance"
+    "governance", "crm_admin"
 ]
 BUSINESSES = Literal["fluidpro", "fluidprint", "floxtax", "hooks"]
 
@@ -77,7 +77,17 @@ def _can_create_role(actor_role: str, target_role: str) -> bool:
     """Enforce: you can only create roles at a lower level than yourself.
     BU Head can create manager and below.
     Manager can create rep/inside_sales/pre_sales only.
-    CEO/super_admin can create anything."""
+    CEO/super_admin can create anything — EXCEPT another super_admin, which
+    nobody can create via this endpoint (same script-only pattern as
+    promote_coo.py).
+    can_provision_any_role (e.g. crm_admin) is a decoupled exception on top
+    of this: it may create/assign ANY role except super_admin, regardless of
+    its own numeric level — see can_provision_any_role() in app.models for
+    why this is intentionally not just a high level number."""
+    if target_role == "super_admin":
+        return False
+    if can_provision_any_role(actor_role):
+        return True
     actor_level  = role_level(actor_role)
     target_level = role_level(target_role)
     return actor_level > target_level
@@ -138,9 +148,13 @@ async def create_user(
             f"'{actor.role}' cannot create a user with role '{body.role}'. "
             f"You can only create roles below your own level.")
 
-    # Enforce region isolation — managers can only create in their own region
+    # Enforce region isolation — managers can only create in their own region.
+    # can_provision_any_role (e.g. crm_admin) is exempt — it's scope="all" by
+    # design (org-wide onboarding is the whole point of the role), so a
+    # region match here would be an arbitrary restriction, not a real
+    # isolation boundary.
     user_region = getattr(actor, "region", None) or actor.bu
-    if role_level(actor.role) < 50 and role_level(actor.role) < 40:
+    if role_level(actor.role) < 50 and role_level(actor.role) < 40 and not can_provision_any_role(actor.role):
         if body.region and body.region != user_region:
             raise HTTPException(403,
                 f"You can only onboard users to your own region ({user_region})")
@@ -192,12 +206,19 @@ async def update_user(
     # edit region/business/manager_id on an account that outranks them, or demote a
     # superior by changing their role to something low enough that _can_create_role
     # would pass. super_admin is exempt (matches require_role's bypass elsewhere);
-    # everyone else — including another super_admin — cannot touch an equal-or-higher
-    # account. Self-edits are still allowed (e.g. updating your own region).
-    if actor.role != "super_admin" and actor.id != target.id:
-        if role_level(actor.role) <= role_level(target.role):
-            raise HTTPException(403,
-                f"Cannot modify a '{target.role}' account — it is at or above your own role level.")
+    # can_provision_any_role (e.g. crm_admin) is ALSO exempt from the numeric-level
+    # comparison, but — unlike super_admin — still cannot touch a super_admin
+    # target; that one tier stays off-limits to everyone but super_admin itself,
+    # same rule as _can_create_role above. Everyone else — including another
+    # super_admin — cannot touch an equal-or-higher account. Self-edits are
+    # still allowed (e.g. updating your own region).
+    if actor.id != target.id:
+        if target.role == "super_admin" and actor.role != "super_admin":
+            raise HTTPException(403, "Cannot modify a 'super_admin' account.")
+        if actor.role != "super_admin" and not can_provision_any_role(actor.role):
+            if role_level(actor.role) <= role_level(target.role):
+                raise HTTPException(403,
+                    f"Cannot modify a '{target.role}' account — it is at or above your own role level.")
 
     # Enforce hierarchy if changing role
     if body.role and not _can_create_role(actor.role, body.role):
@@ -272,8 +293,14 @@ async def set_user_status(
     # No super_admin bypass here on purpose: this is the one action even a
     # super_admin cannot perform on a fellow super_admin — deliberately requires
     # a direct script (same pattern as promote_coo.py) if that's ever truly needed.
-    if role_level(actor.role) <= role_level(target.role) and actor.id != target.id:
-        raise HTTPException(403, f"Cannot change status of a '{target.role}' account")
+    # can_provision_any_role (e.g. crm_admin) gets the offboarding authority it
+    # was explicitly asked for — deactivate/reactivate ANY account — but a
+    # super_admin target is still off-limits to it, same as everywhere else.
+    if target.role == "super_admin" and actor.id != target.id:
+        raise HTTPException(403, "Cannot change status of a 'super_admin' account")
+    if not can_provision_any_role(actor.role):
+        if role_level(actor.role) <= role_level(target.role) and actor.id != target.id:
+            raise HTTPException(403, f"Cannot change status of a '{target.role}' account")
     target.is_active = body.is_active
     await db.commit()
     background_tasks.add_task(
@@ -310,10 +337,16 @@ async def reset_user_password(
     # Same hierarchy rule as update_user/set_user_status: cannot act on an
     # account at or above your own level, self excepted. A password reset is
     # at least as sensitive as any profile edit those endpoints already gate.
-    if actor.role != "super_admin" and actor.id != target.id:
-        if role_level(actor.role) <= role_level(target.role):
-            raise HTTPException(403,
-                f"Cannot reset the password of a '{target.role}' account — it is at or above your own role level.")
+    # can_provision_any_role (e.g. crm_admin) gets the same bypass as those
+    # endpoints — "giving access" includes resetting a forgotten password —
+    # except against a super_admin target, which stays off-limits.
+    if actor.id != target.id:
+        if target.role == "super_admin" and actor.role != "super_admin":
+            raise HTTPException(403, "Cannot reset the password of a 'super_admin' account.")
+        if actor.role != "super_admin" and not can_provision_any_role(actor.role):
+            if role_level(actor.role) <= role_level(target.role):
+                raise HTTPException(403,
+                    f"Cannot reset the password of a '{target.role}' account — it is at or above your own role level.")
 
     temp_password = generate_temp_password()
     target.password_hash = hash_password(temp_password)
@@ -338,7 +371,17 @@ async def reset_user_password(
 
 @router.get("/roles")
 async def list_roles(user: User = Depends(require_level(20))):
-    """Returns all roles that the current user is allowed to assign."""
+    """Returns all roles that the current user is allowed to assign.
+    can_provision_any_role (e.g. crm_admin) gets every role except
+    super_admin, regardless of its own numeric level — matches
+    _can_create_role's logic exactly so this dropdown never offers a role
+    the create/update endpoints would then reject."""
+    if can_provision_any_role(user.role):
+        return [
+            {"key": k, "label": k.replace("_"," ").title(), "level": v["level"], "scope": v["scope"]}
+            for k, v in ROLE_HIERARCHY.items()
+            if k != "super_admin"
+        ]
     my_level = role_level(user.role)
     return [
         {"key": k, "label": k.replace("_"," ").title(), "level": v["level"], "scope": v["scope"]}
