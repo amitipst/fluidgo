@@ -5,7 +5,7 @@ from typing import Optional
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models import PipelineDeal
+from app.models import PipelineDeal, User
 
 
 async def list_opportunities(
@@ -14,10 +14,19 @@ async def list_opportunities(
     practice: Optional[str] = None,
     oem: Optional[str] = None,
     risk_level: Optional[str] = None,
+    business: Optional[str] = None,
     include_archived: bool = False,
     include_seed: bool = False,
 ) -> list[PipelineDeal]:
     query = select(PipelineDeal)
+    # business lives on the owning rep (User.business), not on the deal
+    # itself — PipelineDeal.bu is a legacy region-derived string, never the
+    # business line (see permission_service.py's note on it). Join rather
+    # than denormalize onto the deal, same reasoning as the `practice`
+    # taxonomy staying deal-level: business doesn't change deal-to-deal for
+    # one rep, so it isn't worth duplicating onto every row.
+    if business:
+        query = query.join(User, User.id == PipelineDeal.user_id).where(User.business == business)
     if user_ids is not None:
         query = query.where(PipelineDeal.user_id.in_(user_ids))
     if practice:

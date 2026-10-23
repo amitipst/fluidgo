@@ -7,6 +7,7 @@ import CloseDealModal from '@/components/CloseDealModal'
 import PipelineHistory from '@/components/PipelineHistory'
 import DealMomentum from '@/components/DealMomentum'
 import PipelineSheet from '@/components/PipelineSheet'
+import { dealRevenue } from '@/lib/revenue'
 
 // Must match every stage the backend can actually set (pipeline.py's DealIn
 // Literal) — "qualification" (default landing stage when a lead is converted,
@@ -150,8 +151,11 @@ export default function Pipeline() {
   // Summary stats
   const active   = (deals as any[]).filter(d => !['closed_won','closed_lost','dropped'].includes(d.stage))
   const won      = (deals as any[]).filter(d => d.stage === 'closed_won')
-  const totalVal = won.reduce((s: number, d: any) => s + parseFloat(d.deal_value || 0), 0)
-  const pipelineVal = active.reduce((s: number, d: any) => s + parseFloat(d.deal_value || 0), 0)
+  // dealRevenue() = ARR + One-time, falling back to legacy deal_value — see
+  // lib/revenue.ts. Raw deal_value alone silently zeroed out any deal using
+  // the newer Pipeline Sheet fields (same bug class fixed server-side in v1.4.3).
+  const totalVal = won.reduce((s: number, d: any) => s + dealRevenue(d), 0)
+  const pipelineVal = active.reduce((s: number, d: any) => s + dealRevenue(d), 0)
 
   return (
     <div className={`p-4 md:p-6 mx-auto ${view === 'sheet' ? 'max-w-7xl' : 'max-w-5xl'}`}>
@@ -371,7 +375,7 @@ export default function Pipeline() {
                     </div>
                     <div className="text-xs text-wep-muted">
                       {d.closure_eta && `ETA: ${d.closure_eta} · `}
-                      {d.deal_value && <strong className="text-wep-text">{fmt(parseFloat(d.deal_value))}</strong>}
+                      {dealRevenue(d) > 0 && <strong className="text-wep-text">{fmt(dealRevenue(d))}</strong>}
                     </div>
                     {d.todays_update && (
                       <div className="text-xs text-wep-muted mt-1 truncate">{d.todays_update}</div>

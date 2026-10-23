@@ -1138,8 +1138,18 @@ async def funnel_analytics(include_seed: bool = False,
         "is_team": role_level(user.role) >= 20,
         "stages": [
             {"label": "Meetings",  "count": meetings_total,   "value": None},
+            # count = every lead regardless of origin (most aren't meeting-
+            # sourced at all — referral, cold call, LinkedIn, etc.), so
+            # leads_total isn't a subset of meetings_total and dividing one
+            # by the other can legitimately read over 100% (Amit: "analytics
+            # should be meaningful" — flagged 2026-10-23, same class of fix
+            # already applied to the Deals row below via deals_from_leads).
+            # conv_from_prev instead answers "of our meetings, how many
+            # actually became a logged lead" — meetings_converted was already
+            # computed above but previously unused here.
             {"label": "Leads",     "count": leads_total,      "value": None,
-             "conv_from_prev": pct(leads_total, meetings_total)},
+             "meetings_converted": meetings_converted,
+             "conv_from_prev": pct(meetings_converted, meetings_total)},
             # count = every open/closed deal (deals can be created directly,
             # not just from a lead — see deals_from_leads above). The
             # conversion rate compares like with like: deals that actually

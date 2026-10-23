@@ -32,6 +32,7 @@ import FeedbackInbox from '@/pages/FeedbackInbox'
 import DOREntry from '@/pages/DOREntry'
 import ManualKPIEntry from '@/pages/ManualKPIEntry'
 import Governance from '@/pages/Governance'
+import Reports from '@/pages/Reports'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Toaster from '@/components/Toaster'
 import './index.css'
@@ -126,6 +127,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="revenue" element={
                 <ProtectedRoute roles={[...MANAGER_ROLES, 'crm_admin']}>
                   <RevenueIntelligence />
+                </ProtectedRoute>
+              } />
+              {/* Same audience as /revenue — Reports catalog added 2026-10-23 */}
+              <Route path="reports" element={
+                <ProtectedRoute roles={[...MANAGER_ROLES, 'crm_admin']}>
+                  <Reports />
                 </ProtectedRoute>
               } />
               <Route path="regional" element={

@@ -6,4 +6,4 @@ frontend/src/version.ts and frontend/package.json at each release;
 scripts/check_version_sync.py fails if they drift apart or if a release tag
 does not match.
 """
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
