@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.3] — 2026-10-23
+
+### Added
+- **Per-individual rigor trend, backend only** (Amit: "i want to see monthly weekly rigor scope of each individual and what can be done to improve the rigor score, as this can be a parameter for FGA/variable pay as well"). New `GET /analytics/rigor-trend/{user_id}?granularity=weekly|monthly&periods=N` — buckets a person's DSR rows by ISO week or calendar month and, per bucket, returns the same `avg_rigor` shown everywhere else plus a per-component breakdown (Visits/Calls/Follow-ups/New leads/Proposals, each as % of that component's own cap in `calculate_rigor_score`) and the single weakest component as a concrete improvement lever.
+  - **Deliberately rules-based, not AI-generated**: this score already feeds a compensation-linked FGA metric, so "what's dragging it down" needed to be a deterministic function of the exact same formula the score itself uses, not a model's suggestion needing separate confidence/hallucination handling for something tied to pay. You hadn't picked between the two when I had to proceed — rules-based was the safer default to build unsupervised; easy to add an AI-generated coaching layer on top of this later if you still want one, without touching the number itself.
+  - New `rigor_service.rigor_component_breakdown()` / `aggregate_rigor_breakdown()`, built directly from `calculate_rigor_score`'s own per-component cap table (15/25/30/20/10) so the two can't drift apart. Excludes exempt/WFH/pre-sales rows from the component split (different cap tables — see function docstrings).
+  - New tests: `tests/test_rigor_breakdown.py` (7 tests). Found and fixed a real bug in my own first draft during testing: an empty DSR list was returning a fake "weakest: visits, 0%" instead of `null` — fixed before it shipped.
+  - **Frontend not built yet** — deliberately left for you to confirm placement (a new tab? inside Team's Manage panel? inside DSR History?) rather than guessing a page layout overnight. The endpoint is ready to wire up whenever you decide.
+
+### Fixed
+- **Revenue undercounted to ₹0 wherever a deal used Pipeline Sheet's ARR/One-time fields instead of the legacy `deal_value` field** — found from Amit's own Revenue Intelligence screenshot (₹0 revenue, 0% achievement, despite ₹65.5L won showing correctly on Opportunities). Every revenue sum across the app read `deal_value` only; Pipeline Sheet by rep (v1.4.1) leaves it blank on any deal entered via `recurring_revenue`/`one_time_revenue` instead. Fixed in five places, all routed through `pipeline_sheet_service.amounts()` (the one already-unit-tested place this ARR+One-time-with-fallback rule lives) instead of a second parallel implementation:
+  - `analytics.py`: `/analytics/revenue` (Revenue Intelligence), `/analytics/my-revenue`, the team-KPI period-comparison endpoint, the per-rep CSV export row, and the funnel endpoint's open/won/hunting/farming pipeline-value sums (SQL-level, via a new `_deal_revenue_col()` CASE expression).
+  - **`scoring_engine.py`'s `_metric_revenue_target_achievement_pct`** — the "Business Generation" FGA metric, 40% weight in Sales FGA v1 (Scoring Admin). This is the one that matters most: a rep who'd switched to ARR/One-time entry was being scored as if they'd closed nothing, on a metric that feeds variable pay. Confirmed no deploy has shipped this metric's old behavior as a signed-off payout yet (v1.4.1 was only live ~1 day), but flagging clearly here since this touches compensation.
+  - `incentives.py`'s `closed_won_value` metric — drives Scheme Winners qualification (cash reward schemes).
+  - `pipeline.py`'s win-loss analysis (`lost_value`/`won_value` on the Opportunities page's Team Win-Loss widget).
+  - `opportunities.py`'s AI Deal Health Coaching prompt context (cosmetic — the AI was seeing "Deal Value: unknown" on ARR-only deals).
+  - New tests: `tests/test_analytics_revenue_fix.py` (5 tests, pure-function style matching this suite's convention — no DB needed since every call site now delegates to the already-tested `amounts()` helper). Full suite: 202/202 passing (197 existing + 5 new).
+- **Team page — exited member from a different track than the one open was still invisible**, a narrower version of the same bug fixed in v1.4.2: "Show exited members" reached Leadership (tab-independent) and the active tab's own track, but an admin had no way to know which of the three tabs (Sales/Pre-Sales/Operations) an exited non-leadership member had been on. Now surfaces under whichever tab is open once the checkbox is checked — `MemberRow` already prints the member's real role, so it's never ambiguous.
+
+### Note for Amit (read before pushing)
+This was built and tested autonomously overnight (2026-10-23) per your "Rambo Commander take control" instruction — written to this working tree, **not committed**, so you review and commit/push in one go as you said. The FGA/incentive-linked fixes above (`scoring_engine.py`, `incentives.py`) are flagged for your explicit attention before this goes to production, same bar as the DSR rigor-formula work earlier — the logic itself is a straightforward bug fix (same helper Pipeline Sheet already uses, already unit-tested), but it changes numbers tied to payout, so it's worth your own eyes on the diff specifically, not just a green test suite, before you tag/deploy.
+
+---
+
 ## [1.4.2] — 2026-10-23
 
 ### Fixed

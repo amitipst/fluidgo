@@ -34,6 +34,15 @@ def _period_bounds(period: str) -> tuple[date, date]:
 
 
 async def _metric_revenue_target_achievement_pct(db: AsyncSession, user: User, period: str) -> float:
+    """Drives the "Business Generation" FGA metric (revenue.target_achievement_pct,
+    40% weight in Sales FGA v1 — see Scoring Admin). Bug fixed 2026-10-23: this
+    summed `deal_value` only, which Pipeline Sheet by rep (v1.4.1) leaves blank
+    on any deal entered via its ARR/One-time fields instead — so a rep who'd
+    switched to the new entry method would be scored as if they'd closed
+    nothing, directly understating a compensation-linked metric. Reuses
+    pipeline_sheet_service.amounts(), the one place this fallback rule is
+    defined and unit-tested, same fix as analytics.py's revenue endpoints."""
+    from app.services.pipeline_sheet_service import amounts
     target = await scoring_repo.get_target(db, user.id, period)
     if not target or not target.target_amount:
         return 0.0
@@ -43,7 +52,8 @@ async def _metric_revenue_target_achievement_pct(db: AsyncSession, user: User, p
                                     PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
                                     PipelineDeal.archived == False, PipelineDeal.is_seed == False)
     )
-    won = sum(float(d.deal_value or 0) for d in result.scalars().all())
+    won = sum(amounts(d.recurring_revenue, d.one_time_revenue, d.deal_value)["total"]
+              for d in result.scalars().all())
     return min(100.0, (won / float(target.target_amount)) * 100)
 
 

@@ -440,7 +440,20 @@ export default function Team() {
   // Member-management list: leadership always visible (regardless of tab),
   // track roster filtered by the active tab.
   const leadershipUsers = allUsers.filter((u: any) => LEADERSHIP_ROLES.includes(u.role))
-  const trackUsers = allUsers.filter((u: any) => track.roles.includes(u.role))
+  // Bug fix 2026-10-23 (Amit, same night as the first reactivate fix): an
+  // exited member whose role belongs to a DIFFERENT track than the one
+  // currently open (e.g. deactivated while viewing Sales, but they were
+  // Pre-Sales) was still invisible — "Show exited members" only reached
+  // leadershipUsers (tab-independent) and the active tab's own track. An
+  // admin had no way to know which of the three tabs to check. Once
+  // showExited is on, surface an exited non-leadership member under
+  // whichever tab happens to be open rather than requiring the admin to
+  // guess/cycle through all three — MemberRow already prints the member's
+  // actual role next to their email, so it's never ambiguous which track
+  // they're really in, just discoverable from any tab.
+  const trackUsers = allUsers.filter((u: any) =>
+    track.roles.includes(u.role) || (showExited && !u.is_active && !LEADERSHIP_ROLES.includes(u.role))
+  )
 
   const viewTitle = (user?.role === 'regional_manager' || user?.role === 'bu_head')
     ? `🗺️ Regional Manager — ${user?.region || user?.bu}`
