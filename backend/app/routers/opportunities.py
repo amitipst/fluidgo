@@ -64,8 +64,10 @@ async def opportunity_health(deal_id: str, db: AsyncSession = Depends(get_db),
     deal.ai_deal_health_label = label
     await db.commit()
 
+    from app.services.pipeline_sheet_service import amounts
+    effective_value = amounts(deal.recurring_revenue, deal.one_time_revenue, deal.deal_value)["total"]
     context = f"""Deal: {deal.company}
-Stage: {deal.stage} | Deal Value: {deal.deal_value or 'unknown'} | Deal Health: {score}/100 ({label})
+Stage: {deal.stage} | Deal Value: {effective_value or 'unknown'} | Deal Health: {score}/100 ({label})
 Roadblock: {'Yes' if deal.roadblock else 'No'} | Risk Level: {deal.risk_level or 'unknown'}
 Budget Status: {deal.budget_status or 'unknown'} | Timeline Status: {deal.timeline_status or 'unknown'}
 Decision Maker: {deal.decision_maker or 'Not identified'}

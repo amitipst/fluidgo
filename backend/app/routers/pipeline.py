@@ -609,8 +609,13 @@ async def loss_analysis(include_seed: bool = False,
             counts[c] = counts.get(c, 0) + 1
         return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
-    lost_value = sum(float(d.deal_value or 0) for d in lost)
-    won_value  = sum(float(d.deal_value or 0) for d in won)
+    # Same ARR+One-time-with-deal_value-fallback fix as analytics.py/
+    # scoring_engine.py/incentives.py (2026-10-23) — win/loss value here was
+    # also undercounting any deal entered via Pipeline Sheet's ARR/One-time
+    # fields instead of the legacy single deal_value field.
+    from app.services.pipeline_sheet_service import amounts
+    lost_value = sum(amounts(d.recurring_revenue, d.one_time_revenue, d.deal_value)["total"] for d in lost)
+    won_value  = sum(amounts(d.recurring_revenue, d.one_time_revenue, d.deal_value)["total"] for d in won)
     total_closed = len(won) + len(lost)
     win_rate = round(100 * len(won) / total_closed) if total_closed else 0
 

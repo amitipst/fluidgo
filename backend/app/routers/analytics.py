@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, case, func
 from datetime import date
 from typing import Optional
 import uuid
@@ -13,6 +13,36 @@ from app.services.permission_service import resolve_visible_user_ids
 from app.services.scoring_engine import _period_bounds
 
 router = APIRouter()
+
+def _deal_revenue(d) -> float:
+    """Effective revenue for one PipelineDeal: ARR + One-time (the fields
+    Pipeline Sheet by rep, v1.4.1, introduced and the Pipeline/Opportunities
+    screens already read correctly) when either is set, falling back to the
+    legacy single `deal_value` field for older deals that predate that
+    split.
+
+    Bug found 2026-10-23: Amit's Revenue Intelligence page showed ₹0 for a
+    period with real closed-won deals, while Opportunities correctly showed
+    the won revenue for the same deals. Root cause: every revenue sum in
+    this file (and scoring_engine.py's FGA revenue-achievement metric — see
+    that file) read `deal_value` only, which Pipeline Sheet leaves blank on
+    any deal entered the new way (ARR/One-time instead). Reuses
+    pipeline_sheet_service.amounts() — the one place this split-vs-fallback
+    rule is already defined and unit-tested — instead of a second parallel
+    implementation that could drift from it."""
+    from app.services.pipeline_sheet_service import amounts
+    return amounts(d.recurring_revenue, d.one_time_revenue, d.deal_value)["total"]
+
+def _deal_revenue_col():
+    """SQL-expression twin of _deal_revenue(), for endpoints that sum at the
+    database layer (func.sum(...)) instead of summing Python objects. Same
+    ARR+One-time-with-deal_value-fallback rule, expressed as a CASE so it
+    can be used inside func.sum()/func.coalesce() directly."""
+    return case(
+        (and_(PipelineDeal.recurring_revenue.is_(None), PipelineDeal.one_time_revenue.is_(None)),
+         func.coalesce(PipelineDeal.deal_value, 0)),
+        else_=func.coalesce(PipelineDeal.recurring_revenue, 0) + func.coalesce(PipelineDeal.one_time_revenue, 0),
+    )
 
 # Rows dated before real usage began (seed_v3.py-generated, attached to real
 # accounts — see migration 0027) are excluded from Analytics by default.
@@ -105,6 +135,65 @@ async def rep_analytics(user_id: str, scope: str = "auto", include_seed: bool = 
          "rigor_label": rigor_label(calculate_rigor_score(d))}
         for d in dsrs
     ]
+
+@router.get("/rigor-trend/{user_id}")
+async def rigor_trend(user_id: str, granularity: str = "weekly", periods: int = 8,
+                      include_seed: bool = False,
+                      db: AsyncSession = Depends(get_db),
+                      user: User = Depends(get_current_user)):
+    """Per-individual rigor trend (Amit, 2026-10-23: "i want to see monthly
+    weekly rigor scope of each individual and what can be done to improve
+    the rigor score, as this can be a parameter for FGA/variable pay as
+    well"). granularity: "weekly" or "monthly". periods: how many buckets
+    back from today (default 8 weeks / 8 months).
+
+    Each bucket returns the same avg_rigor number shown everywhere else
+    (DSR History, Team, FGA) plus a per-component breakdown (rigor_service's
+    aggregate_rigor_breakdown) and the single weakest component as a
+    concrete, rules-based "what to improve" lever — deliberately not an
+    AI-generated suggestion, since this score already feeds a
+    compensation-linked FGA metric (see that function's own docstring).
+
+    Access follows the same rule as /analytics/rep/{user_id} above: self,
+    or anyone role_level >= 20 (manager+)."""
+    deny_governance(user)
+    from app.models import role_level
+    from app.services.rigor_service import aggregate_rigor_breakdown
+    from datetime import timedelta
+    is_manager = role_level(user.role) >= 20
+    if not is_manager and str(user.id) != user_id:
+        from fastapi import HTTPException
+        raise HTTPException(403, "You can only view your own rigor trend")
+    if granularity not in ("weekly", "monthly"):
+        from fastapi import HTTPException
+        raise HTTPException(400, "granularity must be 'weekly' or 'monthly'")
+    show_seed = include_seed and _can_view_seed(user)
+
+    q = select(DSRDaily).where(DSRDaily.user_id == uuid.UUID(user_id))
+    if not show_seed:
+        q = q.where(DSRDaily.is_seed == False)
+    dsrs = (await db.execute(q.order_by(DSRDaily.date.asc()))).scalars().all()
+
+    # Bucket by ISO week (Monday start) or calendar month, most recent N
+    # buckets that actually contain data, oldest first — same "don't invent
+    # empty rows for a rep who joined recently" principle used elsewhere.
+    def bucket_key(d):
+        if granularity == "weekly":
+            monday = d.date - timedelta(days=d.date.weekday())
+            return monday.isoformat()
+        return f"{d.date.year}-{d.date.month:02d}"
+
+    buckets: dict = {}
+    for d in dsrs:
+        buckets.setdefault(bucket_key(d), []).append(d)
+
+    ordered_keys = sorted(buckets.keys())[-periods:]
+    trend = []
+    for key in ordered_keys:
+        agg = aggregate_rigor_breakdown(buckets[key])
+        trend.append({"period": key, **agg})
+
+    return {"user_id": user_id, "granularity": granularity, "trend": trend}
 
 @router.get("/team")
 async def team_analytics(include_inactive: bool = False, include_seed: bool = False,
@@ -251,7 +340,7 @@ async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(ge
     )).scalars().all()
     won = [d for d in deals if d.stage == "closed_won"
            and d.closure_eta and start <= d.closure_eta <= end]
-    won_revenue = sum(float(d.deal_value or 0) for d in won)
+    won_revenue = sum(_deal_revenue(d) for d in won)
 
     # Targets: a target row's period may be monthly even when viewing a quarter,
     # so sum every target whose period-bounds fall inside the requested window.
@@ -312,8 +401,8 @@ async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Dep
     lost      = [d for d in deals if d.stage == "closed_lost"]
     open_deals= [d for d in deals if d.stage not in ("closed_won", "closed_lost")]
 
-    total_revenue  = sum(float(d.deal_value or 0) for d in won)
-    pipeline_value = sum(float(d.deal_value or 0) for d in open_deals)
+    total_revenue  = sum(_deal_revenue(d) for d in won)
+    pipeline_value = sum(_deal_revenue(d) for d in open_deals)
     win_pct        = (len(won) / (len(won) + len(lost)) * 100) if (won or lost) else 0.0
     avg_deal_size  = (total_revenue / len(won)) if won else 0.0
 
@@ -536,7 +625,7 @@ async def performance_comparison(
         total_leads     = sum(d.new_leads for d in dsrs)
         total_proposals = sum(d.proposals for d in dsrs)
         avg_rigor       = calculate_avg_rigor(dsrs)
-        total_revenue   = sum(float(d.deal_value or 0) for d in deals)
+        total_revenue   = sum(_deal_revenue(d) for d in deals)
         # Revenue vs Order Booking are separate — the revenue achievement KPI
         # must compare against the REVENUE target only, never the sum of both.
         total_target    = sum(float(t.target_amount) for t in targets if t.target_type == "revenue")
@@ -662,7 +751,7 @@ async def export_performance(
             )
         )).scalars().all()
         target_amount = sum(float(t.target_amount) for t in targets)
-        closed_won_value = sum(float(d.deal_value or 0) for d in deals)
+        closed_won_value = sum(_deal_revenue(d) for d in deals)
 
         rows.append({
             "name": rep.name, "email": rep.email, "role": rep.role,
@@ -1011,25 +1100,29 @@ async def funnel_analytics(include_seed: bool = False,
         select(func.count(PipelineDeal.id)).where(PipelineDeal.stage == "closed_won"),
         PipelineDeal.user_id))).scalar() or 0
 
-    # Value at each pipeline stage (open vs won)
+    # Value at each pipeline stage (open vs won). Uses _deal_revenue_col()
+    # (ARR+One-time with deal_value fallback) instead of raw deal_value —
+    # same 2026-10-23 fix as the Revenue Intelligence endpoints above, so a
+    # deal entered via Pipeline Sheet's ARR/One-time fields isn't silently
+    # counted as ₹0 here either.
     open_value = (await db.execute(_scoped(
-        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+        select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
             PipelineDeal.stage.notin_(["closed_won", "closed_lost"])),
         PipelineDeal.user_id))).scalar() or 0
     won_value = (await db.execute(_scoped(
-        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+        select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
             PipelineDeal.stage == "closed_won"),
         PipelineDeal.user_id))).scalar() or 0
 
     # CSG Phase 1 — hunting (net-new) vs farming (expansion/renewal, often
     # sourced from Service Delivery signals) split of open pipeline.
     hunting_value = (await db.execute(_scoped(
-        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+        select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
             PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
             PipelineDeal.deal_type.isnot(None), PipelineDeal.deal_type != "farming"),
         PipelineDeal.user_id))).scalar() or 0
     farming_value = (await db.execute(_scoped(
-        select(func.coalesce(func.sum(PipelineDeal.deal_value), 0)).where(
+        select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
             PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
             PipelineDeal.deal_type == "farming"),
         PipelineDeal.user_id))).scalar() or 0

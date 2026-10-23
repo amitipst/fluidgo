@@ -45,6 +45,73 @@ def calculate_rigor_score(dsr: DSRDaily) -> int:
     return min(int(score), 100)
 
 
+# ── Component breakdown (added 2026-10-23, Amit: "i want to see monthly
+# weekly rigor scope of each individual and what can be done to improve the
+# rigor score, as this can be a parameter for FGA/variable pay as well") ──
+# Rules-based rather than AI-generated, deliberately: this score already
+# feeds a compensation-linked FGA metric (activity.rigor_avg, Scoring
+# Admin), so "what's dragging it down" needs to be a deterministic function
+# of the same formula above, not a model's guess that could vary run to run
+# or need separate hallucination/confidence handling for something tied to
+# pay. Mirrors calculate_rigor_score's own per-component caps exactly —
+# whenever that formula changes, this breakdown changes with it, by
+# construction, instead of needing to be kept in sync by hand.
+RIGOR_COMPONENT_MAX = {
+    "visits": 15, "calls": 25, "followups": 30, "new_leads": 20, "proposals": 10,
+}
+RIGOR_COMPONENT_LABEL = {
+    "visits": "Visits", "calls": "Calls", "followups": "Follow-ups",
+    "new_leads": "New leads", "proposals": "Proposals",
+}
+
+def rigor_component_breakdown(dsr: DSRDaily) -> dict | None:
+    """Per-component earned/max points for ONE standard working-day DSR row
+    (same cap table as calculate_rigor_score's "Standard working day" branch).
+    Returns None for exempt (leave/holiday), WFH and pre-sales rows — those
+    use a different formula/cap table than the standard one FGA actually
+    scores reps against, so a direct component comparison across mixed row
+    types would be misleading rather than useful."""
+    if dsr.status in ("leave", "holiday", "wfh"):
+        return None
+    if getattr(dsr, "dsr_type", "sales") == "presales":
+        return None
+    return {
+        "visits":     min(dsr.visits * 15, 15),
+        "calls":      min(dsr.calls * 5, 25),
+        "followups":  min(dsr.followups * 3, 30),
+        "new_leads":  min(dsr.new_leads * 10, 20),
+        "proposals":  min(dsr.proposals * 10, 10),
+    }
+
+
+def aggregate_rigor_breakdown(dsrs: list) -> dict:
+    """Averages rigor_component_breakdown() across a list of DSR rows (one
+    person, one period) and names the single weakest component by how far
+    its average earned-% falls below the others — the concrete "what can be
+    done to improve it" lever, not just the overall number. Returns
+    {"avg_rigor", "components": {key: {"earned_pct", "label"}}, "weakest": {...} | None}.
+    `avg_rigor` reuses calculate_avg_rigor so it always matches the number
+    shown elsewhere (DSR History, Team, FGA) for the same row set — this
+    function never computes its own total, only the per-component split of it."""
+    avg_rigor = calculate_avg_rigor(dsrs)
+    breakdowns = [b for b in (rigor_component_breakdown(d) for d in dsrs) if b is not None]
+    components: dict = {}
+    for key, max_pts in RIGOR_COMPONENT_MAX.items():
+        vals = [b[key] for b in breakdowns]
+        earned_pct = round(100 * (sum(vals) / len(vals)) / max_pts, 1) if vals else 0.0
+        components[key] = {"label": RIGOR_COMPONENT_LABEL[key], "earned_pct": earned_pct}
+
+    weakest = None
+    if breakdowns:
+        weakest_key = min(components, key=lambda k: components[k]["earned_pct"])
+        weakest = {
+            "key": weakest_key,
+            "label": RIGOR_COMPONENT_LABEL[weakest_key],
+            "earned_pct": components[weakest_key]["earned_pct"],
+        }
+    return {"avg_rigor": avg_rigor, "components": components, "weakest": weakest, "days_counted": len(breakdowns)}
+
+
 def calculate_avg_rigor(dsrs: list) -> float:
     """Average rigor across a list of DSR rows — excludes exempt days (-1).
     Use this everywhere an average is needed, not a manual sum/divide."""

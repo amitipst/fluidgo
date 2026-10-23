@@ -99,7 +99,12 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
                 PipelineDeal.archived == False, PipelineDeal.is_seed == False
             )
         )).scalars().all()
-        return float(sum(float(d.deal_value or 0) for d in deals))
+        # Bug fixed 2026-10-23 (same root cause as analytics.py/scoring_engine.py):
+        # this drives incentive-scheme qualification (Scheme Winners), so summing
+        # deal_value alone would under-credit a rep who used Pipeline Sheet's
+        # ARR/One-time fields (v1.4.1) instead of the legacy single field.
+        from app.services.pipeline_sheet_service import amounts
+        return float(sum(amounts(d.recurring_revenue, d.one_time_revenue, d.deal_value)["total"] for d in deals))
     return 0.0
 
 def _serialize_scheme(s: IncentiveScheme) -> dict:
