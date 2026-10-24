@@ -33,6 +33,8 @@ import DOREntry from '@/pages/DOREntry'
 import ManualKPIEntry from '@/pages/ManualKPIEntry'
 import Governance from '@/pages/Governance'
 import Reports from '@/pages/Reports'
+import CompanyKPIEntry from '@/pages/CompanyKPIEntry'
+import ExecutiveDigest from '@/pages/ExecutiveDigest'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Toaster from '@/components/Toaster'
 import './index.css'
@@ -58,8 +60,22 @@ const MANAGER_ROLES = ['manager','regional_manager','bu_head','business_head','c
 const CONTACT_ROLES = ['rep','inside_sales','pre_sales','service_delivery_manager','governance', ...MANAGER_ROLES, 'practice_head', 'coo', 'crm_admin']
 const MGMT_FINANCE  = [...MANAGER_ROLES, 'hr', 'finance']
 const KPI_ENTRY_ROLES = [...MANAGER_ROLES, 'service_delivery_manager', 'rep', 'inside_sales', 'pre_sales']
+// Company KPI Entry — org-wide numbers (e.g. Company Revenue Target),
+// Finance's own screen. Matches backend's _can_enter_company_kpi exactly:
+// 'finance' by name, plus regional_manager/bu_head/business_head/ceo/
+// super_admin (role_level >= 30) — deliberately NOT plain 'manager'
+// (level 20, part of MANAGER_ROLES elsewhere) or 'hr' (same level as
+// finance but not Finance) — either would see the nav link and page, then
+// get a 403 from every call.
+const COMPANY_KPI_ROLES = ['regional_manager', 'bu_head', 'business_head', 'ceo', 'super_admin', 'finance']
 // Matches backend feedback.py's REVIEW_LEVEL (role_level >= 40)
 const FEEDBACK_ADMIN_ROLES = ['business_head', 'practice_head', 'coo', 'ceo', 'super_admin']
+// Executive Digest (2026-10-24) — matches backend's require_level(40) on
+// GET/POST /analytics/exec-digest*, which is the exact same role_level >= 40
+// threshold as FEEDBACK_ADMIN_ROLES above. Reusing that constant rather than
+// re-deriving an identical role list, per the hardcoded-list-must-match-
+// backend-gate lesson flagged twice already in claude/README.md's Open Items.
+const EXEC_DIGEST_ROLES = FEEDBACK_ADMIN_ROLES
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -116,6 +132,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="kpi-entry" element={
                 <ProtectedRoute roles={KPI_ENTRY_ROLES}>
                   <ManualKPIEntry />
+                </ProtectedRoute>
+              } />
+              <Route path="company-kpi-entry" element={
+                <ProtectedRoute roles={COMPANY_KPI_ROLES}>
+                  <CompanyKPIEntry />
+                </ProtectedRoute>
+              } />
+              <Route path="exec-digest" element={
+                <ProtectedRoute roles={EXEC_DIGEST_ROLES}>
+                  <ExecutiveDigest />
                 </ProtectedRoute>
               } />
               {/* Management — manager+ */}

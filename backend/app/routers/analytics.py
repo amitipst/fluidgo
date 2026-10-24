@@ -7,10 +7,12 @@ from typing import Optional
 import uuid
 from app.database import get_db
 from app.models import User, DSRDaily, PipelineDeal, RevenueTarget
-from app.services.deps import get_current_user, require_role, deny_governance
+from app.services.deps import get_current_user, require_role, deny_governance, require_level
 from app.services.rigor_service import calculate_rigor_score, calculate_avg_rigor, rigor_label
 from app.services.permission_service import resolve_visible_user_ids
 from app.services.scoring_engine import _period_bounds
+from app.services import exec_digest_service
+from app.services.email_service import send_email
 
 router = APIRouter()
 
@@ -1170,3 +1172,54 @@ async def funnel_analytics(include_seed: bool = False,
             "farming_from_service_delivery_count": farming_from_delivery,
         },
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Executive Digest — added 2026-10-24 (see exec_digest_service.py's module
+# docstring for the full rationale: R2 of the services-intelligence-platform
+# assessment, built from existing computations only). Gated to business_head
+# and above specifically (role_level >= 40) — tighter than regional_performance
+# above, which is deliberate: this surfaces org-wide revenue, pipeline and
+# compliance risk in one place, the kind of rollup a regional_manager (level
+# 30) shouldn't default into seeing for regions outside their own.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/exec-digest")
+async def exec_digest(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
+                       user: User = Depends(require_level(40))):
+    """Executive Intelligence Digest — current (or given) period's revenue vs
+    target, pipeline health + at-risk deals + recent wins, team rigor, and
+    DSR/DOR compliance, scoped the same way every other analytics endpoint
+    is (resolve_visible_user_ids): a business_head sees their business, a
+    CEO/super_admin sees everything."""
+    deny_governance(user)
+    return await exec_digest_service.build_digest(db, user, period)
+
+
+@router.post("/exec-digest/send")
+async def send_exec_digest(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
+                            user: User = Depends(require_level(40))):
+    """Renders the digest as HTML and emails it to the requesting user via the
+    existing SMTP integration (email_service.send_email — same one used for
+    password reset and MOM send-to-customer). No scheduler built here: wiring
+    this to fire automatically on a cadence is one `curl`/cron line on EC2
+    hitting this endpoint with a service account's token, not new application
+    code — see claude/README.md's Open Items for the exact command, left for
+    Amit to decide the cadence and add when he's ready, since it's an ops
+    change to a production box, not something to make unilaterally."""
+    deny_governance(user)
+    digest = await exec_digest_service.build_digest(db, user, period)
+    html = exec_digest_service.render_html(digest, user.name)
+    text = (
+        f"fluidGo Executive Digest — {digest['period']}\n"
+        f"Revenue achieved: {digest['revenue']['achieved']} "
+        f"(target {digest['revenue']['target']}, {digest['revenue']['achievement_pct']}%)\n"
+        f"Open pipeline: {digest['pipeline']['open_value']} across {digest['pipeline']['open_count']} deals\n"
+        f"At-risk deals: {len(digest['pipeline']['at_risk'])}\n"
+        f"Team rigor: {digest['rigor'].get('avg_rigor')}\n"
+        f"Compliance: {digest['compliance'].get('avg_pct')}% avg, "
+        f"{digest['compliance']['at_risk_count']} rep(s) at risk\n"
+        f"Open fluidGo for the full view."
+    )
+    sent = await send_email([user.email], f"fluidGo Executive Digest — {digest['period']}", html, text)
+    return {"sent": sent, "to": user.email, "period": digest["period"]}
