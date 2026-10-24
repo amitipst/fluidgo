@@ -51,6 +51,11 @@ const NAV_ACTIVITY_LOGS = { to: '/activity-logs', icon: '🗂️', label: 'Activ
 const NAV_SCORING = { to: '/scoring-admin', icon: '⚙️', label: 'Scoring'     }
 const NAV_HEALTH  = { to: '/system-health', icon: '🩺', label: 'System Health' }
 const NAV_FEEDBACK = { to: '/feedback', icon: '💬', label: 'Feedback Inbox' }
+// Executive Digest (2026-10-24) — revenue + pipeline + rigor + compliance in
+// one read-only view. Gated to the same business_head+ audience as Feedback
+// Inbox (FEEDBACK_ADMIN_ROLES / backend's require_level(40)); see main.tsx's
+// EXEC_DIGEST_ROLES.
+const NAV_EXEC_DIGEST = { to: '/exec-digest', icon: '📊', label: 'Executive Digest' }
 const NAV_GOVERNANCE = { to: '/governance', icon: '🛡️', label: 'Governance' }
 // Read-only grant closing the "governance has zero route/nav access to
 // Meetings" gap flagged in fluidgo-mom-uiux-spec.md §7 — the backend has
@@ -135,6 +140,11 @@ export default function Layout() {
   const canSeeTeam    = ['manager','regional_manager','bu_head','inside_sales','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
   const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
   const canSeeFGA     = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
+  // Company KPI Entry (2026-10-24) — tighter than canSeeFGA: matches
+  // main.tsx's COMPANY_KPI_ROLES / backend's _can_enter_company_kpi exactly,
+  // excluding plain 'manager' and 'hr' (both would see the link, then bounce
+  // off the route guard with nothing to do there).
+  const canEnterCompanyKPI = ['regional_manager','bu_head','business_head','ceo','super_admin','finance'].includes(user?.role ?? '')
   const canSeeScoring = ['regional_manager','bu_head','business_head','practice_head','ceo','super_admin'].includes(user?.role ?? '')
   const isSDM = user?.role === 'service_delivery_manager'
   const { showWarning, secondsLeft, stayLoggedIn, logoutNow } = useIdleLogout()
@@ -260,6 +270,12 @@ export default function Layout() {
           {(canSeeTeam || canSeeRevenue || canSeeFGA) && (
             <>
               <NavSection label="Management" />
+              {/* Executive Digest — same business_head+ audience as Feedback
+                  Inbox (canSeeFeedbackInbox / FEEDBACK_ADMIN_ROLES), reused
+                  here rather than a parallel role list. Placed first since
+                  it's the single-glance rollup the rest of this section
+                  feeds into. */}
+              {canSeeFeedbackInbox && <SideLink {...NAV_EXEC_DIGEST} />}
               {canSeeTeam    && <SideLink {...NAV_MANAGER[0]} />}
               {canSeeRevenue && <SideLink {...NAV_MANAGER[1]} />}
               {/* Regional view — business_head / CEO only */}
@@ -276,6 +292,10 @@ export default function Layout() {
               {isDsrManager && !isFieldRole &&
                 <SideLink {...NAV_DSR_APPROVALS} badge={dsrEditRequestCount} />}
               {canSeeFGA     && <SideLink {...NAV_FGA} />}
+              {/* Org-wide KPI entry (e.g. Company Revenue Target) — Finance's
+                  own screen, added 2026-10-24. Not yet wired into any live
+                  scorecard (see Scoring Admin). */}
+              {canEnterCompanyKPI && <SideLink to="/company-kpi-entry" icon="🏢" label="Company KPI Entry" />}
               {canSeeFGA     && <SideLink {...NAV_SCHEME_WINNERS} />}
               {canSeeActivityLogs && <SideLink {...NAV_ACTIVITY_LOGS} />}
               {canSeeFeedbackInbox && <SideLink {...NAV_FEEDBACK} badge={feedbackPendingCount} />}

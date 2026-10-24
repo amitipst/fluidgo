@@ -585,6 +585,25 @@ class ManualMetricEntry(Base):
     entered_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
+class CompanyKPIEntry(Base):
+    """Org-wide counterpart to ManualMetricEntry — one row per (metric_key,
+    period), NOT per user. Added 2026-10-24 for 'company_manual.*' metric
+    sources (e.g. Company Revenue Target) that are a single number for the
+    whole org each period, entered once by Finance rather than once per rep
+    (see migration 0037's docstring for why reusing the per-user table was
+    rejected — duplicate entry risk, and a real risk of two reps' copies of
+    "the same" number silently disagreeing)."""
+    __tablename__ = "company_kpi_entries"
+    id:          Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    metric_key:  Mapped[str]        = mapped_column(String(100), nullable=False)  # "company_manual.*"
+    period:      Mapped[str]        = mapped_column(String(20), nullable=False)
+    value:       Mapped[float]      = mapped_column(Numeric(8, 3), nullable=False)
+    raw_inputs:  Mapped[dict]       = mapped_column(JSONB, nullable=True)
+    notes:       Mapped[str]        = mapped_column(Text, nullable=True)
+    entered_by:  Mapped[uuid.UUID]  = mapped_column(UUID(as_uuid=True), nullable=False)
+    entered_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at:  Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class DORDaily(Base):
     """Daily Operations Report — Service Delivery Manager's equivalent of DSRDaily.
     Lightweight day-to-day operational log; feeds the Reports section and gives a

@@ -6,7 +6,7 @@ from typing import Optional
 from datetime import date, datetime
 import uuid
 from app.database import get_db
-from app.models import User, ScoringTemplate, ScoringParameter, ManualMetricEntry
+from app.models import User, ScoringTemplate, ScoringParameter, ManualMetricEntry, CompanyKPIEntry
 from app.services.deps import get_current_user, require_level
 from app.services import scoring_engine
 from app.repositories import scoring_repo
@@ -42,6 +42,11 @@ def _current_period() -> str:
     return f"{today.year}-{today.month:02d}"
 
 
+MAX_ACTIVE_PARAMETERS = 5  # Amit, 2026-10-24: up to 3 self-performance + up to 1
+# company-performance parameter now, one slot held in reserve — a cap, not a
+# floor, so a template with fewer active parameters is still fine.
+
+
 def _validate_weights(parameters: list[ParameterIn]):
     # Only ACTIVE, non-bonus parameters need to sum to 100 — a disabled one
     # can carry any leftover weight without blocking save (re-enabling it
@@ -51,6 +56,14 @@ def _validate_weights(parameters: list[ParameterIn]):
     total = sum(p.weight_pct for p in parameters if p.is_active and not p.is_bonus)
     if round(total) != 100:
         raise HTTPException(400, f"Active (non-bonus) parameter weights must sum to 100, got {total}")
+    active_non_bonus = sum(1 for p in parameters if p.is_active and not p.is_bonus)
+    if active_non_bonus > MAX_ACTIVE_PARAMETERS:
+        raise HTTPException(
+            400,
+            f"At most {MAX_ACTIVE_PARAMETERS} active parameters per template "
+            f"(got {active_non_bonus}) — disable one before enabling another, "
+            f"or drop one to make room.",
+        )
 
 
 def _serialize_parameter(p: ScoringParameter) -> dict:
@@ -152,7 +165,17 @@ async def toggle_parameter(parameter_id: str, db: AsyncSession = Depends(get_db)
     )).scalar_one_or_none()
     if not param:
         raise HTTPException(404, "Parameter not found")
-    param.is_active = not param.is_active
+    turning_on = not param.is_active
+    if turning_on and not param.is_bonus:
+        siblings = await scoring_repo.get_parameters(db, param.template_id)
+        active_non_bonus = sum(1 for s in siblings if s.is_active and not s.is_bonus and s.id != param.id)
+        if active_non_bonus + 1 > MAX_ACTIVE_PARAMETERS:
+            raise HTTPException(
+                400,
+                f"At most {MAX_ACTIVE_PARAMETERS} active parameters per template — "
+                f"disable another one first.",
+            )
+    param.is_active = turning_on
     await db.commit()
     return {"id": str(param.id), "is_active": param.is_active}
 
@@ -160,8 +183,11 @@ async def toggle_parameter(parameter_id: str, db: AsyncSession = Depends(get_db)
 @router.get("/metrics")
 async def list_available_metrics(user: User = Depends(get_current_user)):
     """Feeds a dropdown in ScoringAdmin.tsx so admins pick from real calculators
-    instead of typing a metric_source string freehand."""
-    return sorted(scoring_engine.METRIC_REGISTRY.keys())
+    instead of typing a metric_source string freehand. Includes company_manual.*
+    keys (org-wide, Finance-entered — see CompanyKPIEntry) alongside the
+    per-user auto-calculators, so the one existing dropdown stays the single
+    place to discover every assignable metric_source."""
+    return sorted(list(scoring_engine.METRIC_REGISTRY.keys()) + scoring_engine.COMPANY_MANUAL_METRICS)
 
 
 @router.get("/my-score")
@@ -266,3 +292,86 @@ async def submit_manual_entry(body: ManualEntryIn, db: AsyncSession = Depends(ge
     await db.commit()
     return {"user_id": body.user_id, "metric_key": body.metric_key,
             "period": body.period, "value": body.value}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Company KPI entry — for "company_manual.*" metric sources: ONE org-wide
+# value per period (not per user — see CompanyKPIEntry's docstring for why
+# ManualMetricEntry's per-user shape was wrong for this). Added 2026-10-24
+# for the Company Revenue Target parameter design; shipped before any
+# template actually uses it, same "capability, not activation" pattern as the
+# rest of this round's FGA work.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _can_enter_company_kpi(user: User) -> bool:
+    # Finance by name specifically (level 25, same tier as HR — a level
+    # threshold alone can't distinguish them), per Amit's explicit call that
+    # Finance owns this number monthly. Above that, business-leadership tier
+    # and up (regional_manager=30 and above — deliberately NOT plain
+    # "manager"=20, a first-line team manager has no business entering a
+    # company-wide figure) or explicit admin org roles, consistent with
+    # _can_manage_scoring's own admin allowance.
+    return user.role == "finance" or role_level(user.role) >= 30 or \
+        user.org_role_key in ("admin", "super_admin", "practice_head")
+
+
+class CompanyEntryIn(BaseModel):
+    metric_key: str                     # must start with "company_manual."
+    period: str
+    value: float
+    raw_inputs: Optional[dict] = None
+    notes: Optional[str] = None
+
+
+@router.get("/company-entry")
+async def get_company_entries(period: str, db: AsyncSession = Depends(get_db),
+                               user: User = Depends(get_current_user)):
+    """All company_manual.* entries already saved for `period`, keyed by
+    metric_key — pre-fills the Company KPI Entry form. Read-only for anyone
+    who can at least view Scoring Admin's metric list; only Finance+/admin
+    can write (see submit_company_entry)."""
+    if not _can_manage_scoring(user) and not _can_enter_company_kpi(user):
+        raise HTTPException(403, "Not authorized to view company KPI entries")
+    rows = (await db.execute(
+        select(CompanyKPIEntry).where(CompanyKPIEntry.period == period)
+    )).scalars().all()
+    return {
+        r.metric_key: {
+            "value": float(r.value), "raw_inputs": r.raw_inputs, "notes": r.notes,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        } for r in rows
+    }
+
+
+@router.post("/company-entry")
+async def submit_company_entry(body: CompanyEntryIn, db: AsyncSession = Depends(get_db),
+                                user: User = Depends(get_current_user)):
+    """Upserts one org-wide metric's value for a period. One row serves every
+    role/user whose template eventually references this metric_key — unlike
+    submit_manual_entry, there is no per-user target to pass in."""
+    if not body.metric_key.startswith("company_manual."):
+        raise HTTPException(400, "metric_key must start with 'company_manual.'")
+    if not _can_enter_company_kpi(user):
+        raise HTTPException(403, "Only Finance or Scoring Admin can enter company KPI values")
+
+    existing = (await db.execute(
+        select(CompanyKPIEntry).where(
+            CompanyKPIEntry.metric_key == body.metric_key,
+            CompanyKPIEntry.period == body.period,
+        )
+    )).scalar_one_or_none()
+    now = datetime.utcnow()
+    if existing:
+        existing.value = body.value
+        existing.raw_inputs = body.raw_inputs
+        existing.notes = body.notes
+        existing.entered_by = user.id
+        existing.updated_at = now
+    else:
+        db.add(CompanyKPIEntry(
+            metric_key=body.metric_key, period=body.period, value=body.value,
+            raw_inputs=body.raw_inputs, notes=body.notes,
+            entered_by=user.id, entered_at=now, updated_at=now,
+        ))
+    await db.commit()
+    return {"metric_key": body.metric_key, "period": body.period, "value": body.value}

@@ -10,6 +10,42 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.6] — 2026-10-24
+
+Executive Intelligence Digest — Rambo Commander's answer to Amit's instruction to "benchmark each feature to our roadmap, vision and world class product to drive sales cadence, sales intelligence and business revenue with better insights and better outcomes," then "develop the same and wait for me to commit." Chosen as the single highest-leverage item from that benchmark: it's R2 of `fluidgo-services-intelligence-platform-assessment.md`, already flagged there as "genuinely one of the cheapest, highest-visibility wins available," and it's the one release that touches all three of Amit's named goals at once — a recurring (**cadence**) surfaced-insight (**intelligence**) view of revenue progress, pipeline risk and team execution health (**outcomes**) — without inventing a single new aggregation primitive underneath.
+
+**Added:**
+- `backend/app/services/exec_digest_service.py` — `build_digest()` assembles one month's revenue-vs-target, open pipeline + at-risk deals (14+ days no activity) + recent wins, team rigor, and DSR/DOR compliance, entirely by reusing `pipeline_sheet_service.amounts()`, `rigor_service.aggregate_rigor_breakdown()`, `compliance_service.compute_compliance()` and `permission_service.resolve_visible_user_ids()` — the same scope rule every other screen already uses (a business_head sees their business, a CEO sees everything). `render_html()` renders the same digest as an inline-styled email, matching the existing MOM/password-reset email templates' constraints (no external CSS/JS).
+- `GET /analytics/exec-digest` and `POST /analytics/exec-digest/send` (`routers/analytics.py`) — both gated `require_level(40)` (business_head/practice_head/coo/ceo/super_admin) plus `deny_governance`, deliberately tighter than the pre-existing `regional_performance` endpoint's looser-than-documented gate (see Open Items). The send endpoint reuses the existing SMTP `email_service.send_email` and degrades gracefully (logs instead of emailing) when SMTP isn't configured, same fallback pattern as other transactional email in the app.
+- `frontend/src/pages/ExecutiveDigest.tsx` (new page, `/exec-digest`, nav entry "📊 Executive Digest" at the top of the Management section) — month picker, revenue/pipeline/rigor/compliance cards, "✉️ Email me this" button. Gated to the same business_head+ audience as Feedback Inbox (`EXEC_DIGEST_ROLES` = `FEEDBACK_ADMIN_ROLES`, reused rather than re-derived, per the hardcoded-role-list-vs-backend-gate lesson from v1.4.5).
+- `backend/tests/test_exec_digest_service.py` — pure-function tests on `_deal_value`, `_serialize_deal`, `_inr`, `_current_period`, and `render_html` (including the no-target-set and no-weakest-rigor-component edge cases). `build_digest()` itself isn't unit-tested directly, matching this suite's existing convention for DB-aggregation entry points built on already-tested primitives (same boundary as `compute_compliance`/`aggregate_rigor_breakdown`).
+
+**Deliberately not built this round:** no generalized `interactions`/`health_engine` primitive (R1 of the assessment doc — separate, larger decision still waiting on Amit's multi-tenancy answer); no escalation/CAPA section in the digest (Escalation Management is R3, not built yet — a permanently-empty section would be worse than no section); no scheduled/automatic send (the button is manual-trigger only, matching the "Email me this" framing — a cron-scheduled digest is a natural v2 if this gets used).
+
+**Verification:** backend suite + new tests, `tsc`/`vite build` clean. Written to Amit's machine as uncommitted changes — **not committed, pushed, tagged, or deployed.**
+
+---
+
+## [1.4.5] — 2026-10-24
+
+FGA "Company Revenue Target" parameter design — **capability shipped, nothing activated.** Built while Amit was away a second time, handed to Rambo Commander with: "company performance can be disabled for now" and "i will sync the git and roll out the new release" — so this ships as uncommitted/untagged/undeployed, same as v1.4.4, for Amit to review and release himself. No ScoringParameter row references the new metric anywhere — zero effect on any live score or payout until Amit deliberately adds it to a role via Scoring Admin.
+
+Design locked with Amit over this session: up to **5 scoring parameters per role template** — 3 "self-performance" (existing individual metrics) + up to 1 "company-performance" parameter (one slot reserved for later). Company Revenue Target: weight 30% when enabled, **Finance enters the achieved % manually each period** (not auto-computed — company revenue booked/invoiced/collected can differ from what the pipeline shows), rolls out to **all FGA roles** whenever Amit turns it on. Two slab curves exist by design: Amit's own Aug'26 Variable Pay sheet's formula applies now; a different, simpler curve (`<94%=0, 94–125%=linear, capped 125%`) applies from **2027-04-01** — tracked as a dated Open Item, not built as date-trigger logic (a once-a-year curve swap is a Scoring Admin edit on the day).
+
+**Added:**
+- `CompanyKPIEntry` model + migration `0037_company_kpi_entries.py` — org-wide (period-only, not per-user) KPI value storage. Deliberately NOT reusing `ManualMetricEntry` (per-user) — an org-wide number entered once per rep by Finance is both tedious and a real duplicate-entry-mismatch risk, exactly the kind of inconsistency this whole request was partly about avoiding.
+- `scoring_engine.py`: new `company_manual.*` metric-source family, dispatched in `compute_score` before the existing `manual.*` check; `COMPANY_MANUAL_METRICS` registry (currently one key: `company_manual.revenue_target_achievement_pct`).
+- `routers/scoring.py`: `GET`/`POST /scoring/company-entry` (Finance + manager-tier+ can write; same manager-tier+ can read) mirroring the existing `manual-entry` pair but period-only; `/scoring/metrics` now also lists `company_manual.*` keys so Scoring Admin's existing metric-source datalist picks it up with zero frontend change.
+- **Max-5-active-parameters cap**, enforced in both `_validate_weights` (full template save) and `toggle_parameter` (the quick enable/disable endpoint, which previously had no weight-sum *or* count validation at all).
+- `frontend/src/pages/CompanyKPIEntry.tsx` (new page, `/company-kpi-entry`, nav entry "🏢 Company KPI Entry" next to FGA Approval) — period picker + one row per `company_manual.*` metric the `/scoring/metrics` list returns, so a future second company-wide metric needs no frontend change either.
+- `backend/tests/test_company_kpi.py` — the max-5 cap (including disabled/bonus-line exclusion), the Finance/manager-tier write gate, and registry disjointness (company_manual.* keys can never collide with an individual metric key, since dispatch relies on the prefix alone).
+
+**Not built this round (explicitly out of scope — Amit's "disabled for now"):** no parameter row added to any live role template; no auto-rebalancing of the other parameters' weights when this gets enabled (matches the existing `toggle_parameter` design — rebalancing is always a deliberate admin action); no pre-payout FGA validation dashboard (flagged as a good Phase 2 follow-up, not attempted here); Phase 2 slab curve (2027-04-01) written out in `claude/README.md` ready to paste into Scoring Admin on the day, not wired into the engine.
+
+**Verification:** full backend suite passing, `tsc`/`vite build` clean. Written to Amit's machine as uncommitted changes — **not committed, pushed, tagged, or deployed.**
+
+---
+
 ## [1.4.4] — 2026-10-23
 
 Follow-up to your live review of v1.4.3 ("opportunities should show fluidpro, analytics should be meaningful and there is no report section still").

@@ -146,6 +146,52 @@ async def _get_manual_metric_value(db: AsyncSession, user: User, metric_key: str
     return float(entry.value) if entry else 0.0
 
 
+async def _get_company_manual_metric_value(db: AsyncSession, metric_key: str, period: str) -> float:
+    """Value for a 'company_manual.*' metric_source — a single org-wide number
+    for the period (not per-user), entered via the Company KPI Entry screen.
+    Missing entry = 0, same fail-safe as every other metric with no data for
+    the period, so an unpopulated company figure quietly zeroes that one
+    parameter's contribution rather than erroring every rep's FGA calc."""
+    from app.models import CompanyKPIEntry
+    result = await db.execute(
+        select(CompanyKPIEntry).where(
+            CompanyKPIEntry.metric_key == metric_key,
+            CompanyKPIEntry.period == period,
+        )
+    )
+    entry = result.scalar_one_or_none()
+    return float(entry.value) if entry else 0.0
+
+
+# "Company-performance" metric sources (Amit, 2026-10-24): up to 5 scoring
+# parameters per role template — 3 individual/"self-performance" (existing
+# METRIC_REGISTRY / manual.* metrics) + up to 1 org-wide "company-performance"
+# parameter, reserving a 5th slot for later. Sourced from CompanyKPIEntry
+# (Finance enters the achieved % manually each period — Amit's call: company
+# revenue booked vs. invoiced/collected can differ from what the pipeline
+# shows, so this is NOT auto-computed from PipelineDeal, unlike the
+# individual revenue.target_achievement_pct metric above).
+#
+# Shipped DISABLED (2026-10-24): no live ScoringTemplate references this key
+# yet — adding the parameter to a role (and freeing up its 30% weight from
+# the other parameters) is a deliberate Scoring Admin action for Amit to take
+# when he's ready, same as any other weight rebalance (see
+# routers/scoring.py's toggle_parameter — no auto-rebalance by design).
+#
+# Slab curve — TWO versions, by design, not a bug:
+#   Phase 1 (now): matches Amit's own Aug'26 Variable Pay sheet exactly —
+#     <80%=0, 80-100%=proportionate (formula:"linear"),
+#     100-110%=achievement²  capped at 121% (formula:"square", cap:1.21),
+#     110-130%=achievement²  capped at 169% (formula:"square", cap:1.69).
+#   Phase 2 (from 2027-04-01, Amit's instruction): <94%=0, 94-125%=linear
+#     1:1 with achievement%, capped at 125%.
+#   No date-trigger logic is built for this — a once-a-year curve swap is a
+#   Scoring Admin edit on the day, not permanent engine complexity. Tracked
+#   in claude/README.md's Open Items with the 2027-04-01 date so it isn't
+#   forgotten; the Phase 2 tier JSON is written out there ready to paste in.
+COMPANY_MANUAL_METRICS = ["company_manual.revenue_target_achievement_pct"]
+
+
 def find_tier(value: float, tiers: list) -> dict | None:
     """The tier band `value` falls into, or None if none matched (misconfigured
     template). Bounds are half-open: min <= value < max (top tier's max is None
@@ -227,7 +273,9 @@ async def compute_score(db: AsyncSession, user: User, period: str) -> dict:
     parameters = [p for p in await scoring_repo.get_parameters(db, template.id) if p.is_active]
     breakdown, total = [], 0.0
     for p in parameters:
-        if p.metric_source.startswith("manual."):
+        if p.metric_source.startswith("company_manual."):
+            value = await _get_company_manual_metric_value(db, p.metric_source, period)
+        elif p.metric_source.startswith("manual."):
             value = await _get_manual_metric_value(db, user, p.metric_source, period)
         else:
             calc = METRIC_REGISTRY.get(p.metric_source)
