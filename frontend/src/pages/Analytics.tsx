@@ -19,6 +19,18 @@ function inr(n: number): string {
 }
 
 const STAGE_COLORS = ['#92278E', '#F0115E', '#0EA5E9', '#0D9488']
+// What each stage's % actually measures — it's always "of the PREVIOUS
+// stage, how many became this stage," never "this stage's count ÷ this
+// stage's own total." That distinction is why e.g. Deals can show a lower
+// count-based % than its headline count alone would suggest: not every
+// deal here descended from a logged lead, so the % only covers the ones
+// that did. Shown as a tooltip rather than redesigning the funnel (Amit:
+// "analytics should be meaningful" — fix the %s and labels, 2026-10-23).
+const STAGE_TOOLTIP: Record<string, string> = {
+  Leads: 'Of total meetings, % that converted into a logged lead',
+  Deals: 'Of total leads, % that converted into a pipeline deal (some deals are created directly, without a lead — those still count in Deals, just not in this %)',
+  Won:   'Of total deals, % closed won',
+}
 
 function ConversionFunnel() {
   const { data } = useQuery({
@@ -35,7 +47,7 @@ function ConversionFunnel() {
         <div className="font-semibold text-sm text-wep-navy">
           🎯 {data.is_team ? 'Team' : 'My'} Conversion Funnel
         </div>
-        <div className="text-xs text-wep-muted">
+        <div className="text-xs text-wep-muted" title="Of total meetings, % that ended in a closed-won deal — the full-funnel yield, not any single stage's conversion">
           Overall: <strong className="text-wep-navy">{data.overall_conversion}%</strong> meeting→win
           {data.open_pipeline_value > 0 && <> · Open: <strong className="text-wep-navy">{inr(data.open_pipeline_value)}</strong></>}
         </div>
@@ -52,7 +64,9 @@ function ConversionFunnel() {
                   {s.count}
                 </div>
                 {s.conv_from_prev != null && (
-                  <span className={`text-[11px] font-semibold ${
+                  <span
+                    title={STAGE_TOOLTIP[s.label] ?? ''}
+                    className={`text-[11px] font-semibold cursor-help border-b border-dotted border-current ${
                     s.conv_from_prev >= 50 ? 'text-teal-600' : s.conv_from_prev >= 25 ? 'text-amber-600' : 'text-red-500'
                   }`}>
                     {s.conv_from_prev}%

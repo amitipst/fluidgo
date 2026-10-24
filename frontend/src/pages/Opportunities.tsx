@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { useAuthStore } from '@/store/authStore'
+import { dealRevenue } from '@/lib/revenue'
+import { BUSINESS_LABEL } from '@/lib/business'
 
 const healthColor: Record<string, string> = {
   healthy: 'text-teal-600 bg-teal-50', watch: 'text-amber-600 bg-amber-50',
@@ -59,15 +61,16 @@ export default function Opportunities() {
   const { user } = useAuthStore()
   const canArchive = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin'].includes(user?.role ?? '')
   const [practice, setPractice] = useState('')
+  const [business, setBusiness] = useState('')
   const [riskLevel, setRiskLevel] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [healthContent, setHealthContent] = useState<Record<string, string>>({})
 
   const { data: deals = [], isLoading } = useQuery({
-    queryKey: ['opportunities', practice, riskLevel, showArchived],
+    queryKey: ['opportunities', practice, business, riskLevel, showArchived],
     queryFn: () => api.get('/opportunities', {
-      params: { practice: practice || undefined, risk_level: riskLevel || undefined,
-                include_archived: showArchived || undefined }
+      params: { practice: practice || undefined, business: business || undefined,
+                risk_level: riskLevel || undefined, include_archived: showArchived || undefined }
     }).then(r => r.data)
   })
 
@@ -114,20 +117,27 @@ export default function Opportunities() {
   })
 
   const practices = Array.from(new Set(deals.map((d: any) => d.practice).filter(Boolean))) as string[]
+  // Business line (fluidPro today; fluidprint/floxtax/hooks as they onboard
+  // reps) — derived the same way `practices` is, from what's actually in the
+  // data, so the filter grows on its own as new business lines get users.
+  const businesses = Array.from(new Set(deals.map((d: any) => d.business).filter(Boolean))) as string[]
 
   // ── Portfolio summary (the value-add for a Business Head at a glance) ──────
+  // Uses dealRevenue() (ARR + One-time, falling back to legacy deal_value) —
+  // not raw deal_value — so these cards match what Pipeline Sheet and
+  // Revenue Intelligence already show. See lib/revenue.ts.
   const openDeals = deals.filter((d: any) => !['closed_won', 'closed_lost'].includes(d.stage))
-  const totalValue = openDeals.reduce((s: number, d: any) => s + Number(d.deal_value || 0), 0)
+  const totalValue = openDeals.reduce((s: number, d: any) => s + dealRevenue(d), 0)
   // Weighted forecast: value × closure probability (falls back to deal-health as a proxy)
   const weighted = openDeals.reduce((s: number, d: any) => {
     const pct = d.ai_closure_pct ?? d.ai_deal_health ?? 0
-    return s + Number(d.deal_value || 0) * (pct / 100)
+    return s + dealRevenue(d) * (pct / 100)
   }, 0)
   const atRisk = deals.filter((d: any) =>
     ['at_risk', 'critical'].includes(d.ai_deal_health_label) || d.risk_level === 'high' || d.risk_level === 'critical'
   ).length
   const wonValue = deals.filter((d: any) => d.stage === 'closed_won')
-    .reduce((s: number, d: any) => s + Number(d.deal_value || 0), 0)
+    .reduce((s: number, d: any) => s + dealRevenue(d), 0)
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -137,6 +147,12 @@ export default function Opportunities() {
           <p className="text-wep-muted text-sm">{deals.length} opportunities · {openDeals.length} open</p>
         </div>
         <div className="flex gap-2">
+          {businesses.length > 0 && (
+            <select className="form-input text-sm" value={business} onChange={e => setBusiness(e.target.value)}>
+              <option value="">All businesses</option>
+              {businesses.map(b => <option key={b} value={b}>{BUSINESS_LABEL[b] ?? b}</option>)}
+            </select>
+          )}
           <select className="form-input text-sm" value={practice} onChange={e => setPractice(e.target.value)}>
             <option value="">All practices</option>
             {practices.map(p => <option key={p} value={p}>{p}</option>)}
@@ -262,9 +278,10 @@ export default function Opportunities() {
               <div className="min-w-0">
                 <div className="font-semibold text-wep-navy">{d.company}</div>
                 <div className="text-xs text-wep-muted mt-0.5 flex flex-wrap gap-x-2">
+                  {businesses.length > 1 && d.business && <span>🏢 {BUSINESS_LABEL[d.business] ?? d.business}</span>}
                   {d.practice && <span>🏷️ {d.practice}</span>}
                   {d.solution_area && <span>· {d.solution_area}</span>}
-                  {d.deal_value ? <span className="font-semibold text-wep-text">· {inr(Number(d.deal_value))}</span> : <span className="text-amber-600">· no value set</span>}
+                  {dealRevenue(d) > 0 ? <span className="font-semibold text-wep-text">· {inr(dealRevenue(d))}</span> : <span className="text-amber-600">· no value set</span>}
                   {d.closure_eta && <span>· 🎯 {d.closure_eta}</span>}
                 </div>
               </div>

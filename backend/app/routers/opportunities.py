@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from app.database import get_db
@@ -18,7 +19,8 @@ def _serialize(d) -> dict:
 
 @router.get("")
 async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] = None,
-                             risk_level: Optional[str] = None, include_archived: bool = False,
+                             risk_level: Optional[str] = None, business: Optional[str] = None,
+                             include_archived: bool = False,
                              include_seed: bool = False,
                              db: AsyncSession = Depends(get_db),
                              user: User = Depends(get_current_user)):
@@ -33,7 +35,7 @@ async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] 
     # loss_analysis() (migration 0029).
     show_seed = include_seed and role_level(user.role) >= 40
     deals = await opportunity_repo.list_opportunities(db, user_ids=visible, practice=practice,
-                                                        oem=oem, risk_level=risk_level,
+                                                        oem=oem, risk_level=risk_level, business=business,
                                                         include_archived=include_archived,
                                                         include_seed=show_seed)
     # Compute the rule-based deal-health score up front for any deal missing it,
@@ -47,7 +49,27 @@ async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] 
             dirty = True
     if dirty:
         await db.commit()
-    return [_serialize(d) for d in deals]
+
+    # Attach each deal's owner business (added 2026-10-23, Amit: "opportunities
+    # should show fluidpro") — one extra lookup query rather than a join on
+    # the main list, since this is read-only display/filter-option data, not
+    # part of the scoping query above. For a business_head this is always
+    # their own single business (resolve_visible_user_ids already scoped
+    # `visible` to it); for scope="all" roles (ceo/coo/crm_admin/governance)
+    # it lets the frontend's filter dropdown — and a future second business
+    # line (fluidprint/floxtax/hooks) — work the same way the `practice`
+    # filter already does: populate its own options from what's in the data.
+    owner_ids = {d.user_id for d in deals}
+    biz_by_owner: dict = {}
+    if owner_ids:
+        rows = (await db.execute(select(User.id, User.business).where(User.id.in_(owner_ids)))).all()
+        biz_by_owner = {uid: biz for uid, biz in rows}
+    out = []
+    for d in deals:
+        row = _serialize(d)
+        row["business"] = biz_by_owner.get(d.user_id)
+        out.append(row)
+    return out
 
 
 @router.get("/{deal_id}/health")

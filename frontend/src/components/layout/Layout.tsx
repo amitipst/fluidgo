@@ -34,6 +34,7 @@ const NAV_MANAGER = [
   { to: '/revenue',  icon: '💰', label: 'Revenue'  },
   { to: '/regional', icon: '🗺️', label: 'Regions'  },   // business_head+ only
   { to: '/gamification', icon: '🎮', label: 'Schemes' },
+  { to: '/reports',  icon: '📑', label: 'Reports'  },
 ]
 // Manager-tier-only DSR review link. Kept separate from NAV_CORE's "My DSR
 // Log" (fieldOnly, hidden from regional_manager/business_head/ceo/super_admin)
@@ -265,6 +266,10 @@ export default function Layout() {
               {['business_head','ceo','super_admin'].includes(user?.role ?? '') &&
                 <SideLink {...NAV_MANAGER[2]} />}
               {canSeeTeam    && <SideLink {...NAV_MANAGER[3]} />}
+              {/* Reports — same audience as Revenue (canSeeRevenue), added
+                  2026-10-23 as the catalog front door for exports that used
+                  to live scattered across Team/Analytics/FGA. */}
+              {canSeeRevenue && <SideLink {...NAV_MANAGER[4]} />}
               {/* Regional_manager/bu_head/business_head/ceo/super_admin have no
                   other sidebar path to DSR Team review since "My DSR Log" above
                   is fieldOnly and hidden for them. */}

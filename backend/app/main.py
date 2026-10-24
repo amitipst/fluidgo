@@ -5,7 +5,7 @@ from app.version import APP_VERSION
 from app.routers import (accounts, contacts, auth, dsr, meetings, leads, pipeline, analytics,
                           ai, users, opportunities, scoring, roles,
                           fga_approval, incentives, audit, system, dor,
-                          feedback, compliance, governance)
+                          feedback, compliance, governance, reports)
 
 app = FastAPI(title="fluidGo API", version=APP_VERSION, docs_url="/api/docs")
 
@@ -38,6 +38,7 @@ app.include_router(compliance.router,   prefix="/api/compliance",  tags=["compli
 app.include_router(governance.router,   prefix="/api/governance",  tags=["governance"])
 app.include_router(contacts.router,     prefix="/api/contacts",    tags=["contacts"])
 app.include_router(accounts.router,     prefix="/api/accounts",    tags=["accounts"])
+app.include_router(reports.router,      prefix="/api/reports",     tags=["reports"])
 
 @app.get("/api/health")
 async def health():

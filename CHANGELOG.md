@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.4] — 2026-10-23
+
+Follow-up to your live review of v1.4.3 ("opportunities should show fluidpro, analytics should be meaningful and there is no report section still").
+
+### Fixed
+- **Frontend revenue sums missed by the v1.4.3 fix.** The backend-side ARR/One-time revenue fix (Revenue Intelligence, FGA, incentives, funnel, Win-Loss widget) didn't cover two screens that compute their own totals client-side from the raw deal rows: Opportunities' portfolio summary (Open Pipeline / Weighted Forecast / Won cards) and Pipeline's Cards view (Won/Open totals, per-card value). Both were silently summing only the legacy `deal_value` field. Fixed with a shared `dealRevenue()` helper (`frontend/src/lib/revenue.ts`) mirroring the backend's `amounts()` fallback exactly, used in both files.
+- **Funnel conversion % could read over 100%.** The Leads stage showed `leads_total ÷ meetings_total` as a "conversion rate" — legitimate math (most leads aren't meeting-sourced at all), but misleading as a %, the same issue already fixed for the Deals stage via `deals_from_leads`. Leads now uses `meetings_converted ÷ meetings_total` (a true subset), consistent with how Deals→Won and Leads→Deals already work. Added hover tooltips on each stage's % in the UI explaining exactly what it measures, since even the correct numbers (e.g. Deals' 58%) describe a subset of the headline count, not the count itself.
+
+### Added
+- **Business filter on Opportunities** (Amit: "opportunities should show fluidpro"). New `business` query param on `GET /opportunities`, joined from the deal owner's `User.business` (not the deal's own `bu` column, which is a legacy region-derived string, never the business line — see `permission_service.py`). Each returned deal now also carries its owner's `business` for display. Filter dropdown derives its options from the data the same way the existing `practice` filter does, so it'll pick up fluidprint/floxtax/hooks automatically once those business lines have reps — no hardcoding. A per-card 🏢 business badge only shows once more than one business is actually present, so today (fluidPro-only) cards aren't cluttered repeating the same label.
+- New `frontend/src/lib/business.ts` — shared `BUSINESS_LABEL` map for the new filter (Team.tsx and Dashboard.tsx keep their own local copies for now — low-risk duplication, flagged for a future cleanup pass rather than touched here).
+
+### Added — Reports module v1 (built after scoping, same session)
+Per "rambo commander is authorized to take things in better judgment without impacting the live data... in fluidgo only" — proceeded past scoping to build, since nothing here is compensation-linked, nothing deploys without your review, and the v1 list was drawn directly from your own asks. New `/reports` nav item (same audience as `/revenue` — manager+/crm_admin), `backend/app/routers/reports.py`:
+- **Four relinked exports** (Monthly DSR, Compliance, Performance Report, FGA Scoring) — no new backend, just one place to find what already existed scattered across Team/Analytics/FGA.
+- **New: Revenue vs Target** (`GET /reports/revenue-vs-target.csv`) — per-rep ARR/One-time/Total vs target across several months (reuses the exact per-rep/per-period computation `/analytics/performance/export` already does for one period, extended to a trend). `weekly` shows actual revenue booked per ISO week in the current month with **no weekly target column** — RevenueTarget only supports monthly/quarterly/yearly periods, so a weekly target would have to be fabricated (prorated), and this deliberately doesn't do that. Directly answers "update actual revenue data on weekly basis... ARR and One time option which can be calculated against target vs achievement."
+- **New: Rigor Trend Report** (`GET /reports/rigor-trend.csv`) — the v1.4.3 `/analytics/rigor-trend/{user_id}` endpoint's exact same bucketing + `aggregate_rigor_breakdown()`, looped across every visible rep instead of one at a time. No new rigor logic — resolves the "frontend not built yet" item from v1.4.3 by giving the endpoint a home.
+- **New: Win-Loss Analysis** (`GET /reports/win-loss.csv`) — deal-level CSV behind the same computation as Opportunities' Team Win-Loss widget (`/pipeline/loss-analysis`), one row per closed deal instead of aggregate counts only.
+- New shared `frontend/src/lib/download.ts` — the blob-download pattern was independently duplicated in Team.tsx/FGAApproval.tsx/SystemHealth.tsx/Analytics.tsx; centralized for the new page rather than adding a fifth copy (existing four left as-is, flagged for a future cleanup pass, same treatment as `lib/business.ts`).
+- **No DB-level tests added** — matches the existing boundary in this codebase (comparable route handlers like `export_performance`/`loss_analysis` also have no dedicated tests; the pure logic this reuses — `pipeline_sheet_service.amounts()`, `rigor_service.aggregate_rigor_breakdown()` — is already unit-tested from v1.4.3/v1.4.4's earlier fixes). Full suite still 209/209; frontend `tsc` and `vite build` both clean.
+
+---
+
 ## [1.4.3] — 2026-10-23
 
 ### Added
