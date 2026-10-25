@@ -10,6 +10,82 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.4.7] — 2026-10-25
+
+Leads SPANCO stage ladder + Kanban board, and a config-driven feature-flag
+foundation — built overnight under a Rambo Commander handoff after Amit
+sent 5 screenshots of WEP Solutions' own live Kylas CRM and wrote: "handing
+over Rambo comamnder to continue the work as per roadmap to make this a
+meaningful platform to replace kylas and now giving right SPANCO, also
+kanban view is good to have (challenge and see what best can come to our
+platform)," then mid-session added: "ensure the product scalability and a
+MSP where standard features can be offered and wepsol customized can be
+disabled/enabled as per customer requirement."
+
+**What was built**
+- `leads.stage` column (migration 0038) — an 11-stage SPANCO ladder (SP1
+  Identifying Opportunities → SP7 Negotiation, then Hold / Won / Closed
+  Unqualified / Closed Lost), transcribed directly from Kylas's own
+  configured Leads pipeline, in the same left-to-right column order shown.
+  Existing leads are backfilled from their current `status` via a documented
+  heuristic (`lead_stage_service.default_stage_for_status`) — reviewable
+  per-lead, not a hard fact.
+- `feature_flags` table (migration 0038) — generic `key/enabled/org_scope/
+  config` toggle, seeded with `leads_spanco_stages` (carries the stage list
+  as data) and `leads_kanban_view`. This is the direct answer to Amit's
+  scalability/MSP instruction: a different customer's stage ladder, or
+  switching the Kanban view off, is now a config edit, not a code change —
+  **without** building real multi-tenancy. `org_scope` is nullable and
+  unused today; no org/account/tenant entity exists anywhere in the schema.
+  That bigger decision stays open — see `fluidgo-roadmap-v2.md` decision
+  gate #1 — this just avoids having to reshape the table when it's made.
+- `GET /leads/stages` — serves the active ladder + whether Kanban is on;
+  the frontend never hardcodes a stage list (the exact drift risk
+  `Pipeline.tsx`'s own code comment already flags for pipeline deals).
+- `PATCH /leads/{id}/stage` — moves a lead, same visibility rule as
+  `reassign_lead` (own lead, or `scope="all"`), validated against the
+  active ladder (422 on an unknown key).
+- Leads page gains a List/Kanban toggle; the Kanban board
+  (`LeadsKanbanBoard.tsx`) shows one column per stage with live counts and a
+  card per lead (company, contact, source, AI score, next action). Moving a
+  lead uses tap-forward/tap-back buttons plus a stage dropdown, not
+  drag-and-drop — a deliberate accessibility choice (WCAG 2.1 AA keyboard
+  access, and better one-thumb use on a phone) over copying Kylas's own
+  drag UI; see the file's header comment for the Constitution's
+  three-options framing (standard / AI-augmented / moonshot) and what's
+  deferred to the roadmap.
+- `backend/tests/test_lead_stage_service.py` (14 tests) — stage-order,
+  terminal-state, outcome, and backfill-mapping coverage.
+
+**Flagged, not resolved — needs Amit's confirmation**
+- **SPANCO naming conflict.** This ladder lives on `Lead` and matches
+  Kylas's *Leads* screen exactly. A *different*, 6-stage
+  Suspecting/Prospecting/Analysing/Negotiating/Closing/Order draft already
+  exists in `fluidgo-mom-action-governance-design.md` §11, scoped to
+  `PipelineDeal`/Opportunity, dated 2026-10-13, and was itself still
+  "awaiting confirmation." Both are now real and both are called SPANCO.
+  Nothing here silently picks a winner — see Open Items below.
+- SP5 and SP6 labels were truncated in Amit's screenshots
+  ("Scope Finalization/P…", "Techno-Commercial …") — reconstructed as best
+  effort; confirm exact wording against the live Kylas instance.
+- The backfill mapping (`status` → starting `stage`) is a judgment call,
+  not a transcription of anything Amit said — worth a quick review pass.
+
+**Deliberately not built tonight**
+- Drag-and-drop (accessibility reason above), owner name / email / phone on
+  Kanban cards (Lead has no contact_id/email/phone fields today — would
+  need a join to the Contacts master from migration 0034, out of scope for
+  a single overnight window), and any AI-augmented or AI-suggested stage
+  behaviour (deferred to roadmap, per the Constitution's AI Governance gate
+  — a transition should never auto-apply without a human confirming it).
+- Real multi-tenancy / per-customer data isolation — `feature_flags` only
+  lays groundwork for it; the actual decision is Amit's (roadmap gate #1).
+
+**Verification:** pytest, `tsc`, `vite build`, `check_version_sync.py` — see
+Lessons Learned / Release history in `claude/README.md`.
+
+---
+
 ## [1.4.6] — 2026-10-24
 
 Executive Intelligence Digest — Rambo Commander's answer to Amit's instruction to "benchmark each feature to our roadmap, vision and world class product to drive sales cadence, sales intelligence and business revenue with better insights and better outcomes," then "develop the same and wait for me to commit." Chosen as the single highest-leverage item from that benchmark: it's R2 of `fluidgo-services-intelligence-platform-assessment.md`, already flagged there as "genuinely one of the cheapest, highest-visibility wins available," and it's the one release that touches all three of Amit's named goals at once — a recurring (**cadence**) surfaced-insight (**intelligence**) view of revenue progress, pipeline risk and team execution health (**outcomes**) — without inventing a single new aggregation primitive underneath.

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { toast } from '@/store/toastStore'
+import LeadsKanbanBoard from '@/components/leads/LeadsKanbanBoard'
 
 const SOURCES = ['All', 'Call', 'Visit', 'Referral', 'LinkedIn', 'Email']
 const STATUSES = ['All', 'new', 'qualified', 'proposal', 'closed_won', 'closed_lost']
@@ -43,10 +44,21 @@ export default function Leads() {
   })
   const [addErr, setAddErr] = useState('')
 
+  const [view, setView] = useState<'list' | 'kanban'>('list')
+
   const { data: leads = [], isLoading } = useQuery({
     queryKey: ['leads'],
     queryFn: () => api.get('/leads').then(r => r.data)
   })
+
+  // SPANCO stage ladder — never hardcoded here; see
+  // frontend/src/components/leads/LeadsKanbanBoard.tsx and
+  // backend/app/services/lead_stage_service.py for why.
+  const { data: stagesData } = useQuery({
+    queryKey: ['leads-stages'],
+    queryFn: () => api.get('/leads/stages').then(r => r.data)
+  })
+  const kanbanEnabled = stagesData?.kanban_enabled !== false
 
   const addLead = useMutation({
     mutationFn: () => api.post('/leads', {
@@ -95,17 +107,35 @@ export default function Leads() {
             {sourceFilter !== 'All' || statusFilter !== 'All' ? ' (filtered)' : ''}
           </p>
         </div>
-        <button onClick={() => {
-          if (showAdd) {
-            // Closing the form → clear any half-filled fields so a reopen is fresh
-            setForm({ date: today, company: '', contact_name: '', requirement: '',
-                      source: 'Call', next_action: '', next_action_date: '' })
-            setAddErr('')
-          }
-          setShowAdd(v => !v)
-        }} className="btn-primary">
-          {showAdd ? '✕ Cancel' : '➕ Add Lead'}
-        </button>
+        <div className="flex items-center gap-2">
+          {kanbanEnabled && (
+            <div className="flex rounded-lg border border-wep-border overflow-hidden text-xs font-semibold">
+              <button
+                onClick={() => setView('list')}
+                className={`px-3 py-1.5 ${view === 'list' ? 'bg-brand-pink text-white' : 'bg-white text-wep-muted'}`}
+              >
+                ☰ List
+              </button>
+              <button
+                onClick={() => setView('kanban')}
+                className={`px-3 py-1.5 ${view === 'kanban' ? 'bg-brand-pink text-white' : 'bg-white text-wep-muted'}`}
+              >
+                📊 Kanban
+              </button>
+            </div>
+          )}
+          <button onClick={() => {
+            if (showAdd) {
+              // Closing the form → clear any half-filled fields so a reopen is fresh
+              setForm({ date: today, company: '', contact_name: '', requirement: '',
+                        source: 'Call', next_action: '', next_action_date: '' })
+              setAddErr('')
+            }
+            setShowAdd(v => !v)
+          }} className="btn-primary">
+            {showAdd ? '✕ Cancel' : '➕ Add Lead'}
+          </button>
+        </div>
       </div>
 
       {/* Add Lead Form */}
@@ -180,7 +210,7 @@ export default function Leads() {
         )}
       </div>
 
-      {/* Leads List */}
+      {/* Leads List / Kanban */}
       {isLoading ? (
         <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="skeleton h-24 rounded-2xl" />)}</div>
       ) : filtered.length === 0 ? (
@@ -192,6 +222,8 @@ export default function Leads() {
               : 'No leads yet — add your first lead above.'}
           </p>
         </div>
+      ) : view === 'kanban' && kanbanEnabled ? (
+        <LeadsKanbanBoard leads={filtered} stages={stagesData?.stages ?? []} />
       ) : (
         <div className="space-y-3">
           {filtered.map((l: any) => (
