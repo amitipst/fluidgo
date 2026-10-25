@@ -373,6 +373,19 @@ class Lead(Base):
     ai_lead_score:    Mapped[int]       = mapped_column(SmallInteger, nullable=True)
     # status: new → qualified → converted (converted = promoted to a pipeline deal)
     status:           Mapped[str]       = mapped_column(String(30), default="new")
+    # SPANCO stage within the Leads funnel — migration 0038. Sourced directly
+    # from WEP Solutions' live Kylas CRM config (Amit, 2026-10-24: "now giving
+    # right SPANCO"), an 11-stage ladder (SP1..SP7 + Hold/Won/Closed
+    # Unqualified/Closed Lost). This supersedes nothing silently: a DIFFERENT
+    # 6-letter S-P-A-N-C-O draft already exists in
+    # fluidgo-mom-action-governance-design.md §11, scoped to PipelineDeal, not
+    # Lead — both can't be "the" SPANCO; flagged in claude/README.md Open
+    # Items for Amit to resolve explicitly. Nullable/additive; never hardcode
+    # the stage list here or in the frontend — the canonical ladder lives in
+    # app.services.lead_stage_service and is served via config (feature_flags),
+    # not code, per Amit's 2026-10-24 "MSP where standard features can be
+    # offered and wepsol customized can be disabled/enabled per customer" ask.
+    stage:            Mapped[str]       = mapped_column(String(40), nullable=True)
     # ── Funnel provenance ─────────────────────────────────────────────────────
     source_meeting_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # meeting this lead came from
     converted_to_deal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # deal this lead became
@@ -381,6 +394,37 @@ class Lead(Base):
     # seed_v3.py creates placeholder leads too; this excludes them from
     # funnel/analytics counts by default.
     is_seed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+# ── Generic feature/config toggle (migration 0038) ────────────────────────────
+class FeatureFlag(Base):
+    """Generic enable/disable + JSON config switch — first used to carry the
+    Leads SPANCO stage ladder and the Kanban-view toggle, in direct answer to
+    Amit's 2026-10-24 instruction: "ensure the product scalability and a MSP
+    where standard features can be offered and wepsol customized can be
+    disabled/enabled as per customer requirement."
+
+    org_scope is nullable and UNUSED today — fluidGo has no org/account/tenant
+    entity and no tenant isolation anywhere in the schema (that is
+    fluidgo-roadmap-v2.md decision gate #1, left for Amit to decide). It is
+    present from day one purely so a future per-customer override is a plain
+    INSERT against an existing table, not a migration — "future-proof at
+    10/100/1000 customers" per rambo-constitution, nothing more claimed.
+
+    No DB-level uniqueness on (key, org_scope): Postgres treats NULL org_scope
+    values as pairwise distinct, so a UNIQUE constraint would silently allow
+    duplicate *global* rows for the same key. Enforced instead by
+    application-level lookup-then-write in lead_stage_service — if a real
+    admin UI is ever built for this table, keep that same upsert discipline.
+    """
+    __tablename__ = "feature_flags"
+    id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key:        Mapped[str]       = mapped_column(String(100), nullable=False)
+    enabled:    Mapped[bool]      = mapped_column(Boolean, default=True, server_default="true")
+    org_scope:  Mapped[str]       = mapped_column(String(100), nullable=True)
+    config:     Mapped[dict]      = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 class PipelineDeal(Base):
     """Doubles as the 'Opportunity' entity for v2 — extended in place rather than

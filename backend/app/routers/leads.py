@@ -10,8 +10,58 @@ from app.models import Lead, PipelineDeal, User, ROLE_HIERARCHY, role_level
 from app.services.deps import get_current_user
 from app.services.rigor_service import score_lead
 from app.services.audit_service import audit
+from app.services import lead_stage_service
 
 router = APIRouter()
+
+
+# ── SPANCO stage ladder (config-driven — see lead_stage_service) ────────────
+@router.get("/stages")
+async def get_lead_stages(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Canonical Leads SPANCO stage ladder + whether the Kanban board is
+    switched on. The frontend fetches this instead of hardcoding a stage
+    list — see lead_stage_service module docstring for why, and
+    Amit's 2026-10-24 'right SPANCO' handoff for where the default ladder
+    came from."""
+    stages = await lead_stage_service.get_lead_stages(db)
+    kanban_enabled = await lead_stage_service.is_kanban_enabled(db)
+    return {"stages": stages, "kanban_enabled": kanban_enabled}
+
+
+class UpdateLeadStageIn(BaseModel):
+    stage: str
+
+
+@router.patch("/{lead_id}/stage")
+async def update_lead_stage(lead_id: str, body: UpdateLeadStageIn, request: Request,
+                            background_tasks: BackgroundTasks,
+                            db: AsyncSession = Depends(get_db),
+                            user: User = Depends(get_current_user)):
+    """Move a lead to a different SPANCO stage — the Kanban board's drag/tap
+    action, or the detail view. Visibility mirrors reassign_lead() exactly
+    (own lead, or scope="all") rather than inventing a new permission rule."""
+    lead = (await db.execute(select(Lead).where(Lead.id == uuid.UUID(lead_id)))).scalar_one_or_none()
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+
+    is_org_wide = ROLE_HIERARCHY.get(user.role, {}).get("scope") == "all"
+    if not is_org_wide and lead.user_id != user.id:
+        raise HTTPException(403, "You cannot move this lead")
+
+    stages = await lead_stage_service.get_lead_stages(db)
+    if not lead_stage_service.is_valid_stage_key(body.stage, stages):
+        raise HTTPException(422, f"'{body.stage}' is not a valid stage")
+
+    old_stage = lead.stage
+    lead.stage = body.stage
+    await db.commit()
+
+    if old_stage != body.stage:
+        background_tasks.add_task(
+            audit, db, user, "STAGE_CHANGE", "lead", lead_id,
+            f"{lead.company}: {old_stage or '(none)'} → {body.stage}", request=request,
+        )
+    return {"id": lead_id, "stage": body.stage}
 
 class LeadIn(BaseModel):
     date: date
