@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { format } from 'date-fns'
 import { downloadFile } from '@/lib/download'
 import { toast } from '@/store/toastStore'
+import TrendsPanel from '@/components/trends/TrendsPanel'
 
 // Reports module v1 — added 2026-10-23, Amit: "there is no report section
 // still". Scoped before building (see claude/README.md's v1.4.4 section):
@@ -62,6 +63,8 @@ export default function Reports() {
         <h1 className="font-display font-bold text-xl text-wep-navy">📑 Reports</h1>
         <p className="text-wep-muted text-sm">One place for every export — revenue, activity, rigor and win-loss.</p>
       </div>
+
+      <TrendsPanel />
 
       <div className="card mb-6">
         <div className="font-semibold text-sm text-wep-navy mb-3">Existing reports</div>

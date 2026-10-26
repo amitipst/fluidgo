@@ -10,6 +10,12 @@ from app.models import PipelineDeal, User, role_level, PipelineUpdate, PipelineT
 from app.services.deps import get_current_user, deny_governance
 from app.services.audit_service import audit
 from app.services import pipeline_sheet_service as sheet
+from app.services import deal_rules_service as rules_svc
+from app.services.deal_rules_service import RuleViolation
+from app.services.crm_link_service import resolve_links, display_name
+from app.services import deal_duplicate_service as dup_svc
+from app.services import finance_notify_service as fin_svc
+from app.services import email_service
 
 router = APIRouter()
 
@@ -37,7 +43,19 @@ def _aware(dt):
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 class DealIn(BaseModel):
-    company: str
+    company: Optional[str] = None   # filled from the Contacts master when account_id is sent
+    title: Optional[str] = Field(default=None, max_length=150)   # v1.6.0: tells parallel deals apart
+    stage_override_reason: Optional[str] = Field(default=None, max_length=200)   # lets a NEW deal start below SP5 (audited)
+    # v1.5.0 company-first + SP stage (see deal_rules_service / crm_link_service)
+    account_id: Optional[uuid.UUID] = None
+    contact_id: Optional[uuid.UUID] = None
+    sp_stage: Optional[str] = None
+    # Won = customer email/LOI/PO/agreement received; revenue = tax invoice raised.
+    won_basis: Optional[Literal["email", "loi", "po", "agreement"]] = None
+    won_at: Optional[date] = None
+    won_ref: Optional[str] = Field(default=None, max_length=120)
+    invoiced_at: Optional[date] = None
+    invoice_ref: Optional[str] = Field(default=None, max_length=60)
     # Must cover every stage value any endpoint can actually put a deal into,
     # not just the ones the Pipeline edit form's own dropdown offers - PATCH
     # always sends the full DealIn body, so an unchanged-but-unlisted current
@@ -75,12 +93,114 @@ class DealIn(BaseModel):
     target_note: Optional[str] = Field(default=None, max_length=60)
 
 @router.post("")
-async def create_deal(body: DealIn, db: AsyncSession = Depends(get_db),
+async def create_deal(body: DealIn, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db),
                       user: User = Depends(get_current_user)):
-    deal = PipelineDeal(user_id=user.id, **body.model_dump())
+    rules = await rules_svc.get_rules(db)
+    data = body.model_dump()
+    try:
+        account, contact = await resolve_links(
+            db, body.account_id, body.contact_id, rules["require_company_contact"])
+        if account is not None:
+            data["company"] = account.name
+            data["primary_contact"] = display_name(contact) or data.get("primary_contact")
+        if not (data.get("company") or "").strip():
+            raise RuleViolation("Company is required.")
+        rules_svc.validate_revenue_split(body.recurring_revenue, body.one_time_revenue, data["stage"] if body.sp_stage != "won" else "closed_won", rules)
+        sp_stage = body.sp_stage or ("won" if body.stage == "closed_won" else rules["deal_start_stage"])
+        if sp_stage not in rules["stages"]:
+            raise RuleViolation(f"'{sp_stage}' is not a valid SP stage")
+        if sp_stage != "won" and body.stage not in ("closed_won", "closed_lost", "dropped", "on_hold"):
+            try:
+                rules_svc.validate_new_deal_stage(sp_stage, rules)
+            except RuleViolation:
+                if len((body.stage_override_reason or "").strip()) < 5:
+                    raise
+                data["todays_update"] = ((data.get("todays_update") or "") +
+                                         f" [Started below SP5 — {body.stage_override_reason.strip()}]").strip()
+        if sp_stage == "won":
+            data["stage"] = "closed_won"
+        elif data["stage"] == "closed_won":
+            sp_stage = "won"
+        data["sp_stage"] = sp_stage
+        if data["stage"] == "closed_won":
+            rules_svc.validate_won(body.won_basis, body.won_at or date.today())
+            data["won_at"] = body.won_at or date.today()
+        elif body.invoiced_at:
+            raise RuleViolation("A tax invoice date can only be recorded on a won deal.")
+        data["win_probability"] = rules_svc.resolve_win_probability(
+            data["stage"], sp_stage, body.win_probability, rules)
+        data["deal_value"] = rules_svc.derive_deal_value(
+            body.recurring_revenue, body.one_time_revenue) if body.recurring_revenue is not None \
+            or body.one_time_revenue is not None else body.deal_value
+    except RuleViolation as e:
+        raise HTTPException(422, str(e))
+    if data.get("title"):
+        data["title"] = data["title"].strip() or None
+    data.pop("stage_override_reason", None)
+    deal = PipelineDeal(user_id=user.id, **data)
     db.add(deal)
     await db.commit()
-    return {"id": str(deal.id), **body.model_dump()}
+    if deal.stage == "closed_won":
+        await _notify_finance(db, background_tasks, deal, user, rules)
+    return {"id": str(deal.id), **{k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in data.items()}}
+
+
+@router.get("/rules")
+async def deal_rules(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """SP ladder with each stage's default win % and floor, plus the mandatory
+    flags — the deal form reads this instead of hardcoding numbers (config:
+    feature_flags 'deal_rules')."""
+    rules = await rules_svc.get_rules(db)
+    return {
+        "stages": [{"key": k, "label": rules_svc.sp_stage_label(k), "default": v["default"], "floor": v["floor"],
+                    "category": v.get("category")}
+                   for k, v in rules["stages"].items()],
+        "require_company_contact": rules["require_company_contact"],
+        "require_revenue_split": rules["require_revenue_split"],
+        "convert_min_stage": rules["convert_min_stage"],
+        "deal_start_stage": rules["deal_start_stage"],
+        "new_deal_min_stage": rules["new_deal_min_stage"],
+        "forecast_categories": rules_svc.FORECAST_CATEGORY_LABELS,
+    }
+
+
+async def _notify_finance(db: AsyncSession, background_tasks: BackgroundTasks, deal: PipelineDeal,
+                          owner: User, rules: dict):
+    """Order booked -> tell Finance to invoice in the ERP (v1.6.0). Never blocks
+    or fails the save: a missing recipient or SMTP just logs."""
+    if not rules.get("notify_finance_on_won", True):
+        return
+    try:
+        rows = (await db.execute(select(User.email).where(User.role == "finance", User.is_active == True))).all()  # noqa: E712
+        to = [r[0] for r in rows if r[0]]
+        if not to:
+            return
+        subject, html, text = fin_svc.build_won_notice(deal, owner.name)
+        background_tasks.add_task(email_service.send_email, to, subject, html, text)
+    except Exception:  # noqa: BLE001 - notification must never break a deal save
+        pass
+
+
+@router.get("/duplicates")
+async def open_for_company(account_id: uuid.UUID, contact_id: Optional[uuid.UUID] = None,
+                           db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """What is already open for this company (and contact)? Shown on the new
+    lead / deal form as an alert; creating a parallel deal is always allowed."""
+    deny_governance(user)
+    from app.models import Lead
+    from app.services.permission_service import resolve_visible_user_ids
+    visible = await resolve_visible_user_ids(db, user)
+    deals = (await db.execute(select(PipelineDeal).where(
+        PipelineDeal.account_id == account_id, PipelineDeal.is_seed == False))).scalars().all()  # noqa: E712
+    leads = (await db.execute(select(Lead).where(
+        Lead.account_id == account_id, Lead.is_seed == False))).scalars().all()  # noqa: E712
+    owner_ids = {d.user_id for d in deals} | {l.user_id for l in leads}
+    names = {}
+    if owner_ids:
+        names = {uid: n for uid, n in (await db.execute(select(User.id, User.name).where(User.id.in_(owner_ids)))).all()}
+    out = dup_svc.summarise(deals, leads, None if visible is None else set(visible), contact_id,
+                            names, rules_svc.sp_stage_label)
+    return out
 
 async def _visible_deals_query(db: AsyncSession, user: User, include_archived: bool, include_seed: bool):
     """The one place that decides which deals a user may see (shared by the
@@ -148,9 +268,16 @@ async def list_deals(include_archived: bool = False, include_seed: bool = False,
     q = await _visible_deals_query(db, user, include_archived, include_seed)
     result = await db.execute(q)
     now = datetime.now(timezone.utc)
+    rules = await rules_svc.get_rules(db)
     rows = []
     for d in result.scalars().all():
         row = {c.name: getattr(d, c.name) for c in d.__table__.columns}
+        row["needs_revenue_split"] = rules_svc.needs_revenue_split(d)
+        row["forecast_probability"] = rules_svc.forecast_probability(d, rules)
+        row["sp_stage_label"] = rules_svc.sp_stage_label(d.sp_stage) if d.sp_stage else None
+        cat = rules_svc.forecast_category(d, rules)
+        row["forecast_category"] = cat
+        row["forecast_category_label"] = rules_svc.FORECAST_CATEGORY_LABELS.get(cat) if cat else None
         last_touch = _aware(d.last_activity_at) or _aware(d.created_at)
         days_since = (now - last_touch).days if last_touch else None
         row["days_since_activity"] = days_since
@@ -212,7 +339,61 @@ async def update_deal(deal_id: str, body: DealIn, request: Request,
     if not deal:
         raise HTTPException(404, "Deal not found")
 
-    updates = body.model_dump(exclude_none=True)
+    sent = body.model_fields_set
+    # Only fields the client actually sent (an omitted `stage` used to fall back
+    # to the model default "cold" and silently overwrite the deal's real stage).
+    updates = {k: v for k, v in body.model_dump(exclude_none=True).items() if k in sent}
+    updates.pop("stage_override_reason", None)
+
+    # ── v1.5.0 rules, checked on the merged (existing + sent) record ──────────
+    rules = await rules_svc.get_rules(db)
+    try:
+        if {"account_id", "contact_id"} & sent:
+            account, contact = await resolve_links(
+                db, updates.get("account_id", deal.account_id),
+                updates.get("contact_id", deal.contact_id), rules["require_company_contact"])
+            if account is not None:
+                updates["company"] = account.name
+                updates["account_id"] = account.id
+                updates["primary_contact"] = display_name(contact) or deal.primary_contact
+                if contact is not None:
+                    updates["contact_id"] = contact.id
+        # SP "Won" and the legacy closed_won status are one thing: keep them in step.
+        if updates.get("sp_stage") == "won":
+            updates["stage"] = "closed_won"
+        elif updates.get("stage") == "closed_won" and (updates.get("sp_stage") or deal.sp_stage):
+            updates["sp_stage"] = "won"
+        new_stage = updates.get("stage", deal.stage)
+        new_sp = updates.get("sp_stage", deal.sp_stage)
+        if new_sp is not None and new_sp not in rules["stages"]:
+            raise RuleViolation(f"'{new_sp}' is not a valid SP stage")
+        if new_stage == "closed_won" and deal.stage != "closed_won":
+            # entering Won needs the customer's commitment on record
+            rules_svc.validate_won(updates.get("won_basis", deal.won_basis),
+                                   updates.get("won_at") or deal.won_at or date.today())
+            updates.setdefault("won_at", deal.won_at or date.today())
+        if updates.get("invoiced_at") and new_stage != "closed_won":
+            raise RuleViolation("A tax invoice date can only be recorded on a won deal.")
+        if new_sp is not None and new_sp != "won" and new_stage == "closed_won":
+            updates["sp_stage"] = "won"; new_sp = "won"
+        money_touched = {"recurring_revenue", "one_time_revenue", "deal_value", "stage", "sp_stage"} & sent
+        if money_touched:
+            rec = updates.get("recurring_revenue", deal.recurring_revenue)
+            one = updates.get("one_time_revenue", deal.one_time_revenue)
+            rules_svc.validate_revenue_split(
+                None if rec is None else float(rec), None if one is None else float(one), new_stage, rules)
+            if "recurring_revenue" in sent or "one_time_revenue" in sent:
+                updates["deal_value"] = rules_svc.derive_deal_value(rec, one)
+        sp_changed = "sp_stage" in updates and updates["sp_stage"] != deal.sp_stage
+        if "win_probability" in sent or sp_changed or "stage" in sent:
+            requested = (body.win_probability if "win_probability" in sent
+                         else (None if sp_changed else deal.win_probability))
+            win = rules_svc.resolve_win_probability(new_stage, new_sp, requested, rules)
+            if win is not None:
+                updates["win_probability"] = win
+    except RuleViolation as e:
+        raise HTTPException(422, str(e))
+
     # Capture value/stage changes specifically — these feed revenue forecasting,
     # so a change to them is worth an explicit audit entry.
     old_value = float(deal.deal_value) if deal.deal_value is not None else None
@@ -242,6 +423,8 @@ async def update_deal(deal_id: str, body: DealIn, request: Request,
         ))
 
     await db.commit()
+    if old_stage != "closed_won" and deal.stage == "closed_won":
+        await _notify_finance(db, background_tasks, deal, user, rules)
 
     new_value = float(deal.deal_value) if deal.deal_value is not None else None
     changes = []
@@ -454,6 +637,10 @@ class CloseDealIn(BaseModel):
     # Contract details — for won deals, OR deals lost to a competitor on a fixed term.
     contract_months: Optional[int] = None          # 12 / 24 / 36 ...
     reengage_at: Optional[date] = None             # rep override for the win-back date
+    # Required when outcome == closed_won: the customer's commitment.
+    won_basis: Optional[Literal["email", "loi", "po", "agreement"]] = None
+    won_at: Optional[date] = None
+    won_ref: Optional[str] = Field(default=None, max_length=120)
 
 @router.post("/{deal_id}/close")
 async def close_deal(deal_id: str, body: CloseDealIn, request: Request,
@@ -481,6 +668,16 @@ async def close_deal(deal_id: str, body: CloseDealIn, request: Request,
     if body.category not in valid:
         raise HTTPException(400, f"category for {body.outcome} must be one of: {', '.join(valid)}")
 
+    if body.outcome == "closed_won":
+        try:
+            rules_svc.validate_won(body.won_basis, body.won_at or date.today())
+        except RuleViolation as e:
+            raise HTTPException(422, str(e))
+        deal.won_basis, deal.won_at, deal.won_ref = body.won_basis, body.won_at or date.today(), body.won_ref
+        deal.win_probability = 100
+        if deal.sp_stage:
+            deal.sp_stage = "won"
+
     old_target = _ledger_label(deal.stage, deal.closure_eta, deal.target_note)
     deal.stage               = body.outcome
     _log_target_change(db, deal, old_target, _ledger_label(deal.stage, deal.closure_eta, deal.target_note), user)
@@ -498,6 +695,8 @@ async def close_deal(deal_id: str, body: CloseDealIn, request: Request,
         deal.reengage_done     = False
 
     await db.commit()
+    if body.outcome == "closed_won":
+        await _notify_finance(db, background_tasks, deal, user, await rules_svc.get_rules(db))
 
     # AI post-mortem for anything that didn't close won (the learning cases)
     if body.outcome in ("closed_lost", "on_hold", "dropped"):
@@ -703,7 +902,11 @@ async def update_forecast(deal_id: str, body: ForecastIn, request: Request,
     _check_deal_access(deal, user)
     sent = body.model_fields_set
     if "win_probability" in sent:
-        deal.win_probability = body.win_probability
+        try:
+            deal.win_probability = rules_svc.resolve_win_probability(
+                deal.stage, deal.sp_stage, body.win_probability, await rules_svc.get_rules(db))
+        except RuleViolation as e:
+            raise HTTPException(422, str(e))
     old_target = _ledger_label(deal.stage, deal.closure_eta, deal.target_note)
     if "closure_eta" in sent:
         deal.closure_eta = body.closure_eta

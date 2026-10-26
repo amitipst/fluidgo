@@ -518,7 +518,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <QuickTile to="/team"          icon="👥" label="Team"         desc="DSR compliance & rigor leaderboard" />
           <QuickTile to="/revenue"       icon="💰" label="Revenue"      desc="Target achievement & pipeline" />
-          <QuickTile to="/opportunities" icon="🧭" label="Opportunities" desc="Deal health & BANT scores" />
+          <QuickTile to="/deals?tab=weak" icon="🧭" label="Deals & weak areas" desc="Health, risk and what needs action" />
           <QuickTile to="/fga-approval"  icon="🏆" label="FGA Approval" desc="Score review & Finance export" />
         </div>
       )}

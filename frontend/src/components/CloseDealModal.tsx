@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { toast } from '@/store/toastStore'
+import WonEvidence, { type WonFields } from '@/components/WonEvidence'
 
 // Human-readable labels for the fixed taxonomy (mirrors backend OUTCOME_TAXONOMY)
 const OUTCOMES: Record<string, { label: string; color: string; categories: Record<string, string> }> = {
@@ -49,6 +50,7 @@ export default function CloseDealModal({ deal, onClose, onDone }: {
   const [contractMonths, setContractMonths] = useState<string>('')
   const [reengageAt, setReengageAt] = useState('')
   const [saving, setSaving] = useState(false)
+  const [won, setWon] = useState<WonFields>({ won_basis: '', won_at: new Date().toISOString().slice(0, 10), won_ref: '' })
 
   const cfg = OUTCOMES[outcome]
   const isCompetitorLoss = outcome === 'closed_lost' && category === 'competitor'
@@ -57,6 +59,7 @@ export default function CloseDealModal({ deal, onClose, onDone }: {
 
   async function submit() {
     if (!category) { toast.error('Please pick a reason.'); return }
+    if (outcome === 'closed_won' && (!won.won_basis || !won.won_at)) { toast.error('Record the customer’s email / LOI / PO / agreement and its date.'); return }
     setSaving(true)
     try {
       await api.post(`/pipeline/${deal.id}/close`, {
@@ -65,6 +68,7 @@ export default function CloseDealModal({ deal, onClose, onDone }: {
         competitor: competitor || undefined,
         contract_months: contractMonths ? parseInt(contractMonths) : undefined,
         reengage_at: reengageAt || undefined,
+        ...(outcome === 'closed_won' ? { won_basis: won.won_basis, won_at: won.won_at, won_ref: won.won_ref || undefined } : {}),
       })
       const msg = outcome === 'closed_won'
         ? `${deal.company} marked as Won. 🎉`
@@ -105,6 +109,8 @@ export default function CloseDealModal({ deal, onClose, onDone }: {
             </button>
           ))}
         </div>
+
+        {outcome === 'closed_won' && <div className="mb-4"><WonEvidence value={won} onChange={setWon} idPrefix="close-won" /></div>}
 
         {/* Reason category — the structured taxonomy */}
         <label className="form-label block mb-1.5">

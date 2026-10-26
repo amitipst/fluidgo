@@ -10,6 +10,7 @@ from app.services.deal_health_service import calculate_deal_health, deal_health_
 from app.services.ai_service import analyse
 from app.repositories import opportunity_repo
 
+from app.services.deal_rules_service import forecast_probability
 router = APIRouter()
 
 
@@ -68,6 +69,8 @@ async def list_opportunities(practice: Optional[str] = None, oem: Optional[str] 
     for d in deals:
         row = _serialize(d)
         row["business"] = biz_by_owner.get(d.user_id)
+        # v1.5.0: one weighted-forecast probability shared with Pipeline and the digest
+        row["forecast_probability"] = forecast_probability(d)
         out.append(row)
     return out
 

@@ -130,7 +130,7 @@ export default function Opportunities() {
   const totalValue = openDeals.reduce((s: number, d: any) => s + dealRevenue(d), 0)
   // Weighted forecast: value × closure probability (falls back to deal-health as a proxy)
   const weighted = openDeals.reduce((s: number, d: any) => {
-    const pct = d.ai_closure_pct ?? d.ai_deal_health ?? 0
+    const pct = d.forecast_probability ?? d.ai_closure_pct ?? d.ai_deal_health ?? 0
     return s + dealRevenue(d) * (pct / 100)
   }, 0)
   const atRisk = deals.filter((d: any) =>
@@ -143,7 +143,7 @@ export default function Opportunities() {
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="flex items-start justify-between mb-5 flex-wrap gap-3">
         <div>
-          <h1 className="font-display font-bold text-xl text-wep-navy">🧭 Opportunities</h1>
+          <h1 className="font-display font-bold text-xl text-wep-navy">🧭 Deal health &amp; risk</h1>
           <p className="text-wep-muted text-sm">{deals.length} opportunities · {openDeals.length} open</p>
         </div>
         <div className="flex gap-2">
@@ -271,7 +271,7 @@ export default function Opportunities() {
 
       <div className="space-y-3">
         {deals.map((d: any) => {
-          const closurePct = d.ai_closure_pct ?? d.ai_deal_health
+          const closurePct = d.forecast_probability ?? d.ai_closure_pct ?? d.ai_deal_health
           return (
           <div key={d.id} className="card">
             <div className="flex items-start justify-between gap-2 flex-wrap">

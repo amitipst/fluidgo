@@ -5,6 +5,9 @@ import { format } from 'date-fns'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { toast } from '@/store/toastStore'
 import LeadsKanbanBoard from '@/components/leads/LeadsKanbanBoard'
+import CompanyContactPicker, { emptyCompanyContact, type CompanyContact } from '@/components/CompanyContactPicker'
+import DuplicateAlert from '@/components/DuplicateAlert'
+import ConvertLeadModal from '@/components/ConvertLeadModal'
 
 const SOURCES = ['All', 'Call', 'Visit', 'Referral', 'LinkedIn', 'Email']
 const STATUSES = ['All', 'new', 'qualified', 'proposal', 'closed_won', 'closed_lost']
@@ -43,6 +46,8 @@ export default function Leads() {
     source: 'Call', next_action: '', next_action_date: ''
   })
   const [addErr, setAddErr] = useState('')
+  const [cc, setCc] = useState<CompanyContact>(emptyCompanyContact)   // company-first (v1.5.0)
+  const [converting, setConverting] = useState<any | null>(null)
 
   const [view, setView] = useState<'list' | 'kanban'>('list')
 
@@ -62,26 +67,20 @@ export default function Leads() {
 
   const addLead = useMutation({
     mutationFn: () => api.post('/leads', {
-      ...form,
+      date: form.date, requirement: form.requirement || undefined, source: form.source,
+      next_action: form.next_action || undefined,
+      account_id: cc.accountId, contact_id: cc.contactId,
       next_action_date: form.next_action_date || undefined
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['leads'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
       setForm({ date: today, company: '', contact_name: '', requirement: '',
                 source: 'Call', next_action: '', next_action_date: '' })
+      setCc(emptyCompanyContact)
       setShowAdd(false); setAddErr('')
     },
     onError: (e: any) => setAddErr(getErrorMessage(e, 'Failed to save lead'))
-  })
-
-  const convertToDeal = useMutation({
-    mutationFn: (leadId: string) => api.post(`/leads/${leadId}/convert-to-deal`, {}),
-    onSuccess: (res: any) => {
-      qc.invalidateQueries({ queryKey: ['leads'] })
-      qc.invalidateQueries({ queryKey: ['pipeline'] })
-      toast.success(res.data.message, { label: 'View in Pipeline', onClick: () => navigate('/pipeline') })
-    },
-    onError: (e: any) => toast.error(getErrorMessage(e, 'Could not convert to deal')),
   })
 
   // Filtered view
@@ -129,6 +128,7 @@ export default function Leads() {
               // Closing the form → clear any half-filled fields so a reopen is fresh
               setForm({ date: today, company: '', contact_name: '', requirement: '',
                         source: 'Call', next_action: '', next_action_date: '' })
+              setCc(emptyCompanyContact)
               setAddErr('')
             }
             setShowAdd(v => !v)
@@ -143,15 +143,9 @@ export default function Leads() {
         <div className="card mb-5 border-brand-pink/30">
           <h3 className="font-bold text-sm text-wep-text mb-4">🎯 New Lead</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="form-label block mb-1">Company Name *</label>
-              <input className="form-input" placeholder="e.g. Infosys Pune" required
-                value={form.company} onChange={e => setForm(f => ({ ...f, company: e.target.value }))} />
-            </div>
-            <div>
-              <label className="form-label block mb-1">Contact Name</label>
-              <input className="form-input" placeholder="e.g. Mr. Anil Kumar"
-                value={form.contact_name} onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))} />
+            <div className="md:col-span-2">
+              <CompanyContactPicker value={cc} onChange={setCc} />
+              <DuplicateAlert accountId={cc.accountId} contactId={cc.contactId} />
             </div>
             <div>
               <label className="form-label block mb-1">Requirement</label>
@@ -183,7 +177,7 @@ export default function Leads() {
           </div>
           {addErr && <p className="text-red-500 text-xs mt-2">{addErr}</p>}
           <div className="flex gap-2 mt-4">
-            <button onClick={() => addLead.mutate()} disabled={!form.company || addLead.isPending}
+            <button onClick={() => addLead.mutate()} disabled={!cc.accountId || !cc.contactId || addLead.isPending}
               className="btn-primary">
               {addLead.isPending ? '⏳ Saving…' : '✅ Save Lead'}
             </button>
@@ -278,17 +272,21 @@ export default function Leads() {
                 </span>
                 {!l.converted_to_deal_id && (
                   <button
-                    onClick={() => convertToDeal.mutate(l.id)}
-                    disabled={convertToDeal.isPending}
-                    className="text-xs font-bold px-3 py-1.5 rounded-lg text-white disabled:opacity-40"
+                    onClick={() => setConverting(l)}
+                    
+                    className="text-xs font-bold px-4 min-h-[40px] sm:min-h-0 sm:py-1.5 rounded-lg text-white"
                     style={{ background: 'linear-gradient(135deg,#0D9488,#0F766E)' }}>
-                    {convertToDeal.isPending ? '⏳ Converting…' : '→ Convert to Deal'}
+                    → Convert to Deal
                   </button>
                 )}
               </div>
             </div>
           ))}
         </div>
+      )}
+      {converting && (
+        <ConvertLeadModal lead={converting} onClose={() => setConverting(null)}
+          onDone={(message) => { setConverting(null); toast.success(message, { label: 'View in Deals', onClick: () => navigate('/deals') }) }} />
       )}
     </div>
   )

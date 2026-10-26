@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import TrendsPanel from '@/components/trends/TrendsPanel'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
@@ -190,6 +191,7 @@ export default function Analytics() {
           </LineChart>
         </ResponsiveContainer>
       </div>
+      <div className="mt-6"><TrendsPanel /></div>
     </div>
   )
 }

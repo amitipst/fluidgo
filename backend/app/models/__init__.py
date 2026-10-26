@@ -389,6 +389,14 @@ class Lead(Base):
     # ── Funnel provenance ─────────────────────────────────────────────────────
     source_meeting_id:    Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # meeting this lead came from
     converted_to_deal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)  # deal this lead became
+    # Company-first CRM (v1.5.0, migration 0039): a lead is raised against a
+    # company and a person in the Contacts master. Soft references (no FK),
+    # same convention as Meeting.account_id / PipelineDeal.account_id. The
+    # free-text `company` / `contact_name` above stay and are filled from the
+    # master, so every older screen and export is unaffected. Nullable because
+    # leads created before 0039 have no link until backfilled.
+    account_id:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    contact_id:       Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at:       Mapped[datetime]  = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     # See migration 0029 — same is_seed pattern as DSRDaily/Meeting (0027).
     # seed_v3.py creates placeholder leads too; this excludes them from
@@ -434,6 +442,9 @@ class PipelineDeal(Base):
     id:               Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id:          Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     company:          Mapped[str]       = mapped_column(String(255), nullable=False)
+    # v1.6.0 — short deal name ("Managed NOC renewal", "SOC for Pune plant") so
+    # 2-3 parallel deals on one company are distinguishable (Salesforce Opportunity Name).
+    title:            Mapped[str]       = mapped_column(String(150), nullable=True)
     stage:            Mapped[str]       = mapped_column(String(20))
     todays_update:    Mapped[str]       = mapped_column(Text, nullable=True)
     roadblock:        Mapped[bool]      = mapped_column(Boolean, default=False)
@@ -522,6 +533,23 @@ class PipelineDeal(Base):
     # "Jan-Feb 27"); closure_eta stays the machine-readable target month.
     win_probability: Mapped[int] = mapped_column(SmallInteger, nullable=True)
     target_note:     Mapped[str] = mapped_column(String(60), nullable=True)
+    # ── Company-first CRM + SP stage (v1.5.0, migration 0039) ─────────────────
+    # contact_id: the person at `account_id` this deal is with (account_id
+    # already existed). Several deals may share one account_id — that is the
+    # point. sp_stage: SP1..SP7 key from lead_stage_service's ladder; it drives
+    # the default win % and the SP7 70% floor (deal_rules_service). The legacy
+    # `stage` column (cold/warm/hot/... and closed states) is untouched: it
+    # still carries heat and the won/lost lifecycle everything else reads.
+    contact_id:      Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    sp_stage:        Mapped[str]       = mapped_column(String(40), nullable=True)
+    # Won vs invoiced (migration 0040): "won" = the customer's email / LOI / PO /
+    # agreement was received (won_at, won_basis, won_ref); revenue is recognised
+    # when the tax invoice is raised (invoiced_at, invoice_ref).
+    won_at:          Mapped[datetime]  = mapped_column(Date, nullable=True)
+    won_basis:       Mapped[str]       = mapped_column(String(20), nullable=True)
+    won_ref:         Mapped[str]       = mapped_column(String(120), nullable=True)
+    invoiced_at:     Mapped[datetime]  = mapped_column(Date, nullable=True)
+    invoice_ref:     Mapped[str]       = mapped_column(String(60), nullable=True)
 
 class PipelineTargetChange(Base):
     """Append-only ledger of every target-date / target-note / hold change on a

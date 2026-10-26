@@ -15,10 +15,9 @@ import MeetingDetail from '@/pages/MeetingDetail'
 import Leads from '@/pages/Leads'
 import Contacts from '@/pages/Contacts'
 import CompanyDetail from '@/pages/CompanyDetail'
-import Pipeline from '@/pages/Pipeline'
+import Deals from '@/pages/Deals'
 import Analytics from '@/pages/Analytics'
 import Team from '@/pages/Team'
-import Opportunities from '@/pages/Opportunities'
 import RevenueIntelligence from '@/pages/RevenueIntelligence'
 import RegionalPerformance from '@/pages/RegionalPerformance'
 import ScoringAdmin from '@/pages/ScoringAdmin'
@@ -113,8 +112,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <ProtectedRoute roles={CONTACT_ROLES}><CompanyDetail /></ProtectedRoute>
               } />
               <Route path="leads"         element={<Leads />} />
-              <Route path="pipeline"      element={<Pipeline />} />
-              <Route path="opportunities" element={<Opportunities />} />
+              <Route path="deals"         element={<Deals />} />
+              {/* Old links keep working: Pipeline and Opportunities are now tabs of Deals. */}
+              <Route path="pipeline"      element={<Navigate to="/deals" replace />} />
+              <Route path="opportunities" element={<Navigate to="/deals?tab=health" replace />} />
               <Route path="help"          element={<Help />} />
               <Route path="feedback" element={
                 <ProtectedRoute roles={FEEDBACK_ADMIN_ROLES}>

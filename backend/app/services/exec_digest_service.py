@@ -94,7 +94,10 @@ async def build_digest(db: AsyncSession, user: User, period: str | None = None) 
     ))
     open_deals = (await db.execute(open_q)).scalars().all()
     open_pipeline_value = sum(_deal_value(d) for d in open_deals)
-    weighted_forecast = sum(_deal_value(d) * ((d.ai_closure_pct or 0) / 100) for d in open_deals)
+    # v1.5.0: one forecast definition (rep win % -> SP-stage default -> AI) shared with
+    # Pipeline and Opportunities; this used to use ai_closure_pct alone.
+    from app.services.deal_rules_service import forecast_probability
+    weighted_forecast = sum(_deal_value(d) * ((forecast_probability(d) or 0) / 100) for d in open_deals)
 
     stale_cutoff = datetime.now(timezone.utc) - timedelta(days=STALE_DEAL_DAYS)
     at_risk_deals = sorted(
