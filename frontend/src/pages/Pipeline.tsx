@@ -7,6 +7,7 @@ import CloseDealModal from '@/components/CloseDealModal'
 import PipelineHistory from '@/components/PipelineHistory'
 import DealMomentum from '@/components/DealMomentum'
 import PipelineSheet from '@/components/PipelineSheet'
+import DealForm from '@/components/DealForm'
 import { dealRevenue } from '@/lib/revenue'
 
 // Must match every stage the backend can actually set (pipeline.py's DealIn
@@ -46,15 +47,7 @@ export default function Pipeline() {
   const [stageFilter, setStageFilter] = useState('All')
   const [practiceFilter, setPracticeFilter] = useState('All practices')
   const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState({
-    company: '', stage: 'cold', deal_value: '',
-    closure_eta: '', todays_update: '', next_step: '',
-  })
-  const [addErr, setAddErr] = useState('')
-  const [editId, setEditId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({
-    company: '', stage: 'cold', deal_value: '', closure_eta: '', todays_update: '', next_step: '',
-  })
+    const [editId, setEditId] = useState<string | null>(null)
   const [closingDeal, setClosingDeal] = useState<any | null>(null)
   const [reassigningId, setReassigningId] = useState<string | null>(null)
   const [reassignTo, setReassignTo] = useState('')
@@ -94,53 +87,11 @@ export default function Pipeline() {
     onError: (e: any) => alert(getErrorMessage(e, 'Could not update deal')),
   })
 
-  const addDeal = useMutation({
-    mutationFn: () => api.post('/pipeline', {
-      ...form,
-      deal_value: form.deal_value ? parseFloat(form.deal_value) : undefined,
-      closure_eta: form.closure_eta || undefined,
-    }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pipeline'] })
-      setForm({ company:'', stage:'cold', deal_value:'', closure_eta:'', todays_update:'', next_step:'' })
-      setShowAdd(false); setAddErr('')
-    },
-    onError: (e: any) => setAddErr(getErrorMessage(e, 'Failed to save deal'))
-  })
-
-  const updateDeal = useMutation({
-    mutationFn: (id: string) => api.patch(`/pipeline/${id}`, {
-      company: editForm.company,
-      stage: editForm.stage,
-      deal_value: editForm.deal_value ? parseFloat(editForm.deal_value) : undefined,
-      closure_eta: editForm.closure_eta || undefined,
-      todays_update: editForm.todays_update || undefined,
-      next_step: editForm.next_step || undefined,
-    }),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: ['pipeline'] })
-      qc.invalidateQueries({ queryKey: ['pipeline-history', id] })
-      setEditId(null)
-    },
-    onError: (e: any) => alert(getErrorMessage(e, 'Failed to update deal'))
-  })
-
-  function startEdit(d: any) {
-    setEditId(d.id)
-    setEditForm({
-      company: d.company ?? '',
-      stage: d.stage ?? 'cold',
-      deal_value: d.deal_value ? String(parseFloat(d.deal_value)) : '',
-      closure_eta: d.closure_eta ?? '',
-      todays_update: d.todays_update ?? '',
-      next_step: d.next_step ?? '',
-    })
-  }
-
   // Filtered
   const filtered = (deals as any[]).filter(d => {
     const matchSearch = !search ||
       d.company?.toLowerCase().includes(search.toLowerCase()) ||
+      d.title?.toLowerCase().includes(search.toLowerCase()) ||
       d.todays_update?.toLowerCase().includes(search.toLowerCase())
     const matchStage = stageFilter === 'All' || d.stage === stageFilter
     const matchPractice = practiceFilter === 'All practices' ||
@@ -163,7 +114,7 @@ export default function Pipeline() {
       {/* Header */}
       <div className="flex items-start justify-between mb-5 flex-wrap gap-3">
         <div>
-          <h1 className="font-display font-bold text-xl text-wep-text">📋 Pipeline</h1>
+          <h1 className="font-display font-bold text-xl text-wep-text">📋 Deals</h1>
           <p className="text-wep-muted text-sm">
             {filtered.length} of {(deals as any[]).length} deals
           </p>
@@ -173,13 +124,7 @@ export default function Pipeline() {
             <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
               className={`px-4 min-h-[44px] text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-pink ${view === k ? 'bg-brand-pink text-white' : 'text-wep-muted hover:bg-wep-surface'}`}>{label}</button>))}
         </div>
-        {view === 'cards' && <button onClick={() => {
-          if (showAdd) {
-            setForm({ company:'', stage:'cold', deal_value:'', closure_eta:'', todays_update:'', next_step:'' })
-            setAddErr('')
-          }
-          setShowAdd(v => !v)
-        }} className="btn-primary">
+        {view === 'cards' && <button onClick={() => setShowAdd(v => !v)} className="btn-primary">
           {showAdd ? '✕ Cancel' : '➕ Add Deal'}
         </button>}
       </div>
@@ -187,7 +132,7 @@ export default function Pipeline() {
       {view === 'sheet' ? <PipelineSheet /> : <>
 
       {/* Summary bar */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-5">
         {[
           { label: 'Active Deals',     value: active.length,     sub: 'in progress',  color: '#1E6FD9' },
           { label: 'Pipeline Value',   value: fmt(pipelineVal),  sub: 'active',        color: '#D97706' },
@@ -201,66 +146,24 @@ export default function Pipeline() {
         ))}
       </div>
 
-      {/* Add Deal Form */}
+      {/* Add Deal Form — company/contact first, ARR + One-time mandatory (v1.5.0) */}
       {showAdd && (
         <div className="card mb-5 border-brand-pink/30">
           <h3 className="font-bold text-sm text-wep-text mb-4">📋 New Pipeline Deal</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="form-label block mb-1">Company Name *</label>
-              <input className="form-input" placeholder="e.g. Infosys BPM" required
-                value={form.company} onChange={e => setForm(f => ({ ...f, company: e.target.value }))} />
-            </div>
-            <div>
-              <label className="form-label block mb-1">Stage</label>
-              <select className="form-input" value={form.stage}
-                onChange={e => setForm(f => ({ ...f, stage: e.target.value }))}>
-                {STAGES.filter(s => s !== 'All').map(s => (
-                  <option key={s} value={s}>{stageCfg[s]?.label ?? s}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="form-label block mb-1">Deal Value (₹)</label>
-              <input type="number" className="form-input" placeholder="e.g. 500000"
-                value={form.deal_value} onChange={e => setForm(f => ({ ...f, deal_value: e.target.value }))} />
-            </div>
-            <div>
-              <label className="form-label block mb-1">Expected Closure</label>
-              <input type="date" className="form-input"
-                value={form.closure_eta} onChange={e => setForm(f => ({ ...f, closure_eta: e.target.value }))} />
-            </div>
-            <div className="md:col-span-2">
-              <label className="form-label block mb-1">Today's Update</label>
-              <input className="form-input" placeholder="Brief update on the opportunity"
-                value={form.todays_update} onChange={e => setForm(f => ({ ...f, todays_update: e.target.value }))} />
-            </div>
-            <div className="md:col-span-2">
-              <label className="form-label block mb-1">Next Step</label>
-              <input className="form-input" placeholder="e.g. Send proposal, arrange demo..."
-                value={form.next_step} onChange={e => setForm(f => ({ ...f, next_step: e.target.value }))} />
-            </div>
-          </div>
-          {addErr && <p className="text-red-500 text-xs mt-2">{addErr}</p>}
-          <div className="flex gap-2 mt-4">
-            <button onClick={() => addDeal.mutate()} disabled={!form.company || addDeal.isPending}
-              className="btn-primary">
-              {addDeal.isPending ? '⏳ Saving…' : '✅ Save Deal'}
-            </button>
-          </div>
+          <DealForm onSaved={() => setShowAdd(false)} onCancel={() => setShowAdd(false)} />
         </div>
       )}
 
       {/* Filters */}
       <div className="flex gap-2 mb-4 flex-wrap">
         <input type="search" className="form-input py-2 text-sm flex-1 min-w-[180px]"
-          placeholder="🔍 Search company or update…"
+          placeholder="🔍 Search company, deal or update…"
           value={search} onChange={e => setSearch(e.target.value)} />
-        <select className="form-input py-2 text-sm w-32"
+        <select className="form-input py-2 text-sm w-full sm:w-32"
           value={stageFilter} onChange={e => setStageFilter(e.target.value)}>
           {STAGES.map(s => <option key={s} value={s}>{s === 'All' ? '📊 All Stages' : (stageCfg[s]?.label ?? s)}</option>)}
         </select>
-        <select className="form-input py-2 text-sm w-44"
+        <select className="form-input py-2 text-sm w-full sm:w-44"
           value={practiceFilter} onChange={e => setPracticeFilter(e.target.value)}>
           {PRACTICES.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
@@ -292,59 +195,32 @@ export default function Pipeline() {
             return (
               <div key={d.id} className="card hover:border-wep-border-strong transition-all">
                 {isEditing ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="form-label block mb-1">Company</label>
-                      <input className="form-input" value={editForm.company}
-                        onChange={e => setEditForm(f => ({ ...f, company: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className="form-label block mb-1">Stage</label>
-                      <select className="form-input" value={editForm.stage}
-                        onChange={e => setEditForm(f => ({ ...f, stage: e.target.value }))}>
-                        {STAGES.filter(s => s !== 'All').map(s => (
-                          <option key={s} value={s}>{stageCfg[s]?.label ?? s}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="form-label block mb-1">Deal Value (₹)</label>
-                      <input type="number" className="form-input" value={editForm.deal_value}
-                        onChange={e => setEditForm(f => ({ ...f, deal_value: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className="form-label block mb-1">Expected Closure</label>
-                      <input type="date" className="form-input" value={editForm.closure_eta}
-                        onChange={e => setEditForm(f => ({ ...f, closure_eta: e.target.value }))} />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="form-label block mb-1">Today's Update</label>
-                      <input className="form-input" value={editForm.todays_update}
-                        onChange={e => setEditForm(f => ({ ...f, todays_update: e.target.value }))} />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="form-label block mb-1">Next Step</label>
-                      <input className="form-input" value={editForm.next_step}
-                        onChange={e => setEditForm(f => ({ ...f, next_step: e.target.value }))} />
-                    </div>
+                  <div className="space-y-4">
+                    <DealForm deal={d} onSaved={() => { qc.invalidateQueries({ queryKey: ['pipeline-history', d.id] }); setEditId(null) }} onCancel={() => setEditId(null)} />
                     <PipelineHistory dealId={d.id} />
                     <DealMomentum dealId={d.id} />
-                    <div className="md:col-span-2 flex gap-2">
-                      <button onClick={() => updateDeal.mutate(d.id)} disabled={updateDeal.isPending}
-                        className="btn-primary text-sm py-1.5">
-                        {updateDeal.isPending ? '⏳ Saving…' : '✅ Save'}
-                      </button>
-                      <button onClick={() => setEditId(null)} className="btn-outline text-sm py-1.5">Cancel</button>
-                    </div>
                   </div>
                 ) : (
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="flex-1 min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                  <div className="flex-1 min-w-0 w-full">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <div className="font-semibold text-wep-text">{d.company}</div>
+                      <div className="font-semibold text-wep-text">{d.company}{d.title && <span className="font-normal text-wep-muted"> · {d.title}</span>}</div>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${cfg.color}`}>
                         {cfg.label}
                       </span>
+                      {d.sp_stage_label && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">{d.sp_stage_label}</span>
+                      )}
+                      {d.forecast_category_label && d.stage !== 'closed_won' && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700" title="Forecast category, from the SP stage">{d.forecast_category_label}</span>
+                      )}
+                      {['high', 'critical'].includes(d.risk_level) && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-600" title="Deal risk (see Health & risk)">⚠ {d.risk_level} risk</span>
+                      )}
+                      {d.needs_revenue_split && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700"
+                          title="ARR and One-time are required — open Edit to add them">⚠️ Add ARR / One-time</span>
+                      )}
                       {d.source === 'service_delivery' && (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-600"
                           title="This deal came from a Service Delivery signal">
@@ -376,6 +252,8 @@ export default function Pipeline() {
                     <div className="text-xs text-wep-muted">
                       {d.closure_eta && `ETA: ${d.closure_eta} · `}
                       {dealRevenue(d) > 0 && <strong className="text-wep-text">{fmt(dealRevenue(d))}</strong>}
+                      {(d.recurring_revenue != null || d.one_time_revenue != null) &&
+                        <span> (ARR {fmt(Number(d.recurring_revenue || 0))} + One-time {fmt(Number(d.one_time_revenue || 0))})</span>}
                     </div>
                     {d.todays_update && (
                       <div className="text-xs text-wep-muted mt-1 truncate">{d.todays_update}</div>
@@ -386,29 +264,29 @@ export default function Pipeline() {
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    {d.ai_closure_pct != null && (
-                      <div className="text-right">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 sm:justify-end sm:max-w-[46%]">
+                    {d.forecast_probability != null && (
+                      <div className="text-left sm:text-right mr-auto sm:mr-0 min-w-[64px]">
                         <div className="font-display font-bold text-lg"
-                          style={{ color: d.ai_closure_pct >= 70 ? '#059669' : d.ai_closure_pct >= 40 ? '#D97706' : '#9CA3AF' }}>
-                          {d.ai_closure_pct}%
+                          style={{ color: d.forecast_probability >= 70 ? '#059669' : d.forecast_probability >= 40 ? '#D97706' : '#9CA3AF' }}>
+                          {d.forecast_probability}%
                         </div>
-                        <div className="text-[10px] text-wep-muted">closure prob.</div>
+                        <div className="text-[10px] text-wep-muted">win prob.</div>
                       </div>
                     )}
-                    <button onClick={() => startEdit(d)}
-                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
+                    <button onClick={() => setEditId(d.id)}
+                      className="text-xs font-semibold px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
                       ✏️ Edit
                     </button>
                     {canReassign && (
                       <button onClick={() => { setReassigningId(reassigningId === d.id ? null : d.id); setReassignTo('') }}
-                        className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
+                        className="text-xs font-semibold px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 rounded-lg bg-wep-surface text-wep-navy hover:bg-wep-border/60">
                         🔀 Reassign
                       </button>
                     )}
                     {!['closed_won','closed_lost','on_hold','dropped'].includes(d.stage) && (
                       <button onClick={() => setClosingDeal(d)}
-                        className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white hover:opacity-90"
+                        className="text-xs font-semibold px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 rounded-lg text-white hover:opacity-90"
                         style={{ background: 'linear-gradient(135deg,#92278E,#5B1A6E)' }}>
                         🏁 Close
                       </button>
@@ -421,7 +299,7 @@ export default function Pipeline() {
                           if (!window.confirm(`${verb} the deal "${d.company}"? ${d.archived ? 'It will reappear in normal views.' : 'It will be hidden from Pipeline/Opportunities but never deleted — you can unarchive it any time.'}`)) return
                           archiveDeal.mutate({ id: d.id, archive: !d.archived })
                         }}
-                        className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-wep-surface text-wep-muted hover:bg-wep-border/60 disabled:opacity-40">
+                        className="text-xs font-semibold px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 rounded-lg bg-wep-surface text-wep-muted hover:bg-wep-border/60 disabled:opacity-40">
                         {d.archived ? '♻️ Unarchive' : '🗄️ Archive'}
                       </button>
                     )}

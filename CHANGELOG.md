@@ -10,6 +10,100 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.0] — 2026-10-26
+
+One Deals workspace, a qualified hand-off from Lead to Deal, and a weak-areas view for
+business leaders — from Amit's 26 Oct decisions: leads convert after SP4 and deals run
+SP5 → SP7 → Won; Pipeline and Opportunities merge into one Deals menu; parallel deals on
+one company are warned about and allowed; for incentives an Order Booking (Won) is
+enough, and Finance is told to invoice in the separate ERP.
+
+**Added**
+- **One "Deals" menu** (`/deals`) with tabs Deals · Health & risk · Weak areas & actions.
+  Pipeline and Opportunities were the same table on two menus; `/pipeline` and
+  `/opportunities` still work and redirect. Each tab loads only when opened.
+- **Lead → Deal gate (configurable):** a lead converts once it reaches SP4 (config
+  `convert_min_stage`); the deal opens at SP5 or the lead's own later stage. Hold /
+  closed leads cannot convert. Converting early is possible with a recorded reason
+  (audited) — friction with accountability, not a dead end for presales / inside sales.
+- **New deals start at SP5+** (`new_deal_min_stage`); earlier stages are worked as a Lead.
+  "Start earlier" needs a reason. Existing deals at SP1–SP4 are untouched.
+- **Duplicate alert (alert-and-allow):** `GET /api/pipeline/duplicates` shows open deals
+  and leads already on the company (and same-contact matches) on the lead, deal and
+  convert forms. Money is shown only for deals the user may see. Never blocks.
+- **Deal name** (`pipeline.title`, migration 0041) to tell parallel deals apart; searchable.
+- **Forecast category** (Pipeline / Best case / Commit / Closed) derived from the SP stage,
+  configurable; shown on deal cards. High/critical risk badge on deal cards.
+- **Weak-areas radar** (`GET /api/deal-insights`, rules-based, no AI calls): past-date and
+  stalled deals, no next step, missing ARR/One-time, proposal-stage deals with no presales
+  owner, SP6+ with no decision maker, concentration risk, qualified leads not converted,
+  stale early leads, renewals due, won-awaiting-invoice-date; pipeline by stage and
+  forecast category; owner table (most attention first); "My actions today" for each rep and
+  a presales queue. Scoped by the same visibility as the Pipeline list; thresholds in
+  `feature_flags` → `deal_rules.radar`.
+- **Finance notice on Won:** when a deal is marked Won, active Finance users are emailed
+  the order details (customer, ARR, One-time, sign-off basis/reference) to invoice in the
+  ERP (config `notify_finance_on_won`). Falls back to a log line without SMTP.
+
+**Changed**
+- Incentives stay on Order Booking (Won); invoice date is optional and informational. The
+  existing revenue / FGA / scheme reports are unchanged.
+- Backfill script gains `--create` (see 1.5.0 notes) — unchanged in this release.
+
+**Tests:** 36 new (`test_deals_v160.py`); backend 343 passing; frontend tsc + build clean.
+
+**Deploy:** migration 0041 is additive (nullable column). Rollback: `scripts/rollback.sh`.
+
+---
+
+## [1.5.0] — 2026-10-26
+
+Company-first CRM, mandatory ARR / One-time with SP-stage win probability, trend
+reports, and a mobile pass — from Amit's 26 Oct review: "once a contact company
+is added, it should be connected to leads, deals, pipeline… any new lead, deal
+should start with contact creation… 2 or 3 deals can run in a single customer…
+fix the mobile version… ARR and One-time mandatory… negotiation stage minimum
+70% win probability… weekly, monthly, quarterly, annually, last 3 years trends".
+
+**Added**
+- Company → contact first: new leads and deals are created against a Company and
+  a Contact from the Contacts master (add either on the spot). `leads.account_id`,
+  `leads.contact_id`, `pipeline.contact_id`, `pipeline.sp_stage` (migration 0039,
+  additive, nullable). Many deals per company is simply many deals sharing an
+  `account_id`. Legacy `company` / `contact_name` text is filled from the master so
+  every older screen and export still works. Meeting → lead carries the account.
+- ARR and One-time are both required on a live deal (0 is valid, both 0 is not);
+  `deal_value` is kept in sync as ARR + One-time. Lost / dropped / on-hold deals
+  can still be closed without them.
+- Win probability follows the SP ladder SP1 → SP7 → **Won** (defaults 5 / 10 / 20 /
+  30 / 45 / 60 / 75 / 100) and can never be below the stage floor — SP7 Negotiation
+  ≥ 70%. Rules live in the `deal_rules` feature flag (no redeploy to tune),
+  defaults in `deal_rules_service`. `GET /api/pipeline/rules`.
+- **Won vs revenue** (migration 0040): a deal is Won only with the customer's
+  email / LOI / PO / agreement on record (`won_basis`, `won_at`, `won_ref`);
+  revenue is recognised when the tax invoice is raised (`invoiced_at`,
+  `invoice_ref`). SP "Won" and the closed_won status are kept in step. Trends
+  show Won (booked), Invoiced revenue and Won-not-invoiced separately. Existing
+  revenue / FGA / incentive reports are NOT changed (compensation-linked — needs
+  sign-off before they switch to invoice date).
+- Convert-lead-to-deal modal (company/contact, SP stage, ARR, One-time, win %).
+- Trends: `GET /api/trends` and `/api/trends/export.csv` — weekly, monthly,
+  quarterly, yearly (India FY) and last 3 years: meetings, leads, lead→deal
+  conversion, deals added, wins, ARR / One-time / total won, win rate, average
+  deal size. UI on Reports and Analytics.
+- `scripts/backfill_company_links.py` — dry-run report that links old free-text
+  records to companies only on an unambiguous exact match.
+
+**Changed**
+- One weighted-forecast probability (rep's win % → SP-stage default → AI score)
+  used by Pipeline, Opportunities and the Executive Digest (previously three
+  different formulas).
+- `PATCH /pipeline/{id}` applies only the fields sent (an omitted stage no longer
+  resets to "cold") and checks the rules on the merged record.
+- Mobile: bottom bar is role-aware (4 tabs + **More** sheet listing every section
+  incl. DSR Approvals, Team, Reports, Leads, Opportunities); deal cards stack on
+  phones; larger tap targets on deal actions and DSR Approve / Reject.
+
 ## [1.4.7] — 2026-10-25
 
 Leads SPANCO stage ladder + Kanban board, and a config-driven feature-flag
@@ -125,6 +219,10 @@ Design locked with Amit over this session: up to **5 scoring parameters per role
 ## [1.4.4] — 2026-10-23
 
 Follow-up to your live review of v1.4.3 ("opportunities should show fluidpro, analytics should be meaningful and there is no report section still").
+
+### Added (company backfill)
+- `scripts/backfill_company_links.py --create`: creates Companies and Contacts in the Contacts master from the company / contact names already typed on existing leads and deals, then links them. Created contacts are flagged incomplete (appear under Contacts → Needs details); companies are editable via Edit company. Near-duplicates (e.g. Sunpack Group / Systems / Solutions) are listed for review, never auto-merged. Dry-run unless `--apply`.
+- `app/services/company_backfill_service.py` + 7 tests.
 
 ### Fixed
 - **Frontend revenue sums missed by the v1.4.3 fix.** The backend-side ARR/One-time revenue fix (Revenue Intelligence, FGA, incentives, funnel, Win-Loss widget) didn't cover two screens that compute their own totals client-side from the raw deal rows: Opportunities' portfolio summary (Open Pipeline / Weighted Forecast / Won cards) and Pipeline's Cards view (Won/Open totals, per-card value). Both were silently summing only the legacy `deal_value` field. Fixed with a shared `dealRevenue()` helper (`frontend/src/lib/revenue.ts`) mirroring the backend's `amounts()` fallback exactly, used in both files.

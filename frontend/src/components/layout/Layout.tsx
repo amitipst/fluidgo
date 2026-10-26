@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { APP_VERSION } from '@/version'
@@ -24,8 +25,7 @@ const NAV_CORE = [
   { to: '/meetings',      icon: '🤝', label: 'Meetings'                },
   { to: '/contacts',      icon: '📇', label: 'Contacts',                 noHrFinance: true },
   { to: '/leads',         icon: '🎯', label: 'Leads',                    salesOnly: true },
-  { to: '/pipeline',      icon: '📊', label: 'Pipeline',                 salesOnly: true },
-  { to: '/opportunities', icon: '🧭', label: 'Opportunities',            salesOnly: true },
+  { to: '/deals',         icon: '📊', label: 'Deals',                    salesOnly: true },
   { to: '/analytics',     icon: '📈', label: 'Analytics',                salesOnly: true },
   { to: '/gamification',  icon: '🎮', label: 'My Schemes',               salesOnly: true },
 ]
@@ -136,6 +136,7 @@ function NavSection({ label }: { label: string }) {
 export default function Layout() {
   const { user, clearAuth } = useAuthStore()
   const navigate = useNavigate()
+  const [moreOpen, setMoreOpen] = useState(false)
 
   const canSeeTeam    = ['manager','regional_manager','bu_head','inside_sales','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
   const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
@@ -195,6 +196,47 @@ export default function Layout() {
     if (n.to === '/gamification' && canSeeTeam) return false
     return true
   })
+
+  // ── Mobile nav (v1.5.0) ─────────────────────────────────────────────────────
+  // The bottom bar used to show only the first 5 core links (Dashboard, DSR,
+  // DSR Log, Meetings, Contacts), so Leads/Pipeline/Opportunities/Analytics and
+  // every manager screen — DSR Approvals, Team, Reports, FGA — were unreachable
+  // on a phone. Now: up to 4 role-aware primary tabs + a "More" sheet that lists
+  // everything the desktop sidebar does.
+  type MItem = { to: string; icon: string; label: string; badge?: number; exact?: boolean }
+  const core = (to: string) => coreNav.find(n => n.to === to) as MItem | undefined
+  const mobilePrimary: MItem[] = isGovernance ? [NAV_GOVERNANCE, NAV_MEETINGS_GOV] : [
+    core('/'),
+    isFieldRole ? core('/dsr') : undefined,
+    isDsrManager ? { ...NAV_DSR_APPROVALS, badge: dsrEditRequestCount } : undefined,
+    core('/meetings'),
+    core('/deals'),
+  ].filter(Boolean).slice(0, 4) as MItem[]
+  const primaryKeys = new Set(mobilePrimary.map(i => i.to))
+  const mobileSections: { title: string; items: MItem[] }[] = isGovernance ? [] : [
+    { title: 'My work', items: coreNav as MItem[] },
+    ...(isSDM ? [{ title: 'Service Delivery', items: [
+      { to: '/dor', icon: '🛠️', label: 'Daily Ops Report' }, { to: '/kpi-entry', icon: '📋', label: 'Monthly KPI Entry' }] }] : []),
+    { title: 'Management', items: [
+      canSeeFeedbackInbox && NAV_EXEC_DIGEST,
+      canSeeTeam && NAV_MANAGER[0],
+      canSeeRevenue && NAV_MANAGER[1],
+      ['business_head', 'ceo', 'super_admin'].includes(user?.role ?? '') && NAV_MANAGER[2],
+      canSeeTeam && NAV_MANAGER[3],
+      canSeeRevenue && NAV_MANAGER[4],
+      isDsrManager && { ...NAV_DSR_APPROVALS, badge: dsrEditRequestCount },
+      canSeeFGA && NAV_FGA,
+      canEnterCompanyKPI && { to: '/company-kpi-entry', icon: '🏢', label: 'Company KPI Entry' },
+      canSeeFGA && NAV_SCHEME_WINNERS,
+      canSeeActivityLogs && NAV_ACTIVITY_LOGS,
+      canSeeFeedbackInbox && { ...NAV_FEEDBACK, badge: feedbackPendingCount },
+    ].filter(Boolean) as MItem[] },
+    { title: 'Admin', items: [
+      canSeeScoring && NAV_SCORING,
+      user?.role === 'super_admin' && NAV_HEALTH,
+    ].filter(Boolean) as MItem[] },
+  ].filter(sec => sec.items.length > 0)
+  const moreBadge = mobileSections.flatMap(sec => sec.items).filter(i => !primaryKeys.has(i.to)).reduce((n, i) => n + (i.badge ?? 0), 0)
 
   const initials = user?.name?.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() ?? '?'
 
@@ -396,17 +438,60 @@ export default function Layout() {
       ══════════════════════════════════════════════════════════════ */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-wep-border flex overflow-x-auto z-40"
         style={{ boxShadow: '0 -2px 16px rgba(26,11,46,0.10)' }}>
-        {(isGovernance ? [NAV_GOVERNANCE, NAV_MEETINGS_GOV] : coreNav.slice(0, 5)).map(item => (
+        {mobilePrimary.map(item => (
           <NavLink key={item.to} to={item.to} end={'exact' in item ? (item as any).exact : undefined}
             className={({ isActive }) =>
-              `flex-1 min-w-[60px] shrink-0 flex flex-col items-center py-2 gap-0.5 text-[10px] font-medium transition-colors
+              `flex-1 min-w-[60px] shrink-0 flex flex-col items-center py-2 gap-0.5 text-[10px] font-medium transition-colors relative
                ${isActive ? 'text-brand-pink' : 'text-wep-muted'}`
             }>
             <span className="text-[18px] leading-none">{item.icon}</span>
             <span className="truncate w-full text-center">{item.label}</span>
+            {!!item.badge && item.badge > 0 && (
+              <span className="absolute top-1 right-[22%] min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center bg-brand-pink">{item.badge > 9 ? '9+' : item.badge}</span>
+            )}
           </NavLink>
         ))}
+        {!isGovernance && (
+          <button type="button" onClick={() => setMoreOpen(true)} aria-haspopup="dialog" aria-label="More menu"
+            className="flex-1 min-w-[60px] shrink-0 flex flex-col items-center py-2 gap-0.5 text-[10px] font-medium text-wep-muted relative">
+            <span className="text-[18px] leading-none">☰</span>
+            <span>More</span>
+            {moreBadge > 0 && <span className="absolute top-1 right-[22%] min-w-[16px] h-4 px-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center bg-brand-pink">{moreBadge > 9 ? '9+' : moreBadge}</span>}
+          </button>
+        )}
       </nav>
+
+      {moreOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex items-end bg-wep-navy/50" onClick={() => setMoreOpen(false)}>
+          <div role="dialog" aria-modal="true" aria-label="All sections" onClick={e => e.stopPropagation()}
+            className="bg-white w-full rounded-t-2xl max-h-[85vh] overflow-y-auto pb-6">
+            <div className="sticky top-0 bg-white flex items-center justify-between px-5 pt-4 pb-2">
+              <div className="font-bold text-wep-text">All sections</div>
+              <button type="button" onClick={() => setMoreOpen(false)} className="min-h-[44px] min-w-[44px] text-wep-muted text-xl" aria-label="Close">✕</button>
+            </div>
+            {mobileSections.map(sec => (
+              <div key={sec.title} className="px-4 pt-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-wep-muted px-1 pb-1.5">{sec.title}</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {sec.items.map(item => (
+                    <NavLink key={item.to} to={item.to} end={item.exact} onClick={() => setMoreOpen(false)}
+                      className={({ isActive }) => `relative flex flex-col items-center justify-center gap-1 rounded-xl border min-h-[72px] px-1 py-2 text-center text-[11px] font-medium ${isActive ? 'border-brand-pink text-brand-pink bg-brand-pink/5' : 'border-wep-border text-wep-text'}`}>
+                      <span className="text-xl leading-none">{item.icon}</span>
+                      <span className="leading-tight">{item.label}</span>
+                      {!!item.badge && item.badge > 0 && <span className="absolute top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center bg-brand-pink">{item.badge > 9 ? '9+' : item.badge}</span>}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="px-4 pt-4 flex gap-2">
+              <NavLink to="/help" onClick={() => setMoreOpen(false)} className="btn-outline flex-1 text-center min-h-[44px] flex items-center justify-center">❔ Help</NavLink>
+              <button type="button" onClick={() => { setMoreOpen(false); clearAuth(); navigate('/login') }} className="btn-outline flex-1 min-h-[44px]">↩ Sign out</button>
+            </div>
+            <div className="text-center text-[10px] text-wep-light pt-3">v{APP_VERSION}</div>
+          </div>
+        </div>
+      )}
 
       {/* Global feedback capture — every logged-in role, every screen */}
       <FeedbackWidget />

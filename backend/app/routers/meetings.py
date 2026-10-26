@@ -261,6 +261,7 @@ async def convert_meeting_to_lead(
         user_id=user.id,
         date=date.today(),
         company=m.company,
+        account_id=m.account_id,   # v1.5.0: carry the Contacts-master link forward
         contact_name=m.contact_name,
         requirement=body.requirement or m.discussion or m.support_needed,
         source=src if src in ("Call", "Visit", "Referral", "LinkedIn", "Email") else "Call",

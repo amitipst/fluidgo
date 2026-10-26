@@ -113,16 +113,16 @@ function DSRCard({ dsr, canApprove, onApprove, showRequestEdit, onRequestEdit, o
         {canApprove && dsr.approval_status === 'submitted' && onApprove && (
           <>
             <button onClick={() => onApprove(dsr.id, 'approve', comment || undefined)}
-              className="text-xs font-bold px-3 py-1.5 rounded-lg text-white"
+              className="text-sm sm:text-xs font-bold px-4 sm:px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 rounded-lg text-white"
               style={{ background: '#059669' }}>
               ✅ Approve
             </button>
             <button onClick={() => onApprove(dsr.id, 'reject', comment || 'Please review and resubmit')}
-              className="text-xs font-bold px-3 py-1.5 rounded-lg text-white"
+              className="text-sm sm:text-xs font-bold px-4 sm:px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 rounded-lg text-white"
               style={{ background: '#DC2626' }}>
               ↩ Reject
             </button>
-            <input className="form-input py-1 text-xs flex-1 min-w-[150px]"
+            <input className="form-input py-1 text-sm sm:text-xs flex-1 min-w-[150px] min-h-[44px] sm:min-h-0"
               placeholder="Comment (optional)"
               value={comment} onChange={e => setComment(e.target.value)} />
           </>
@@ -159,7 +159,7 @@ function DSRCard({ dsr, canApprove, onApprove, showRequestEdit, onRequestEdit, o
         {/* Manager: grant a pending request */}
         {canApprove && dsr.edit_requested_at && onGrant && (
           <button onClick={() => onGrant(dsr.id)}
-            className="text-xs font-bold px-3 py-1.5 rounded-lg text-white"
+            className="text-sm sm:text-xs font-bold px-4 sm:px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 rounded-lg text-white"
             style={{ background: '#0D9488' }}>
             🔓 Grant 24h Edit
           </button>
