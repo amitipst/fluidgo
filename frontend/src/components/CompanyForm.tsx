@@ -16,15 +16,15 @@ export type Company = {
 
 /** Create or edit a company (account) incl. a global address. Website is optional
  * but live-checked (advisory). A duplicate name offers the existing company. */
-export default function CompanyForm({ initial, onSaved, onCancel }: {
-  initial?: Company; onSaved: (c: Company) => void; onCancel: () => void
+export default function CompanyForm({ initial, prefillName, onSaved, onCancel }: {
+  initial?: Company; prefillName?: string; onSaved: (c: Company) => void; onCancel: () => void
 }) {
   const qc = useQueryClient()
   const { data: geo } = useGeo()
   const web = useWebsiteCheck()
   const editing = !!initial
   const [f, setF] = useState({
-    name: initial?.name ?? '', industry: initial?.industry ?? '', website: initial?.website ?? '',
+    name: initial?.name ?? prefillName ?? '', industry: initial?.industry ?? '', website: initial?.website ?? '',
     address_line1: initial?.address_line1 ?? '', address_line2: initial?.address_line2 ?? '',
     city: initial?.city ?? '', state: initial?.state ?? '', country: initial?.country ?? 'IN',
     postal_code: initial?.postal_code ?? '',

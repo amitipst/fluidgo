@@ -15,11 +15,13 @@ export const emptyCompanyContact: CompanyContact = { accountId: '', accountName:
 /** Company-first picker (v1.5.0): every lead and deal starts here. Pick the
  * company, then the person; either can be added on the spot so nobody has to
  * leave the form. The chosen pair links the record to the Contacts master. */
-export default function CompanyContactPicker({ value, onChange, disabled }: {
+export default function CompanyContactPicker({ value, onChange, disabled, suggestName }: {
   value: CompanyContact; onChange: (v: CompanyContact) => void; disabled?: boolean
+  /** Customer name already on the record (legacy deal/lead): pre-fills the search and the Add-company form. */
+  suggestName?: string
 }) {
-  const [q, setQ] = useState('')
-  const [dq, setDq] = useState('')
+  const [q, setQ] = useState(suggestName ?? '')
+  const [dq, setDq] = useState((suggestName ?? '').trim())
   const [addCompany, setAddCompany] = useState(false)
   const [addContact, setAddContact] = useState(false)
   useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 250); return () => clearTimeout(t) }, [q])
@@ -92,7 +94,7 @@ export default function CompanyContactPicker({ value, onChange, disabled }: {
 
       {addCompany && (
         <Modal title="Add company" subtitle="Saved once — then used for leads, deals and meetings." onClose={() => setAddCompany(false)}>
-          <CompanyForm onSaved={c => { setAddCompany(false); pickCompany(c) }} onCancel={() => setAddCompany(false)} />
+          <CompanyForm prefillName={(q || suggestName || '').trim() || undefined} onSaved={c => { setAddCompany(false); pickCompany(c) }} onCancel={() => setAddCompany(false)} />
         </Modal>
       )}
       {addContact && value.accountId && (

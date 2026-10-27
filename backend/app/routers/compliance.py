@@ -13,6 +13,7 @@ from typing import Literal
 import csv
 import io
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import User
 from app.services.deps import get_current_user, require_level
 from app.services.permission_service import resolve_visible_user_ids
@@ -36,7 +37,7 @@ async def compliance_summary(
     return await compute_compliance(db, visible, period, report_type)
 
 
-@router.get("/export")
+@router.get("/export", dependencies=[Depends(export_guard("Compliance export", allow_governance=True))])
 async def compliance_export(
     period: str,
     report_type: Literal["dsr", "dor", "all"] = "all",

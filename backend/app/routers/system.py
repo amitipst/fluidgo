@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import csv, io, json
 
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import User, DSRDaily, AuditLog, role_level
 from app.services.deps import get_current_user
 
@@ -130,7 +131,7 @@ async def audit_trail(
         for r in rows
     ]
 
-@router.get("/audit/download")
+@router.get("/audit/download", dependencies=[Depends(export_guard("Audit log download", restrict=False))])
 async def download_audit_csv(
     date_from:   Optional[str] = Query(None),
     date_to:     Optional[str] = Query(None),

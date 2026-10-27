@@ -6,10 +6,12 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import User, DSRDaily, SelfScore
 from app.services.deps import get_current_user, require_level, deny_governance
 from app.services.rigor_service import calculate_rigor_score, rigor_label
 from app.services.audit_service import audit
+from app.services import dsr_routing_service as routing
 
 router = APIRouter()
 
@@ -195,6 +197,7 @@ async def submit_dsr(
             raise HTTPException(status_code=400, detail=lock["message"])
 
     is_update = bool(dsr)
+    prev_status = dsr.approval_status if dsr else None
     payload   = body.model_dump(exclude={"self_scores"})
     payload["dsr_type"]        = dsr_type
     payload["approval_status"] = "submitted"   # reset to submitted on any edit
@@ -225,6 +228,17 @@ async def submit_dsr(
         f"DSR {action.lower()}d for {body.date} — rigor={rigor}, status=submitted",
         request=request
     )
+
+    # v1.6.3: tell the reporting manager (and optionally the business head) a DSR is waiting.
+    if routing.should_notify(is_update, prev_status):
+        try:
+            to, cc = await routing.resolve_recipients(db, user, await routing.get_config(db))
+            if to:
+                from app.services.email_service import send_email
+                subj, html, text = routing.build_notice(user.name, body.date, rigor, prev_status == "rejected")
+                background_tasks.add_task(send_email, to, subj, html, text, cc or None)
+        except Exception:
+            pass   # a notification problem must never block a DSR submission
 
     is_backfill = body.date != today
     return {
@@ -394,7 +408,7 @@ async def get_pending_approvals(
 # DSRHistory.tsx had zero export code). One row per DSR entry for the
 # scoped team in a month — same scoping (resolve_visible_user_ids) and the
 # same blob-download pattern already proven in FGAApproval.tsx's CSV export.
-@router.get("/team/export")
+@router.get("/team/export", dependencies=[Depends(export_guard("Team DSR export"))])
 async def export_team_dsr(
     month: str,   # "2026-07"
     scope: Optional[str] = None,

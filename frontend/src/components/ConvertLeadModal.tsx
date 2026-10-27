@@ -68,7 +68,7 @@ export default function ConvertLeadModal({ lead, onClose, onDone }: {
             <b>This lead hasn’t been qualified yet.</b> Leads normally convert once they reach {rules?.stages.find(s => s.key === rules.convert_min_stage)?.label}. You can still convert it — say why, and it is logged.
             <input className="form-input mt-2" aria-label="Reason for converting early" placeholder="Reason (e.g. customer issued PO directly)" value={f.reason} onChange={e => setF(p => ({ ...p, reason: e.target.value }))} />
           </div>)}
-        <CompanyContactPicker value={cc} onChange={setCc} />
+        <CompanyContactPicker value={cc} onChange={setCc} suggestName={lead.company} />
         <DuplicateAlert accountId={cc.accountId} contactId={cc.contactId} />
         <div>
           <label className="form-label block mb-1" htmlFor="cl-title">Deal name</label>

@@ -8,6 +8,7 @@ import uuid
 from app.services import deal_rules_service as rules_svc
 from app.services.booking_date import won_date_col, won_date_of
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import User, DSRDaily, PipelineDeal, RevenueTarget
 from app.services.deps import get_current_user, require_role, deny_governance, require_level
 from app.services.rigor_service import calculate_rigor_score, calculate_avg_rigor, rigor_label
@@ -706,7 +707,7 @@ async def performance_comparison(
     }
 
 
-@router.get("/performance/export")
+@router.get("/performance/export", dependencies=[Depends(export_guard("Performance export"))])
 async def export_performance(
     period: str,   # "2026-07"
     db: AsyncSession = Depends(get_db),

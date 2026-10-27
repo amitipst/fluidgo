@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.booking_date import won_date_col, won_date_of
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import User, PipelineDeal, DSRDaily, RevenueTarget, role_level
 from app.services.deps import get_current_user, deny_governance, require_any_manager
 from app.services.permission_service import resolve_visible_user_ids
@@ -67,7 +68,7 @@ async def _visible_reps(db: AsyncSession, user: User) -> list[User]:
     return list((await db.execute(q)).scalars().all())
 
 
-@router.get("/revenue-vs-target.csv")
+@router.get("/revenue-vs-target.csv", dependencies=[Depends(export_guard("Revenue vs target CSV"))])
 async def export_revenue_vs_target(
     granularity: str = "monthly", periods: int = 6,
     db: AsyncSession = Depends(get_db), user: User = Depends(require_any_manager),
@@ -155,7 +156,7 @@ async def export_revenue_vs_target(
     return _csv_response(rows, f"revenue_vs_target_{granularity}.csv")
 
 
-@router.get("/rigor-trend.csv")
+@router.get("/rigor-trend.csv", dependencies=[Depends(export_guard("Rigor trend CSV"))])
 async def export_rigor_trend(
     granularity: str = "weekly", periods: int = 8,
     db: AsyncSession = Depends(get_db), user: User = Depends(require_any_manager),
@@ -197,7 +198,7 @@ async def export_rigor_trend(
     return _csv_response(rows, f"rigor_trend_{granularity}.csv")
 
 
-@router.get("/win-loss.csv")
+@router.get("/win-loss.csv", dependencies=[Depends(export_guard("Win-loss CSV"))])
 async def export_win_loss(
     include_seed: bool = False,
     db: AsyncSession = Depends(get_db), user: User = Depends(require_any_manager),

@@ -19,6 +19,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import User, Meeting, Lead, PipelineDeal
 from app.services import trend_service as ts
 from app.services.deps import get_current_user, deny_governance
@@ -71,7 +72,7 @@ async def get_trends(granularity: str = Query("monthly"), periods: Optional[int]
     return await _compute(db, user, granularity, periods)
 
 
-@router.get("/export.csv")
+@router.get("/export.csv", dependencies=[Depends(export_guard("Trends CSV"))])
 async def export_trends_csv(granularity: str = Query("monthly"), periods: Optional[int] = Query(None, ge=1),
                             db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     data = await _compute(db, user, granularity, periods)

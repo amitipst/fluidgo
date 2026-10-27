@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import User, role_level
 from app.services.deps import get_current_user, require_level, deny_governance
 from app.services.permission_service import resolve_visible_user_ids
@@ -307,7 +308,7 @@ async def vp_approve(result_id: str, body: ReviewAction,
 # 6. Export approved scores (Finance / HR / BU level)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/export")
+@router.get("/export", dependencies=[Depends(export_guard("FGA scores export"))])
 async def export_approved(
     period: str,
     status: Literal["approved", "pending", "disputed", "all"] = "approved",

@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Optional, Literal
 import uuid
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.models import PipelineDeal, User, role_level, PipelineUpdate, PipelineTargetChange
 from app.services.deps import get_current_user, deny_governance
 from app.services.audit_service import audit
@@ -949,7 +950,7 @@ async def pipeline_sheet(include_closed: bool = True, include_seed: bool = False
     return await _sheet_data(db, user, include_closed, include_seed, rep_id)
 
 
-@router.get("/sheet.xlsx")
+@router.get("/sheet.xlsx", dependencies=[Depends(export_guard("Pipeline sheet (xlsx)"))])
 async def pipeline_sheet_xlsx(include_closed: bool = True, include_seed: bool = False, rep_id: Optional[str] = None,
                               db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     from fastapi.responses import Response
