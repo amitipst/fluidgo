@@ -126,10 +126,10 @@ def test_wins_revenue_split_win_rate_and_average():
         deal("warm", arr=100_000, once=0),                                   # open: not a win
     ]
     octo = t.build_trends("monthly", MON, 1, meetings=[], leads=[], deals=deals)["series"][0]
-    assert octo["won_count"] == 2 and octo["lost_count"] == 2
+    assert octo["won_count"] == 2 and octo["lost_count"] == 1 and octo["dropped_count"] == 1
     assert octo["won_arr"] == 1_000_000 and octo["won_one_time"] == 500_000
     assert octo["won_revenue"] == 1_800_000
-    assert octo["win_rate_pct"] == 50.0
+    assert octo["win_rate_pct"] == 66.7        # dropped (disqualified) is not a loss: same rule as Win-Loss
     assert octo["avg_deal_size"] == 900_000
     assert octo["deals_created"] == 5 and octo["pipeline_added"] == 1_800_000 + 100_000
 

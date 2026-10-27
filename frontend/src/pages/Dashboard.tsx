@@ -1,11 +1,10 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
 import api from '@/hooks/useApi'
 import { format } from 'date-fns'
 import { Link, Navigate } from 'react-router-dom'
 import { getQuoteOfDay } from '@/lib/quotes'
-import { timeAgo } from '@/lib/time'
 
 // Compact Indian-format currency (₹2.5Cr / ₹1.5L / ₹5,000)
 function inrShort(n: number): string {
@@ -61,85 +60,66 @@ function KPICard({ label, value, sub, accentColor, icon, loading }: {
   )
 }
 
-// ── AI Panel ──────────────────────────────────────────────────────────────────
-function AIPanel({ userId }: { userId: string }) {
-  const qc = useQueryClient()
+// ── Performance Intelligence (v1.6.1) ─────────────────────────────────────────
+// Rule-based and instant: every line is a deterministic rule over the person's own
+// DSRs, deals and leads (GET /performance-insights). No model call, nothing to wait
+// for, and each line says what was measured and what to do. Severity is shown as
+// text as well as colour so it never relies on colour alone.
+const SEV: Record<string, { label: string; dot: string }> = {
+  high: { label: 'Act now', dot: '#F87171' }, medium: { label: 'Improve', dot: '#FBBF24' },
+  low: { label: 'Note', dot: '#94A3B8' }, good: { label: 'On track', dot: '#34D399' },
+}
 
-  const { data } = useQuery({
-    queryKey: ['ai-insight', userId],
-    queryFn: () => api.get(`/ai/dashboard/${userId}`).then(r => r.data),
-    // Cache reads are instant, but poll while a generation is in flight so
-    // the UI updates itself the moment it's ready — no manual refresh needed.
-    refetchInterval: (q) => (q.state.data?.status === 'pending' ? 4000 : false),
+function PerformancePanel() {
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+    queryKey: ['performance-insights'],
+    queryFn: () => api.get('/performance-insights').then(r => r.data),
+    staleTime: 60_000,
   })
-
-  const regenerate = useMutation({
-    mutationFn: () => api.post(`/ai/dashboard/${userId}/regenerate`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-insight', userId] }),
-  })
-
-  const status = data?.status
-  const isPending = status === 'pending' || regenerate.isPending
+  const items: any[] = data?.items ?? []
 
   return (
     <div className="ai-panel mb-6" style={{ background: 'linear-gradient(135deg, #1A0B2E 0%, #3D1A6E 100%)' }}>
-      {/* Top bar */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2.5">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-2.5 flex-wrap">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
             style={{ background: 'rgba(14,165,233,0.20)', color: '#38BDF8', border: '1px solid rgba(14,165,233,0.25)' }}>
-            <span className="ai-pulse" />
-            AI · Ollama Local
+            Rules-based · explainable
           </span>
           <span className="font-display font-bold text-white text-sm">Performance Intelligence</span>
-          {status === 'ready' && data?.generated_at && (
-            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
-              · Generated {timeAgo(data.generated_at)}
-            </span>
-          )}
+          {data?.headline && <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>· {data.headline}</span>}
         </div>
-        <button onClick={() => regenerate.mutate()} disabled={isPending}
-          className="text-xs font-semibold transition-colors disabled:opacity-40"
-          style={{ color: isPending ? 'rgba(255,255,255,0.4)' : '#F5921E' }}>
-          {isPending ? '⏳ Analysing…' : status === 'ready' ? '🔄 Regenerate' : '✨ Run Analysis'}
+        <button onClick={() => refetch()} disabled={isFetching}
+          className="text-xs font-semibold disabled:opacity-40 min-h-[44px] px-2" style={{ color: '#F5921E' }}>
+          {isFetching ? 'Refreshing…' : '🔄 Refresh'}
         </button>
       </div>
 
-      {/* Content */}
-      {isPending && (
-        <div className="flex items-center gap-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
-          <span className="flex gap-1">
-            {[0,1,2].map(i => (
-              <span key={i} className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-bounce"
-                style={{ animationDelay: `${i*0.15}s` }} />
-            ))}
-          </span>
-          Generating on the local model — this takes about 2-3 minutes on this
-          hardware. You can keep working; it saves automatically and appears here
-          when ready (no need to wait on this screen).
-        </div>
+      {isLoading && <p className="text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>Reading your activity…</p>}
+      {isError && <p className="text-sm" style={{ color: 'rgba(255,150,150,0.8)' }}>Could not load insights. Try Refresh.</p>}
+      {!isLoading && !isError && (
+        <ul className="space-y-2">
+          {items.map((i: any) => {
+            const sev = SEV[i.severity] ?? SEV.low
+            return (
+              <li key={i.key} className="rounded-xl p-3 text-sm"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.88)' }}>
+                <div className="flex items-start gap-2">
+                  <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: sev.dot }} aria-hidden="true" />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-white">
+                      <span className="text-[10px] uppercase tracking-wider mr-2" style={{ color: sev.dot }}>{sev.label}</span>{i.title}
+                    </div>
+                    {i.detail && <div className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.6)' }}>{i.detail}</div>}
+                    <div className="text-xs mt-1" style={{ color: '#F5C27A' }}>→ {i.action}</div>
+                  </div>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
       )}
-      {!isPending && status === 'failed' && (
-        <p className="text-sm" style={{ color: 'rgba(255,150,150,0.8)' }}>
-          ⚠️ Last attempt didn't complete. Click "Run Analysis" to try again.
-        </p>
-      )}
-      {!isPending && !status && (
-        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.35)' }}>
-          Click "Run Analysis" to get BANT insights, rigor assessment and coaching recommendations
-          generated locally by your Ollama model. No data leaves this server.
-        </p>
-      )}
-      {!isPending && status === 'ready' && data?.content && (
-        <div className="text-sm leading-relaxed rounded-xl p-4"
-          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.85)' }}
-          dangerouslySetInnerHTML={{
-            __html: data.content
-              .replace(/\*\*(.*?)\*\*/g, '<strong style="color:#fff">$1</strong>')
-              .replace(/^#{1,3}\s(.+)$/gm, '<div style="color:#F5921E;font-weight:700;margin-top:12px;margin-bottom:4px">$1</div>')
-              .replace(/\n/g, '<br/>')
-          }} />
-      )}
+      {data?.basis && <p className="text-[10px] mt-3" style={{ color: 'rgba(255,255,255,0.35)' }}>{data.basis}</p>}
     </div>
   )
 }
@@ -393,7 +373,7 @@ export default function Dashboard() {
       )}
 
       {/* ── AI Panel (sales-activity insight — not relevant for Service Delivery) ── */}
-      {user?.id && !isSDM && <AIPanel userId={user.id} />}
+      {user?.id && !isSDM && <PerformancePanel />}
 
       {/* ── My Targets (rep visibility into own revenue) ── */}
       {isRevenueRep && myRev?.has_target && (

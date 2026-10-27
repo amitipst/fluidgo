@@ -35,7 +35,9 @@ won_*              deals closed-won, dated by closure_eta, else the recorded
                    outcome date, else last update — closure_eta first so the
                    numbers agree with Revenue vs Target, the Executive Digest
                    and FGA, which all key on closure_eta
-lost               closed-lost + dropped, dated by recorded outcome date first
+lost               closed-lost only, dated by recorded outcome date first
+dropped            disqualified / no decision (not a competitive loss); counted
+                   apart so it does not drag the win rate. Same rule as Win-Loss
 win_rate           won / (won + lost) among deals that closed in the period
 avg_deal_size      won revenue / won count
 """
@@ -166,7 +168,7 @@ def build_trends(g: str, today: date, n: int, *, meetings: Iterable, leads: Iter
     rows = {k: {"period": k, "label": period_label(k, g), "meetings": 0, "leads_created": 0,
                 "leads_converted": 0, "deals_created": 0, "pipeline_added": 0.0,
                 "won_count": 0, "won_arr": 0.0, "won_one_time": 0.0, "won_revenue": 0.0,
-                "lost_count": 0, "invoiced_count": 0, "invoiced_revenue": 0.0} for k in keys}
+                "lost_count": 0, "dropped_count": 0, "invoiced_count": 0, "invoiced_revenue": 0.0} for k in keys}
 
     def bump(d: Optional[date], field: str, by=1):
         if d is None:
@@ -201,8 +203,10 @@ def build_trends(g: str, today: date, n: int, *, meetings: Iterable, leads: Iter
             elif d is not None and period_key(d, g) in rows:
                 awaiting_n += 1
                 awaiting_value += amt["total"]
-        elif deal.stage in ("closed_lost", "dropped"):
+        elif deal.stage == "closed_lost":
             bump(lost_date(deal), "lost_count")
+        elif deal.stage == "dropped":
+            bump(lost_date(deal), "dropped_count")
 
     series = []
     for k in keys:
@@ -216,7 +220,7 @@ def build_trends(g: str, today: date, n: int, *, meetings: Iterable, leads: Iter
 
     tot = {f: sum(r[f] for r in series) for f in (
         "meetings", "leads_created", "leads_converted", "deals_created", "pipeline_added",
-        "won_count", "won_arr", "won_one_time", "won_revenue", "lost_count",
+        "won_count", "won_arr", "won_one_time", "won_revenue", "lost_count", "dropped_count",
         "invoiced_count", "invoiced_revenue")}
     tot["lead_conversion_pct"] = _pct(tot["leads_converted"], tot["leads_created"])
     tot["win_rate_pct"] = _pct(tot["won_count"], tot["won_count"] + tot["lost_count"])

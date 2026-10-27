@@ -258,3 +258,31 @@ def forecast_category(deal, rules: Optional[dict] = None) -> Optional[str]:
         return None
     rule = stage_rule(getattr(deal, "sp_stage", None), rules)
     return rule.get("category") if rule else None
+
+
+# ── v1.6.1: one definition of "open", "amount" and "win %" for every screen ──
+# Before this, Health counted dropped/on-hold deals as open (24), Deals counted
+# on-hold (21) and the radar read only the legacy deal_value, and Health filled
+# a missing win % with the AI health score. Every list endpoint now returns the
+# same four fields, computed here, and the frontend only sums them.
+OPEN_EXCLUDED_STAGES = ("closed_won", "closed_lost", "dropped", "on_hold")
+
+
+def deal_amount(deal) -> float:
+    """ARR + One-time; older deals fall back to deal_value (see amounts())."""
+    from app.services.pipeline_sheet_service import amounts
+    return float(amounts(getattr(deal, "recurring_revenue", None), getattr(deal, "one_time_revenue", None),
+                         getattr(deal, "deal_value", None))["total"])
+
+
+def is_open(deal) -> bool:
+    """Live pipeline: not won, lost, dropped or parked on hold, and not archived."""
+    return deal.stage not in OPEN_EXCLUDED_STAGES and not getattr(deal, "archived", False)
+
+
+def deal_metrics(deal, rules: Optional[dict] = None) -> dict:
+    """is_open, amount, win_pct (None = unknown, never guessed) and weighted_amount (None if win % unknown)."""
+    amt = deal_amount(deal)
+    pct = forecast_probability(deal, rules)
+    return {"is_open": is_open(deal), "amount": amt, "win_pct": pct,
+            "weighted_amount": round(amt * pct / 100.0, 2) if pct is not None else None}

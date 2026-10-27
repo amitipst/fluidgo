@@ -274,6 +274,7 @@ async def list_deals(include_archived: bool = False, include_seed: bool = False,
         row = {c.name: getattr(d, c.name) for c in d.__table__.columns}
         row["needs_revenue_split"] = rules_svc.needs_revenue_split(d)
         row["forecast_probability"] = rules_svc.forecast_probability(d, rules)
+        row.update(rules_svc.deal_metrics(d, rules))      # v1.6.1: is_open / amount / win_pct / weighted_amount
         row["sp_stage_label"] = rules_svc.sp_stage_label(d.sp_stage) if d.sp_stage else None
         cat = rules_svc.forecast_category(d, rules)
         row["forecast_category"] = cat

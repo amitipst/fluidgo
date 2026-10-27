@@ -28,17 +28,30 @@ function inr(n: number): string {
   return `₹${n.toLocaleString('en-IN')}`
 }
 
-function StageProgress({ stage }: { stage: string }) {
+// v1.6.1: deals on the SP ladder show SP1..SP7 -> Won (same as Deals); only older deals that were never
+// given an SP stage still show the classic temperature flow, with a hint to set one.
+const SP_FLOW = ['sp1_identifying', 'sp2_profiling_bant', 'sp3_understanding', 'sp4_qualification_bant',
+  'sp5_scope_proposal', 'sp6_techno_commercial', 'sp7_negotiation', 'won']
+const SP_LABEL: Record<string, string> = {
+  sp1_identifying: 'SP1', sp2_profiling_bant: 'SP2', sp3_understanding: 'SP3', sp4_qualification_bant: 'SP4',
+  sp5_scope_proposal: 'SP5', sp6_techno_commercial: 'SP6', sp7_negotiation: 'SP7', won: 'Won',
+}
+
+function StageProgress({ stage, spStage }: { stage: string; spStage?: string | null }) {
   // closed_lost is a dead end — show it distinctly
   if (stage === 'closed_lost') {
     return <div className="text-[11px] font-bold text-gray-400 mt-2">✕ Closed Lost</div>
   }
-  const idx = STAGE_FLOW.indexOf(stage)
+  const useSp = !!spStage && SP_FLOW.includes(spStage)
+  const flow = useSp ? SP_FLOW : STAGE_FLOW
+  const labels = useSp ? SP_LABEL : STAGE_LABEL
+  const current = stage === 'closed_won' ? (useSp ? 'won' : 'closed_won') : (useSp ? (spStage as string) : stage)
+  const idx = flow.indexOf(current)
   const activeIdx = idx === -1 ? 0 : idx
   return (
     <div className="mt-3">
       <div className="flex items-center gap-1">
-        {STAGE_FLOW.map((s, i) => {
+        {flow.map((s, i) => {
           const done = i <= activeIdx
           const isCurrent = i === activeIdx
           return (
@@ -46,12 +59,15 @@ function StageProgress({ stage }: { stage: string }) {
               <div className="w-full h-1.5 rounded-full transition-colors"
                 style={{ background: done ? (isCurrent ? '#F0115E' : '#0D9488') : '#E8DFF5' }} />
               <span className={`text-[9px] font-semibold ${isCurrent ? 'text-brand-pink' : done ? 'text-teal-600' : 'text-wep-muted'}`}>
-                {STAGE_LABEL[s]}
+                {labels[s]}
               </span>
             </div>
           )
         })}
       </div>
+      {!useSp && stage !== 'closed_won' && (
+        <div className="text-[10px] text-amber-700 mt-1">Not on the SP ladder yet. Edit the deal and pick its SP stage.</div>
+      )}
     </div>
   )
 }
@@ -126,14 +142,14 @@ export default function Opportunities() {
   // Uses dealRevenue() (ARR + One-time, falling back to legacy deal_value) —
   // not raw deal_value — so these cards match what Pipeline Sheet and
   // Revenue Intelligence already show. See lib/revenue.ts.
-  const openDeals = deals.filter((d: any) => !['closed_won', 'closed_lost'].includes(d.stage))
-  const totalValue = openDeals.reduce((s: number, d: any) => s + dealRevenue(d), 0)
-  // Weighted forecast: value × closure probability (falls back to deal-health as a proxy)
-  const weighted = openDeals.reduce((s: number, d: any) => {
-    const pct = d.forecast_probability ?? d.ai_closure_pct ?? d.ai_deal_health ?? 0
-    return s + dealRevenue(d) * (pct / 100)
-  }, 0)
-  const atRisk = deals.filter((d: any) =>
+  // v1.6.1: is_open / amount / weighted_amount come from the server, so this view, Deals and the
+  // weak-areas radar all count the same deals the same way. A deal with no win % is not guessed
+  // (the old fallback used the AI health score, which is not a probability); it is counted apart.
+  const openDeals = deals.filter((d: any) => d.is_open ?? !['closed_won', 'closed_lost', 'dropped', 'on_hold'].includes(d.stage))
+  const totalValue = openDeals.reduce((s: number, d: any) => s + (d.amount ?? dealRevenue(d)), 0)
+  const weighted = openDeals.reduce((s: number, d: any) => s + (d.weighted_amount ?? 0), 0)
+  const noWinPct = openDeals.filter((d: any) => d.win_pct == null && d.weighted_amount == null).length
+  const atRisk = openDeals.filter((d: any) =>
     ['at_risk', 'critical'].includes(d.ai_deal_health_label) || d.risk_level === 'high' || d.risk_level === 'critical'
   ).length
   const wonValue = deals.filter((d: any) => d.stage === 'closed_won')
@@ -182,12 +198,12 @@ export default function Opportunities() {
         <div className="card py-3">
           <div className="text-[10px] font-bold uppercase tracking-wider text-wep-muted">Weighted Forecast</div>
           <div className="font-display font-bold text-xl mt-1" style={{ color: '#0D9488' }}>{inr(weighted)}</div>
-          <div className="text-[9px] text-wep-muted">value × closure %</div>
+          <div className="text-[9px] text-wep-muted">value × win %{noWinPct > 0 ? ` · ${noWinPct} deals have no win % yet` : ''}</div>
         </div>
         <div className="card py-3">
           <div className="text-[10px] font-bold uppercase tracking-wider text-wep-muted">At Risk</div>
           <div className="font-display font-bold text-xl mt-1" style={{ color: atRisk > 0 ? '#DC2626' : '#0D9488' }}>{atRisk}</div>
-          <div className="text-[9px] text-wep-muted">deals need attention</div>
+          <div className="text-[9px] text-wep-muted">open deals need attention</div>
         </div>
         <div className="card py-3">
           <div className="text-[10px] font-bold uppercase tracking-wider text-wep-muted">Won</div>
@@ -302,7 +318,7 @@ export default function Opportunities() {
               </div>
             </div>
 
-            <StageProgress stage={d.stage} />
+            <StageProgress stage={d.stage} spStage={d.sp_stage} />
 
             {d.todays_update && (
               <p className="text-xs text-wep-muted mt-2.5 line-clamp-1">📝 {d.todays_update}</p>

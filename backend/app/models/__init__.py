@@ -367,6 +367,7 @@ class Lead(Base):
     company:          Mapped[str]       = mapped_column(String(255), nullable=False)
     contact_name:     Mapped[str]       = mapped_column(String(120), nullable=True)
     requirement:      Mapped[str]       = mapped_column(Text, nullable=True)
+    requirement_detail: Mapped[str]     = mapped_column(Text, nullable=True)   # v1.6.1 free-text need (migration 0042)
     source:           Mapped[str]       = mapped_column(String(50))
     next_action:      Mapped[str]       = mapped_column(Text, nullable=True)
     next_action_date: Mapped[datetime]  = mapped_column(Date, nullable=True)

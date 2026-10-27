@@ -100,13 +100,14 @@ export default function Pipeline() {
   })
 
   // Summary stats
-  const active   = (deals as any[]).filter(d => !['closed_won','closed_lost','dropped'].includes(d.stage))
+  // v1.6.1: same server-side definition of "open" as Health and the radar (excludes dropped and on-hold)
+  const active   = (deals as any[]).filter(d => d.is_open ?? !['closed_won','closed_lost','dropped','on_hold'].includes(d.stage))
   const won      = (deals as any[]).filter(d => d.stage === 'closed_won')
   // dealRevenue() = ARR + One-time, falling back to legacy deal_value — see
   // lib/revenue.ts. Raw deal_value alone silently zeroed out any deal using
   // the newer Pipeline Sheet fields (same bug class fixed server-side in v1.4.3).
   const totalVal = won.reduce((s: number, d: any) => s + dealRevenue(d), 0)
-  const pipelineVal = active.reduce((s: number, d: any) => s + dealRevenue(d), 0)
+  const pipelineVal = active.reduce((s: number, d: any) => s + (d.amount ?? dealRevenue(d)), 0)
 
   return (
     <div className={`p-4 md:p-6 mx-auto ${view === 'sheet' ? 'max-w-7xl' : 'max-w-5xl'}`}>

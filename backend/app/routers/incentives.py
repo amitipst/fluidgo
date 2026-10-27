@@ -14,6 +14,7 @@ from sqlalchemy import select, func
 from datetime import datetime
 from typing import Optional, Literal
 import uuid
+from app.services.booking_date import won_date_col, won_date_of
 from app.database import get_db
 from app.models import (User, IncentiveScheme, PointsLedger, UserBadge, SchemeWinner,
                          DSRDaily, Meeting, PipelineDeal, role_level)
@@ -95,7 +96,7 @@ async def _compute_metric(db: AsyncSession, user: User, period: str, metric: str
             select(PipelineDeal).where(
                 PipelineDeal.user_id == user.id,
                 PipelineDeal.stage == "closed_won",
-                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+                won_date_col() >= start, won_date_col() <= end,
                 PipelineDeal.archived == False, PipelineDeal.is_seed == False
             )
         )).scalars().all()

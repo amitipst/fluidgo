@@ -10,6 +10,58 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.1] — 2026-10-27
+
+### Added
+- Orders register (`GET /api/orders`, page `/orders`, nav "Orders"): read-only closed orders with PO/email evidence, booking date, ARR/One-time and invoice status, for `finance` and manager-and-above (governance blocked). PMO role deferred to v1.7.
+
+Fix pass after v1.6.0 went live, from Amit's review of the production screens. Every
+screen now counts deals the same way, the Dashboard card no longer depends on a model,
+and revenue is dated by when the order was booked.
+
+**Fixed**
+- **One definition of "open", "amount" and "win %"** across Deals, Health & risk and the
+  weak-areas radar (`deal_rules_service.is_open / deal_amount / deal_metrics`). Before:
+  open pipeline showed ₹3.20 Cr, ₹3.0 Cr and ₹2.98 Cr, weighted forecast ₹1.39 Cr vs ₹1.03 Cr,
+  and open deals 24 vs 21, because "open" meant three things, the radar read only the old
+  `deal_value`, and Health filled a missing win % with the AI health score (not a
+  probability). Now open excludes won, lost, dropped, on-hold and archived; value is ARR +
+  One-time; a missing win % is never guessed and is shown as "N deals with no win %".
+- **Concentration finding** needs 3+ deals that have both a value and a win %; otherwise it is a
+  data gap, not concentration (the "98%" was one valued deal among many blank ones).
+- **Headlines** read "8 deals with no activity for 14+ days (₹98.0 L)" (duplicate count prefix
+  removed, lakh/crore formatting).
+- **Win rate** is one rule: won / (won + lost). Dropped (disqualified) is counted apart in
+  Trends, as Win-Loss already did (Trends showed 50%, Win-Loss 71%).
+- **Health "At risk"** counts open deals only.
+- **Health deal cards** show SP1 to SP7 and Won; older deals with no SP stage show a hint to set one.
+- **Trends charts** show won value that has no ARR / One-time split as "Not split yet" instead of
+  drawing zero; the comparison tile says the current period is still open.
+- **Contacts page** side padding (title and card were flush against the edges).
+
+**Added**
+- **Radar finding "Open deals not on the SP stage ladder"** (older deals with no SP stage have no
+  stage-based win % or forecast category).
+- **Dashboard Performance Intelligence is now rule-based** (`GET /api/performance-insights`,
+  `performance_insight_service`): rigor level and weakest component with a measurable lever,
+  DSR gap, and the person's own deal-radar findings, each with a one-line action. Instant, no model
+  call, explainable. The old Ollama-driven generation endpoints are left in place, unused by the
+  Dashboard; other features (deal coaching, post-mortems, MOM generator) still call the model.
+- **Lead "Requirement details"** free-text (`leads.requirement_detail`, migration 0042, additive),
+  carried onto the deal on conversion. Salesforce practice: a Description on the Lead; amount and
+  close date are captured at conversion, where the deal is created.
+
+**Changed (compensation-linked, per Amit's "follow best practice of leading CRMs")**
+- **Won deals are dated by the order-booking date** (`won_at`, the day the customer's email / LOI /
+  PO / agreement arrived) in Revenue vs Target, FGA "Business Generation", Scheme Winners, the
+  Executive Digest, Reports and the won/revenue analytics (`booking_date.won_date_col`). Older won
+  deals with no `won_at` fall back to the expected closure date exactly as before, so no historical
+  figure moves; only wins recorded from now on use the booking date.
+
+**Tests:** 27 new (backend 370). Frontend `tsc` and `vite build` clean.
+
+---
+
 ## [1.6.0] — 2026-10-26
 
 One Deals workspace, a qualified hand-off from Lead to Deal, and a weak-areas view for

@@ -34,6 +34,7 @@ import Governance from '@/pages/Governance'
 import Reports from '@/pages/Reports'
 import CompanyKPIEntry from '@/pages/CompanyKPIEntry'
 import ExecutiveDigest from '@/pages/ExecutiveDigest'
+import Orders from '@/pages/Orders'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Toaster from '@/components/Toaster'
 import './index.css'
@@ -75,6 +76,8 @@ const FEEDBACK_ADMIN_ROLES = ['business_head', 'practice_head', 'coo', 'ceo', 's
 // re-deriving an identical role list, per the hardcoded-list-must-match-
 // backend-gate lesson flagged twice already in claude/README.md's Open Items.
 const EXEC_DIGEST_ROLES = FEEDBACK_ADMIN_ROLES
+// Orders register (v1.6.1) — matches backend can_view_orders: finance or role_level >= 20, governance excluded.
+const ORDERS_ROLES = [...MANAGER_ROLES, 'practice_head', 'coo', 'crm_admin', 'finance']
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -138,6 +141,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="company-kpi-entry" element={
                 <ProtectedRoute roles={COMPANY_KPI_ROLES}>
                   <CompanyKPIEntry />
+                </ProtectedRoute>
+              } />
+              <Route path="orders" element={
+                <ProtectedRoute roles={ORDERS_ROLES}>
+                  <Orders />
                 </ProtectedRoute>
               } />
               <Route path="exec-digest" element={

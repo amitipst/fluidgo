@@ -76,6 +76,7 @@ class LeadIn(BaseModel):
     company: Optional[str] = None
     contact_name: Optional[str] = None
     requirement: Optional[str] = None
+    requirement_detail: Optional[str] = None      # v1.6.1: what the customer actually needs, in their words
     source: Literal["Call", "Visit", "Referral", "LinkedIn", "Email"] = "Call"
     next_action: Optional[str] = None
     next_action_date: Optional[date] = None
@@ -90,6 +91,7 @@ async def create_lead(body: LeadIn, db: AsyncSession = Depends(get_db),
     except RuleViolation as e:
         raise HTTPException(422, str(e))
     data = body.model_dump()
+    data["requirement_detail"] = (data.get("requirement_detail") or "").strip()[:2000] or None
     if account is not None:
         data["company"] = account.name
         data["contact_name"] = display_name(contact) or data.get("contact_name")
@@ -238,7 +240,8 @@ async def convert_lead_to_deal(
         stage=stage,
         sp_stage=sp_stage,
         primary_contact=display_name(contact) or lead.contact_name,
-        todays_update=f"Converted from lead. Requirement: {lead.requirement or 'n/a'}",
+        todays_update=(f"Converted from lead. Requirement: {lead.requirement or 'n/a'}"
+                       + (f". Details: {lead.requirement_detail.strip()[:500]}" if (getattr(lead, 'requirement_detail', None) or '').strip() else "")),
         next_step=body.next_step or lead.next_action,
         closure_eta=body.closure_eta,
         recurring_revenue=recurring,

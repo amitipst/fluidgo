@@ -56,6 +56,7 @@ const NAV_FEEDBACK = { to: '/feedback', icon: '💬', label: 'Feedback Inbox' }
 // Inbox (FEEDBACK_ADMIN_ROLES / backend's require_level(40)); see main.tsx's
 // EXEC_DIGEST_ROLES.
 const NAV_EXEC_DIGEST = { to: '/exec-digest', icon: '📊', label: 'Executive Digest' }
+const NAV_ORDERS = { to: '/orders', icon: '📦', label: 'Orders' }
 const NAV_GOVERNANCE = { to: '/governance', icon: '🛡️', label: 'Governance' }
 // Read-only grant closing the "governance has zero route/nav access to
 // Meetings" gap flagged in fluidgo-mom-uiux-spec.md §7 — the backend has
@@ -169,6 +170,7 @@ export default function Layout() {
   })
   const dsrEditRequestCount = dsrEditRequests.length
 
+  const canSeeOrders = !isGovernance && (user?.role === 'finance' || ['manager','regional_manager','bu_head','business_head','practice_head','coo','ceo','super_admin','crm_admin'].includes(user?.role ?? ''))
   const canSeeFeedbackInbox = FEEDBACK_ADMIN_ROLES.includes(user?.role ?? '')
 
   // Open-feedback count for the sidebar badge — same 60s-poll pattern as
@@ -219,6 +221,7 @@ export default function Layout() {
       { to: '/dor', icon: '🛠️', label: 'Daily Ops Report' }, { to: '/kpi-entry', icon: '📋', label: 'Monthly KPI Entry' }] }] : []),
     { title: 'Management', items: [
       canSeeFeedbackInbox && NAV_EXEC_DIGEST,
+      canSeeOrders && NAV_ORDERS,
       canSeeTeam && NAV_MANAGER[0],
       canSeeRevenue && NAV_MANAGER[1],
       ['business_head', 'ceo', 'super_admin'].includes(user?.role ?? '') && NAV_MANAGER[2],
@@ -318,6 +321,7 @@ export default function Layout() {
                   it's the single-glance rollup the rest of this section
                   feeds into. */}
               {canSeeFeedbackInbox && <SideLink {...NAV_EXEC_DIGEST} />}
+              {canSeeOrders && <SideLink {...NAV_ORDERS} />}
               {canSeeTeam    && <SideLink {...NAV_MANAGER[0]} />}
               {canSeeRevenue && <SideLink {...NAV_MANAGER[1]} />}
               {/* Regional view — business_head / CEO only */}

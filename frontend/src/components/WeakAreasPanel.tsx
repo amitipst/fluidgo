@@ -9,6 +9,7 @@ type Rep = { user_id: string; name: string; open_count: number; open_value: numb
 type Report = {
   scope: 'me' | 'team' | 'all'; headlines: string[]; findings: Finding[]; reps: Rep[]; my_actions: Item[]; presales_queue: Item[]
   summary: { open_count: number; open_value: number; weighted_value: number; open_leads: number
+    unweighted_count?: number; unweighted_value?: number; no_value_count?: number
     by_category: Record<string, { count: number; value: number; weighted: number }>
     by_stage: { key: string; label: string; count: number; value: number }[] }
 }
@@ -52,7 +53,8 @@ export default function WeakAreasPanel() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
-        {[['Open pipeline', inr(s.open_value), `${s.open_count} deals`], ['Weighted forecast', inr(s.weighted_value), 'value × win %'],
+        {[['Open pipeline', inr(s.open_value), `${s.open_count} deals${s.no_value_count ? ` · ${s.no_value_count} without a value` : ''}`],
+          ['Weighted forecast', inr(s.weighted_value), `value × win %${s.unweighted_count ? ` · ${s.unweighted_count} with no win %` : ''}`],
           ['Commit', inr(s.by_category.commit?.value ?? 0), `${s.by_category.commit?.count ?? 0} deals · weighted ${inr(s.by_category.commit?.weighted ?? 0)}`],
           ['Open leads', String(s.open_leads), 'not yet deals']].map(([l, v, sub]) => (
           <div key={l} className="card py-3"><div className="text-xs text-wep-muted">{l}</div><div className="font-display font-bold text-lg">{v}</div><div className="text-[11px] text-wep-muted">{sub}</div></div>))}

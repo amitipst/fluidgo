@@ -42,7 +42,7 @@ export default function Leads() {
   const [statusFilter, setStatusFilter] = useState('All')
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState({
-    date: today, company: '', contact_name: '', requirement: '',
+    date: today, company: '', contact_name: '', requirement: '', requirement_detail: '',
     source: 'Call', next_action: '', next_action_date: ''
   })
   const [addErr, setAddErr] = useState('')
@@ -68,6 +68,7 @@ export default function Leads() {
   const addLead = useMutation({
     mutationFn: () => api.post('/leads', {
       date: form.date, requirement: form.requirement || undefined, source: form.source,
+      requirement_detail: form.requirement_detail.trim() || undefined,
       next_action: form.next_action || undefined,
       account_id: cc.accountId, contact_id: cc.contactId,
       next_action_date: form.next_action_date || undefined
@@ -75,7 +76,7 @@ export default function Leads() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['leads'] })
       qc.invalidateQueries({ queryKey: ['accounts'] })
-      setForm({ date: today, company: '', contact_name: '', requirement: '',
+      setForm({ date: today, company: '', contact_name: '', requirement: '', requirement_detail: '',
                 source: 'Call', next_action: '', next_action_date: '' })
       setCc(emptyCompanyContact)
       setShowAdd(false); setAddErr('')
@@ -126,7 +127,7 @@ export default function Leads() {
           <button onClick={() => {
             if (showAdd) {
               // Closing the form → clear any half-filled fields so a reopen is fresh
-              setForm({ date: today, company: '', contact_name: '', requirement: '',
+              setForm({ date: today, company: '', contact_name: '', requirement: '', requirement_detail: '',
                         source: 'Call', next_action: '', next_action_date: '' })
               setCc(emptyCompanyContact)
               setAddErr('')
@@ -151,9 +152,12 @@ export default function Leads() {
               <label className="form-label block mb-1">Requirement</label>
               <select className="form-input" value={form.requirement}
                 onChange={e => setForm(f => ({ ...f, requirement: e.target.value }))}>
-                <option value="">Select or type below</option>
+                <option value="">Select a category</option>
                 {REQUIREMENTS.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
+              <textarea className="form-input mt-2" rows={2} maxLength={2000} value={form.requirement_detail}
+                onChange={e => setForm(f => ({ ...f, requirement_detail: e.target.value }))}
+                placeholder="What does the customer actually need? Scope, users, sites, timeline, budget hints" />
             </div>
             <div>
               <label className="form-label block mb-1">Source *</label>
@@ -240,6 +244,9 @@ export default function Leads() {
                     <div className="text-xs text-wep-muted mt-1 flex items-center gap-1">
                       <span>📋</span> {l.requirement}
                     </div>
+                  )}
+                  {l.requirement_detail && (
+                    <div className="text-xs text-wep-muted mt-0.5 line-clamp-2">{l.requirement_detail}</div>
                   )}
                   {l.next_action && (
                     <div className="text-xs mt-1">
