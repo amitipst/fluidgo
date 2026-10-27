@@ -139,8 +139,8 @@ export default function Layout() {
   const navigate = useNavigate()
   const [moreOpen, setMoreOpen] = useState(false)
 
-  const canSeeTeam    = ['manager','regional_manager','bu_head','inside_sales','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
-  const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
+  const canSeeTeam    = ['manager','regional_manager','bu_head','inside_sales','business_head','coo','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
+  const canSeeRevenue = ['manager','regional_manager','bu_head','business_head','coo','ceo','super_admin','crm_admin'].includes(user?.role ?? '')
   const canSeeFGA     = ['manager','regional_manager','bu_head','business_head','ceo','super_admin','hr','finance'].includes(user?.role ?? '')
   // Company KPI Entry (2026-10-24) — tighter than canSeeFGA: matches
   // main.tsx's COMPANY_KPI_ROLES / backend's _can_enter_company_kpi exactly,

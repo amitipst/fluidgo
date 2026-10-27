@@ -10,6 +10,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.2] — 2026-10-27
+
+### Added
+- Leadership Dashboard panel for business head, COO, CEO and super admin: company overview with an All-businesses / one-business switcher and a per-business table (head, won, open pipeline).
+- `GET /analytics/exec-digest?business=` filter; digest returns `businesses` and `by_business`.
+
+- Platform overview panel for the super admin (technology/platform admin): users, logins, failed logins, audit events, DSRs today, version, and links to admin screens. Super admin no longer gets the business company overview; data access is unchanged.
+
+### Fixed
+- COO had no Management navigation (Team, Revenue, Executive Digest, Orders) and was missing from the Analytics and Revenue role lists.
+- Analytics funnel "Open" and the Executive Digest now use the shared open-pipeline definition (excludes dropped, on-hold and archived), so they match Deals.
+
+---
+
 ## [1.6.1] — 2026-10-27
 
 ### Added

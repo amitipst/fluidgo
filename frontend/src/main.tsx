@@ -155,18 +155,18 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               } />
               {/* Management — manager+ */}
               <Route path="team" element={
-                <ProtectedRoute roles={[...MANAGER_ROLES, 'inside_sales', 'crm_admin']}>
+                <ProtectedRoute roles={[...MANAGER_ROLES, 'coo', 'inside_sales', 'crm_admin']}>
                   <Team />
                 </ProtectedRoute>
               } />
               <Route path="revenue" element={
-                <ProtectedRoute roles={[...MANAGER_ROLES, 'crm_admin']}>
+                <ProtectedRoute roles={[...MANAGER_ROLES, 'coo', 'crm_admin']}>
                   <RevenueIntelligence />
                 </ProtectedRoute>
               } />
               {/* Same audience as /revenue — Reports catalog added 2026-10-23 */}
               <Route path="reports" element={
-                <ProtectedRoute roles={[...MANAGER_ROLES, 'crm_admin']}>
+                <ProtectedRoute roles={[...MANAGER_ROLES, 'coo', 'crm_admin']}>
                   <Reports />
                 </ProtectedRoute>
               } />

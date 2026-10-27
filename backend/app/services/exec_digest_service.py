@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.booking_date import won_date_col, won_date_of
 from app.models import User, PipelineDeal, DSRDaily, RevenueTarget
 from app.services.pipeline_sheet_service import amounts as _amounts
+from app.services.deal_rules_service import OPEN_EXCLUDED_STAGES
 from app.services.rigor_service import aggregate_rigor_breakdown
 from app.services.compliance_service import compute_compliance
 from app.services.permission_service import resolve_visible_user_ids
@@ -63,12 +64,25 @@ def _serialize_deal(d: PipelineDeal) -> dict:
     }
 
 
-async def build_digest(db: AsyncSession, user: User, period: str | None = None) -> dict:
+async def build_digest(db: AsyncSession, user: User, period: str | None = None, business: str | None = None) -> dict:
     period = period or _current_period()
     yr, mo = int(period[:4]), int(period[5:7])
     start, end = date(yr, mo, 1), date(yr, mo, monthrange(yr, mo)[1])
 
     visible_ids = await resolve_visible_user_ids(db, user)
+
+    # v1.6.2: leaders can look at all businesses or one at a time. `businesses` lists only
+    # the businesses inside the caller's own scope; a filter outside it yields nothing.
+    biz_q = select(User.id, User.business).where(User.is_active == True)  # noqa: E712
+    if visible_ids is not None:
+        biz_q = biz_q.where(User.id.in_(visible_ids))
+    biz_rows = (await db.execute(biz_q)).all()
+    businesses = sorted({b for _, b in biz_rows if b})
+    biz_of = {uid: b for uid, b in biz_rows}
+    if business and business != "all":
+        visible_ids = [uid for uid, b in biz_rows if b == business]
+    else:
+        business = "all"
 
     def _scope(q):
         return q.where(PipelineDeal.user_id.in_(visible_ids)) if visible_ids is not None else q
@@ -91,7 +105,7 @@ async def build_digest(db: AsyncSession, user: User, period: str | None = None) 
     # ── Open pipeline + at-risk + recent wins ────────────────────────────
     open_q = _scope(select(PipelineDeal).where(
         PipelineDeal.archived == False, PipelineDeal.is_seed == False,
-        ~PipelineDeal.stage.in_(["closed_won", "closed_lost", "dropped"]),
+        ~PipelineDeal.stage.in_(list(OPEN_EXCLUDED_STAGES)),
     ))
     open_deals = (await db.execute(open_q)).scalars().all()
     open_pipeline_value = sum(_deal_value(d) for d in open_deals)
@@ -123,7 +137,30 @@ async def build_digest(db: AsyncSession, user: User, period: str | None = None) 
     compliance_avg = round(sum(r["compliance_pct"] for r in reps) / len(reps), 1) if reps else None
     at_risk_reps = sorted((r for r in reps if r["at_risk"]), key=lambda r: r["compliance_pct"])[:5]
 
+    # Per-business rollup (each business and its head(s)), so a COO/CEO with several business
+    # heads under them sees every business side by side, not only one at a time.
+    head_rows = (await db.execute(select(User.name, User.business).where(
+        User.is_active == True, User.role.in_(["business_head", "practice_head"]),  # noqa: E712
+    ))).all()
+    heads_of: dict = {}
+    for n, b in head_rows:
+        heads_of.setdefault(b, []).append(n)
+    by_business: dict = {}
+    def _slot(b):
+        return by_business.setdefault(b or "unassigned", {
+            "business": b or "unassigned", "heads": heads_of.get(b, []),
+            "won_value": 0.0, "won_count": 0, "open_value": 0.0, "open_count": 0})
+    for d in won_deals:
+        x = _slot(biz_of.get(d.user_id)); x["won_value"] += _deal_value(d); x["won_count"] += 1
+    for d in open_deals:
+        x = _slot(biz_of.get(d.user_id)); x["open_value"] += _deal_value(d); x["open_count"] += 1
+    by_business_list = sorted(
+        ({**v, "won_value": round(v["won_value"], 2), "open_value": round(v["open_value"], 2)}
+         for v in by_business.values()), key=lambda v: v["open_value"], reverse=True)
+
     return {
+        "by_business": by_business_list,
+        "business": business, "businesses": businesses,
         "period": period, "generated_at": datetime.now(timezone.utc).isoformat(),
         "revenue": {
             "achieved": round(revenue_achieved, 2),
