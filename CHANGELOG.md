@@ -10,6 +10,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.3] — 2026-10-27
+
+### Security
+- Downloads: bulk exports (performance, compliance, team DSR, FGA, pipeline sheet Excel, trends, revenue-vs-target, rigor trend, win-loss) are managers-and-above only; reps, inside sales and pre-sales are refused and the buttons are hidden. Every export writes an `EXPORT` audit event (user, role, report, filters, IP), including CRM admin and super admin downloads of the audit log and meeting minutes.
+- Companies are region-owned: created in the creator's region (profile region required), visible by region (business head: business; CEO/COO/CRM admin/super admin/finance/hr: all; unassigned legacy companies stay visible), editable only within that scope. Only business-wide roles can set or move a region, audited with from/to. A duplicate in a region the user cannot see is refused without revealing it.
+
+### Added
+- DSR routing: the reporting manager is emailed when a DSR is submitted or resubmitted after rejection. Copying the business head is off by default; enable it with `feature_flags` key `dsr_routing` `{"notify_manager": true, "cc_business_head": true}`. History and approval already follow the reporting chain (reps see their own, managers see their own and their reportees').
+
+### Changed
+- Editing a deal or converting a lead that is not linked to a company pre-fills the company search and the "Add new company" form with the customer name already on the record.
+
+---
+
 ## [1.6.2] — 2026-10-27
 
 ### Added

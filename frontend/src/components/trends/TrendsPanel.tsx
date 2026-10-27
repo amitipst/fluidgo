@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import api from '@/hooks/useApi'
+import { useAuthStore } from '@/store/authStore'
+import { canExport } from '@/lib/permissions'
 import { downloadFile } from '@/lib/download'
 import { toast } from '@/store/toastStore'
 
@@ -30,6 +32,7 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
 /** Trends (v1.5.0): wins, revenue (ARR + One-time), leads and conversion by week,
  * month, quarter or year (India FY) — incl. the last 3 years. */
 export default function TrendsPanel() {
+  const { user } = useAuthStore()
   const [gran, setGran] = useState<Gran>('monthly')
   const tab = TABS.find(t => t.key === gran)!
   const [periods, setPeriods] = useState<Record<Gran, number>>({ weekly: 12, monthly: 12, quarterly: 8, yearly: 3 })
@@ -62,7 +65,7 @@ export default function TrendsPanel() {
           <div className="font-semibold text-sm text-wep-navy">📈 Trends — wins, revenue, leads, conversion</div>
           <p className="text-xs text-wep-muted">Quarters and years follow the India financial year (Apr–Mar). Your visible team only.</p>
         </div>
-        <button className="btn-outline text-sm min-h-[40px]" disabled={busy} onClick={download}>{busy ? 'Preparing…' : '⬇️ CSV'}</button>
+        {canExport(user?.role) && <button className="btn-outline text-sm min-h-[40px]" disabled={busy} onClick={download}>{busy ? 'Preparing…' : '⬇️ CSV'}</button>}
       </div>
 
       <div role="tablist" aria-label="Trend period" className="inline-flex rounded-xl border border-wep-border overflow-hidden mb-2 max-w-full overflow-x-auto">

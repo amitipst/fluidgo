@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Optional, Literal, List
 import uuid
 from app.database import get_db
+from app.services.export_guard import export_guard
 from app.config import settings
 from app.models import Meeting, Lead, DSRDaily, DORDaily, MeetingMomRevision
 from app.services.deps import get_current_user, deny_governance
@@ -488,7 +489,7 @@ async def update_mom(meeting_id: str, body: MomUpdateIn, request: Request, backg
 
 
 # ── Export & Send-to-Customer (2026-08-04) ────────────────────────────────────
-@router.get("/{meeting_id}/export")
+@router.get("/{meeting_id}/export", dependencies=[Depends(export_guard("Meeting minutes export", restrict=False))])
 async def export_meeting(meeting_id: str, format: Literal["xlsx", "pdf", "docx"] = "pdf",
                           db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """Downloads the minutes in the requested format — one canonical document

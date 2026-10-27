@@ -120,7 +120,7 @@ export default function DealForm({ deal, onSaved, onCancel }: {
       {editing && !deal?.account_id && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs">This deal isn’t linked to a company yet (<b>{deal?.company}</b>). Pick the company below to connect it to Contacts, trends and the company page.</div>
       )}
-      <CompanyContactPicker value={cc} onChange={setCc} />
+      <CompanyContactPicker value={cc} onChange={setCc} suggestName={deal?.company} />
       {touched && (errs.company || errs.contact) && <p className="text-red-500 text-xs" role="alert">{errs.company || errs.contact}</p>}
       {!editing && <DuplicateAlert accountId={cc.accountId} contactId={cc.contactId} />}
       <div>

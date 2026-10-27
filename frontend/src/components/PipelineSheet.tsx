@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Download, Pencil, Table2 } from 'lucide-react'
+import { useAuthStore } from '@/store/authStore'
+import { canExport } from '@/lib/permissions'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { toast } from '@/store/toastStore'
 import Modal from '@/components/ui/Modal'
@@ -81,6 +83,7 @@ function WinCell({ r, onSaved }: { r: Row; onSaved: () => void }) {
 }
 
 export default function PipelineSheet() {
+  const { user } = useAuthStore()
   const qc = useQueryClient()
   const [includeClosed, setIncludeClosed] = useState(true)
   const [rep, setRep] = useState('')
@@ -127,9 +130,9 @@ export default function PipelineSheet() {
           Show closed deals
         </label>
         <div className="flex-1" />
-        <button className="btn-outline" onClick={download} disabled={exporting || !data?.groups.length}>
+        {canExport(user?.role) && <button className="btn-outline" onClick={download} disabled={exporting || !data?.groups.length}>
           <Download size={15} aria-hidden />{exporting ? 'Preparing…' : 'Download Excel'}
-        </button>
+        </button>}
       </div>
 
       {sheet.isLoading ? <div className="space-y-2" aria-busy="true"><Skeleton className="h-12" /><Skeleton className="h-40" /></div>
