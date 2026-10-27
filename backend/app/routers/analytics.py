@@ -5,6 +5,7 @@ from sqlalchemy import select, and_, case, func
 from datetime import date
 from typing import Optional
 import uuid
+from app.services import deal_rules_service as rules_svc
 from app.services.booking_date import won_date_col, won_date_of
 from app.database import get_db
 from app.models import User, DSRDaily, PipelineDeal, RevenueTarget
@@ -201,7 +202,7 @@ async def rigor_trend(user_id: str, granularity: str = "weekly", periods: int = 
 @router.get("/team")
 async def team_analytics(include_inactive: bool = False, include_seed: bool = False,
                          db: AsyncSession = Depends(get_db),
-                         user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "inside_sales", "ceo", "super_admin"))):
+                         user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "inside_sales", "coo", "ceo", "super_admin"))):
     """Team performance matrix — scoped by role/BU automatically.
     Exited reps (is_active=False) excluded by default; include_inactive=true shows them.
     Seeded rows excluded by default; include_seed=true (business_head+ only)."""
@@ -276,7 +277,7 @@ async def bu_dashboard(month: Optional[str] = None, db: AsyncSession = Depends(g
         yr, mo = today.year, today.month
     month_end = date(yr, mo, monthrange(yr, mo)[1])
 
-    if user.role in ("manager", "regional_manager", "bu_head", "business_head", "ceo", "super_admin", "hr"):
+    if user.role in ("manager", "regional_manager", "bu_head", "business_head", "coo", "ceo", "super_admin", "hr"):
         # Use permission_service — handles business_head (all regions), manager (team), etc.
         visible_ids = await resolve_visible_user_ids(db, user)
         q = select(User).where(User.is_active == True)
@@ -375,7 +376,7 @@ async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(ge
 
 @router.get("/revenue")
 async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
-                            user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "ceo", "super_admin", "finance"))):
+                            user: User = Depends(require_role("manager", "regional_manager", "bu_head", "business_head", "coo", "ceo", "super_admin", "finance"))):
     """Revenue Intelligence — scoped by permission_service (works for all roles)."""
     today = date.today()
     p = period or f"{today.year}-{today.month:02d}"
@@ -1110,7 +1111,7 @@ async def funnel_analytics(include_seed: bool = False,
     # counted as ₹0 here either.
     open_value = (await db.execute(_scoped(
         select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
-            PipelineDeal.stage.notin_(["closed_won", "closed_lost"])),
+            PipelineDeal.stage.notin_(rules_svc.OPEN_EXCLUDED_STAGES), PipelineDeal.archived == False),
         PipelineDeal.user_id))).scalar() or 0
     won_value = (await db.execute(_scoped(
         select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
@@ -1121,17 +1122,17 @@ async def funnel_analytics(include_seed: bool = False,
     # sourced from Service Delivery signals) split of open pipeline.
     hunting_value = (await db.execute(_scoped(
         select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
-            PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
+            PipelineDeal.stage.notin_(rules_svc.OPEN_EXCLUDED_STAGES), PipelineDeal.archived == False,
             PipelineDeal.deal_type.isnot(None), PipelineDeal.deal_type != "farming"),
         PipelineDeal.user_id))).scalar() or 0
     farming_value = (await db.execute(_scoped(
         select(func.coalesce(func.sum(_deal_revenue_col()), 0)).where(
-            PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
+            PipelineDeal.stage.notin_(rules_svc.OPEN_EXCLUDED_STAGES), PipelineDeal.archived == False,
             PipelineDeal.deal_type == "farming"),
         PipelineDeal.user_id))).scalar() or 0
     farming_from_delivery = (await db.execute(_scoped(
         select(func.count(PipelineDeal.id)).where(
-            PipelineDeal.stage.notin_(["closed_won", "closed_lost"]),
+            PipelineDeal.stage.notin_(rules_svc.OPEN_EXCLUDED_STAGES), PipelineDeal.archived == False,
             PipelineDeal.source == "service_delivery"),
         PipelineDeal.user_id))).scalar() or 0
 
@@ -1186,7 +1187,7 @@ async def funnel_analytics(include_seed: bool = False,
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/exec-digest")
-async def exec_digest(period: Optional[str] = None, db: AsyncSession = Depends(get_db),
+async def exec_digest(period: Optional[str] = None, business: Optional[str] = None, db: AsyncSession = Depends(get_db),
                        user: User = Depends(require_level(40))):
     """Executive Intelligence Digest — current (or given) period's revenue vs
     target, pipeline health + at-risk deals + recent wins, team rigor, and
@@ -1194,7 +1195,7 @@ async def exec_digest(period: Optional[str] = None, db: AsyncSession = Depends(g
     is (resolve_visible_user_ids): a business_head sees their business, a
     CEO/super_admin sees everything."""
     deny_governance(user)
-    return await exec_digest_service.build_digest(db, user, period)
+    return await exec_digest_service.build_digest(db, user, period, business)
 
 
 @router.post("/exec-digest/send")

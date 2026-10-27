@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useAuthStore } from '@/store/authStore'
+import LeadershipPanel from '@/components/LeadershipPanel'
+import PlatformPanel from '@/components/PlatformPanel'
 import api from '@/hooks/useApi'
 import { format } from 'date-fns'
 import { Link, Navigate } from 'react-router-dom'
@@ -373,6 +375,8 @@ export default function Dashboard() {
       )}
 
       {/* ── AI Panel (sales-activity insight — not relevant for Service Delivery) ── */}
+      {user?.id && ['business_head','practice_head','coo','ceo'].includes(user?.role ?? '') && <LeadershipPanel />}
+      {user?.id && user?.role === 'super_admin' && <PlatformPanel />}
       {user?.id && !isSDM && <PerformancePanel />}
 
       {/* ── My Targets (rep visibility into own revenue) ── */}
