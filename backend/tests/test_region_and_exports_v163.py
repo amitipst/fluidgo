@@ -52,3 +52,7 @@ def test_only_business_wide_roles_set_region():
         assert can_set_region(U(r)), r
     for r in ("rep", "manager", "regional_manager", "inside_sales"):
         assert not can_set_region(U(r)), r
+
+
+def test_region_list_chooser_matches_set_region():
+    assert can_set_region(U("business_head")) and not can_set_region(U("rep"))

@@ -149,6 +149,20 @@ async def check_website(body: WebsiteCheckIn, user: User = Depends(get_current_u
     return await website_service.check_website(body.url)
 
 
+@router.get("/regions")
+async def region_list(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Regions a company can be created in. Business-wide roles (PAN-India leaders) choose any
+    region of their business; everyone else is fixed to their own region."""
+    _guard(user, write=False)
+    if not can_set_region(user):
+        return {"can_choose": False, "default": user.region, "regions": [user.region] if user.region else []}
+    q = select(User.region).where(User.region.isnot(None), User.is_active == True).distinct()  # noqa: E712
+    if _scope_of(user) == "business":
+        q = q.where(User.business == (user.business or "fluidpro"))
+    regions = sorted(r for (r,) in (await db.execute(q)).all() if r)
+    return {"can_choose": True, "default": user.region, "regions": regions}
+
+
 @router.get("/geo")
 async def geo_lists(user: User = Depends(get_current_user)):
     """Country / state pick-lists + postal hints (static reference data)."""

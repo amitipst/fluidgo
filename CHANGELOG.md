@@ -10,6 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.6.4] — 2026-10-27
+
+### Fixed
+- The New company form had no Region field. Business-wide roles (business head, COO, CEO, CRM admin, super admin; PAN-India) now choose the region from a list (or "Not assigned", visible to all regions); everyone else sees their own region read-only. New endpoint `GET /accounts/regions`.
+
+---
+
 ## [1.6.3] — 2026-10-27
 
 ### Security
