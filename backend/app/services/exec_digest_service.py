@@ -36,6 +36,7 @@ from calendar import monthrange
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.booking_date import won_date_col, won_date_of
 from app.models import User, PipelineDeal, DSRDaily, RevenueTarget
 from app.services.pipeline_sheet_service import amounts as _amounts
 from app.services.rigor_service import aggregate_rigor_breakdown
@@ -75,7 +76,7 @@ async def build_digest(db: AsyncSession, user: User, period: str | None = None) 
     # ── Revenue vs target, this period, in scope ─────────────────────────
     won_q = _scope(select(PipelineDeal).where(
         PipelineDeal.stage == "closed_won", PipelineDeal.archived == False, PipelineDeal.is_seed == False,
-        PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+        won_date_col() >= start, won_date_col() <= end,
     ))
     won_deals = (await db.execute(won_q)).scalars().all()
     revenue_achieved = sum(_deal_value(d) for d in won_deals)

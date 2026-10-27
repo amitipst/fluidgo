@@ -51,7 +51,15 @@ def _days_since(dt, now: datetime) -> Optional[int]:
 
 
 def _val(d) -> float:
-    return float(d.deal_value) if getattr(d, "deal_value", None) is not None else 0.0
+    return rules_svc.deal_amount(d)
+
+
+def _inr_short(v: float) -> str:
+    if v >= 1e7:
+        return f"₹{v / 1e7:.2f} Cr"
+    if v >= 1e5:
+        return f"₹{v / 1e5:.1f} L"
+    return f"₹{v:,.0f}"
 
 
 def _sp_idx(d) -> int:
@@ -91,8 +99,14 @@ def build_report(deals, leads, rules: dict, today: date, now: datetime, me_id=No
     stages: dict[str, dict] = {k: {"count": 0, "value": 0.0} for k in rules_svc.STAGE_ORDER if k != "won"}
     open_value = weighted = 0.0
     prob_of = {}
+    unweighted_count = 0
+    unweighted_value = 0.0
     for d in open_deals:
-        p = rules_svc.forecast_probability(d, rules) or 0
+        p_raw = rules_svc.forecast_probability(d, rules)
+        if p_raw is None:            # unknown win %: never guessed, shown separately
+            unweighted_count += 1
+            unweighted_value += _val(d)
+        p = p_raw or 0
         prob_of[d.id] = p
         w = _val(d) * p / 100.0
         open_value += _val(d)
@@ -107,6 +121,8 @@ def build_report(deals, leads, rules: dict, today: date, now: datetime, me_id=No
         "by_category": {k: {kk: round(vv, 2) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in cats.items()},
         "by_stage": [{"key": k, "label": rules_svc.sp_stage_label(k), **{kk: (round(vv, 2) if isinstance(vv, float) else vv) for kk, vv in v.items()}} for k, v in stages.items()],
         "open_leads": len(open_leads),
+        "unweighted_count": unweighted_count, "unweighted_value": round(unweighted_value, 2),
+        "no_value_count": sum(1 for d in open_deals if _val(d) <= 0),
     }
 
     # ── per-deal flags (computed once, reused by findings, reps and my_actions) ─
@@ -147,6 +163,12 @@ def build_report(deals, leads, rules: dict, today: date, now: datetime, me_id=No
                 "Complete both fields (0 is allowed)."),
     ]
 
+    findings.append(_finding(
+        "no_sp_stage", "medium", "Open deals not on the SP stage ladder",
+        "Without an SP stage there is no stage-based win % or forecast category, so these sit outside the forecast.",
+        "Open each deal and choose its SP stage (SP1-SP7).",
+        [_item(d, names, "No SP stage set") for d in open_deals if not d.sp_stage], n))
+
     late = [d for d in open_deals if _sp_idx(d) >= 4]   # SP5+
     findings.append(_finding(
         "no_presales_owner", "medium", "Proposal-stage deals with no presales owner",
@@ -161,14 +183,15 @@ def build_report(deals, leads, rules: dict, today: date, now: datetime, me_id=No
          if _sp_idx(d) >= 5 and not (d.decision_maker or "").strip() and not d.contact_id], n))
 
     # concentration risk
-    if weighted > 0 and len(open_deals) >= 3:   # a 1-2 deal pipeline is trivially concentrated; not a signal
+    scored = [d for d in open_deals if _val(d) > 0 and prob_of.get(d.id, 0) > 0]
+    if weighted > 0 and len(scored) >= 3:   # needs 3+ deals with a value AND a win %; otherwise it is a data gap, not concentration
         top = max(open_deals, key=lambda d: _val(d) * prob_of.get(d.id, 0))
         share = _val(top) * prob_of.get(top.id, 0) / 100.0 / weighted * 100
         if share >= t["concentration_pct"]:
             findings.append(_finding(
                 "concentration", "high", f"One deal carries {share:.0f}% of the weighted pipeline",
                 "A single slip or loss would break the number.", "Build cover: add parallel qualified deals.",
-                [_item(top, names, f"{share:.0f}% of weighted pipeline")], n))
+                [_item(top, names, f"{share:.0f}% of weighted pipeline (of {len(scored)} deals with a value and win %, out of {len(open_deals)} open)")], n))
 
     # leads (inside sales)
     qmin = rules.get("convert_min_stage", "sp4_qualification_bant")
@@ -232,6 +255,7 @@ def build_report(deals, leads, rules: dict, today: date, now: datetime, me_id=No
 
     headlines = []
     for f in findings[:3]:
-        headlines.append(f"{f['count']} - {f['title'].lower()}" + (f" (₹{f['value']:,.0f})" if f["value"] else ""))
+        text = f["title"] if f["key"] == "concentration" else f"{f['count']} {f['title'][0].lower() + f['title'][1:]}"
+        headlines.append(text + (f" ({_inr_short(f['value'])})" if f["value"] else ""))
     return {"summary": summary, "findings": findings, "reps": rep_rows, "my_actions": my_actions[:10],
             "presales_queue": presales_queue[:10], "headlines": headlines, "thresholds": t}

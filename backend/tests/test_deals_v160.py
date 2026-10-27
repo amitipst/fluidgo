@@ -141,7 +141,9 @@ def test_presales_and_decision_maker_findings():
 
 
 def test_concentration_flagged():
-    big, s1, s2 = deal(deal_value=9_000_000), deal(deal_value=100_000), deal(deal_value=100_000)
+    big = deal(recurring_revenue=4_500_000, one_time_revenue=4_500_000)
+    s1 = deal(recurring_revenue=50_000, one_time_revenue=50_000)
+    s2 = deal(recurring_revenue=50_000, one_time_revenue=50_000)
     assert "concentration" in keys(report([big, s1, s2]))
     assert "concentration" not in keys(report([big, s1]))   # too few deals to call it a pattern
 
@@ -170,7 +172,7 @@ def test_reps_my_actions_and_presales_queue():
 
 
 def test_findings_sorted_high_first_and_samples_capped():
-    deals = [deal(closure_eta=TODAY - timedelta(days=1), deal_value=i * 1000) for i in range(1, 15)]
+    deals = [deal(closure_eta=TODAY - timedelta(days=1), recurring_revenue=i * 500, one_time_revenue=i * 500) for i in range(1, 15)]
     rep = report(deals)
     assert rep["findings"][0]["severity"] == "high"
     assert rep["findings"][0]["count"] == 14 and len(rep["findings"][0]["items"]) == 8

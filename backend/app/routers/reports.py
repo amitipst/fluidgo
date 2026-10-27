@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.booking_date import won_date_col, won_date_of
 from app.database import get_db
 from app.models import User, PipelineDeal, DSRDaily, RevenueTarget, role_level
 from app.services.deps import get_current_user, deny_governance, require_any_manager
@@ -107,8 +108,8 @@ async def export_revenue_vs_target(
                 deals = (await db.execute(select(PipelineDeal).where(
                     PipelineDeal.user_id == rep.id, PipelineDeal.archived == False,
                     PipelineDeal.is_seed == False, PipelineDeal.stage == "closed_won",
-                    PipelineDeal.closure_eta.isnot(None),
-                    PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+                    won_date_col().isnot(None),
+                    won_date_col() >= start, won_date_col() <= end,
                 ))).scalars().all()
                 targets = (await db.execute(select(RevenueTarget).where(
                     RevenueTarget.user_id == rep.id, RevenueTarget.period == p,
@@ -133,12 +134,12 @@ async def export_revenue_vs_target(
             deals = (await db.execute(select(PipelineDeal).where(
                 PipelineDeal.user_id == rep.id, PipelineDeal.archived == False,
                 PipelineDeal.is_seed == False, PipelineDeal.stage == "closed_won",
-                PipelineDeal.closure_eta.isnot(None),
-                PipelineDeal.closure_eta >= month_start, PipelineDeal.closure_eta <= today,
+                won_date_col().isnot(None),
+                won_date_col() >= month_start, won_date_col() <= today,
             ))).scalars().all()
             by_week: dict = {}
             for d in deals:
-                monday = d.closure_eta - timedelta(days=d.closure_eta.weekday())
+                monday = won_date_of(d) - timedelta(days=won_date_of(d).weekday())
                 by_week.setdefault(monday.isoformat(), []).append(d)
             for wk in sorted(by_week.keys()):
                 amts = [_deal_revenue(d) for d in by_week[wk]]
@@ -230,7 +231,7 @@ async def export_win_loss(
         "value": round(_deal_revenue(d)["total"], 2),
         "outcome_category": d.outcome_category or "", "outcome_detail": d.outcome_detail or "",
         "outcome_competitor": d.outcome_competitor or "",
-        "closed_date": str(d.closure_eta) if d.closure_eta else "",
+        "closed_date": str((won_date_of(d) if d.stage == "closed_won" else d.closure_eta) or ""),
     } for d in deals]
 
     return _csv_response(rows, "win_loss_analysis.csv")

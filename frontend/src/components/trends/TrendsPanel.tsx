@@ -38,7 +38,11 @@ export default function TrendsPanel() {
     queryKey: ['trends', gran, n],
     queryFn: () => api.get('/trends', { params: { granularity: gran, periods: n } }).then(r => r.data),
   })
-  const series: any[] = data?.series ?? []
+  // Won deals that have no ARR / One-time split yet (older deals) would draw as zero; show them as their own
+  // grey segment so the chart agrees with the Won (booked) tile.
+  const series: any[] = (data?.series ?? []).map((r: any) => ({
+    ...r, won_unsplit: Math.max(0, (r.won_revenue ?? 0) - (r.won_arr ?? 0) - (r.won_one_time ?? 0)),
+  }))
   const t = data?.totals
   const last = series[series.length - 1], prev = series[series.length - 2]
   const delta = last && prev && prev.won_revenue > 0 ? Math.round(((last.won_revenue - prev.won_revenue) / prev.won_revenue) * 100) : null
@@ -79,10 +83,10 @@ export default function TrendsPanel() {
       {data && t && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-            <Tile label="Won (booked)" value={cr(t.won_revenue)} sub={delta == null ? 'customer email / LOI / PO' : `${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs previous`} />
+            <Tile label="Won (booked)" value={cr(t.won_revenue)} sub={delta == null ? 'customer email / LOI / PO' : `${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs previous (this period is still open)`} />
             <Tile label="Invoiced revenue" value={cr(t.invoiced_revenue ?? 0)} sub={`${t.invoiced_count ?? 0} tax invoices`} />
             <Tile label="Won, not invoiced" value={cr(t.won_awaiting_invoice_value ?? 0)} sub={`${t.won_awaiting_invoice_count ?? 0} deals`} />
-            <Tile label="Deals won" value={String(t.won_count)} sub={`${t.lost_count} lost`} />
+            <Tile label="Deals won" value={String(t.won_count)} sub={`${t.lost_count} lost · ${t.dropped_count ?? 0} dropped`} />
             <Tile label="Win rate" value={pct(t.win_rate_pct)} />
             <Tile label="Leads created" value={String(t.leads_created)} sub={`${t.leads_converted} converted`} />
             <Tile label="Lead → deal" value={pct(t.lead_conversion_pct)} />
@@ -99,7 +103,8 @@ export default function TrendsPanel() {
                 <Tooltip {...tip} formatter={(v: any) => cr(Number(v))} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="won_arr" name="ARR" stackId="r" fill={C.arr} />
-                <Bar dataKey="won_one_time" name="One-time" stackId="r" fill={C.once} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="won_one_time" name="One-time" stackId="r" fill={C.once} />
+                <Bar dataKey="won_unsplit" name="Not split yet" stackId="r" fill="#9CA3AF" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

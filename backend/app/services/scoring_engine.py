@@ -8,6 +8,7 @@ from calendar import monthrange
 from datetime import date, datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.booking_date import won_date_col, won_date_of
 from app.models import DSRDaily, Meeting, PipelineDeal, SelfScore, User
 from app.repositories import scoring_repo
 from app.services.rigor_service import calculate_rigor_score, bant_score
@@ -49,7 +50,7 @@ async def _metric_revenue_target_achievement_pct(db: AsyncSession, user: User, p
     start, end = _period_bounds(period)
     result = await db.execute(
         select(PipelineDeal).where(PipelineDeal.user_id == user.id, PipelineDeal.stage == "closed_won",
-                                    PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+                                    won_date_col() >= start, won_date_col() <= end,
                                     PipelineDeal.archived == False, PipelineDeal.is_seed == False)
     )
     won = sum(amounts(d.recurring_revenue, d.one_time_revenue, d.deal_value)["total"]

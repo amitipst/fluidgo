@@ -92,7 +92,7 @@ export default function Contacts() {
   const switchTab = (t: Tab) => { setTab(t); setQ('') }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto p-4 md:p-6">
       <div className="flex items-start justify-between mb-5 flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-wep-text">Companies &amp; Contacts</h1>

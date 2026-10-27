@@ -5,6 +5,7 @@ from sqlalchemy import select, and_, case, func
 from datetime import date
 from typing import Optional
 import uuid
+from app.services.booking_date import won_date_col, won_date_of
 from app.database import get_db
 from app.models import User, DSRDaily, PipelineDeal, RevenueTarget
 from app.services.deps import get_current_user, require_role, deny_governance, require_level
@@ -341,7 +342,7 @@ async def my_revenue(period: Optional[str] = None, db: AsyncSession = Depends(ge
         )
     )).scalars().all()
     won = [d for d in deals if d.stage == "closed_won"
-           and d.closure_eta and start <= d.closure_eta <= end]
+           and won_date_of(d) and start <= won_date_of(d) <= end]
     won_revenue = sum(_deal_revenue(d) for d in won)
 
     # Targets: a target row's period may be monthly even when viewing a quarter,
@@ -399,7 +400,7 @@ async def revenue_analytics(period: Optional[str] = None, db: AsyncSession = Dep
     )).scalars().all()
 
     won       = [d for d in deals if d.stage == "closed_won"
-                 and d.closure_eta and start <= d.closure_eta <= end]
+                 and won_date_of(d) and start <= won_date_of(d) <= end]
     lost      = [d for d in deals if d.stage == "closed_lost"]
     open_deals= [d for d in deals if d.stage not in ("closed_won", "closed_lost")]
 
@@ -603,8 +604,8 @@ async def performance_comparison(
         deals = (await db.execute(
             select(PipelineDeal).where(
                 PipelineDeal.user_id.in_(team_ids),
-                PipelineDeal.closure_eta >= start,
-                PipelineDeal.closure_eta <= end,
+                won_date_col() >= start,
+                won_date_col() <= end,
                 PipelineDeal.stage == "closed_won",
                 # Matches the DSRDaily.is_seed filter just above — this query
                 # was the one left out of the original migration-0027 pass.
@@ -742,8 +743,8 @@ async def export_performance(
                 PipelineDeal.user_id == rep.id,
                 PipelineDeal.archived == False, PipelineDeal.is_seed == False,
                 PipelineDeal.stage == "closed_won",
-                PipelineDeal.closure_eta.isnot(None),
-                PipelineDeal.closure_eta >= start, PipelineDeal.closure_eta <= end,
+                won_date_col().isnot(None),
+                won_date_col() >= start, won_date_col() <= end,
             )
         )).scalars().all()
         targets = (await db.execute(
