@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import api, { getErrorMessage } from '@/hooks/useApi'
 import { toast } from '@/store/toastStore'
 import { useGeo, postalError } from '@/hooks/useGeo'
@@ -10,7 +10,7 @@ import { TextInput, SelectInput, FormSection } from '@/components/ui/Field'
 export type Company = {
   id: string; name: string; industry?: string | null; website?: string | null
   address_line1?: string | null; address_line2?: string | null; city?: string | null
-  state?: string | null; country?: string | null; postal_code?: string | null
+  state?: string | null; country?: string | null; postal_code?: string | null; region?: string | null
   contact_count?: number
 }
 
@@ -22,6 +22,9 @@ export default function CompanyForm({ initial, prefillName, onSaved, onCancel }:
   const qc = useQueryClient()
   const { data: geo } = useGeo()
   const web = useWebsiteCheck()
+  const { data: reg } = useQuery({ queryKey: ['account-regions'], queryFn: () => api.get('/accounts/regions').then(r => r.data) })
+  const [region, setRegion] = useState<string | null>(null)   // null = untouched (use the default)
+  const shownRegion = region ?? initial?.region ?? reg?.default ?? ''
   const editing = !!initial
   const [f, setF] = useState({
     name: initial?.name ?? prefillName ?? '', industry: initial?.industry ?? '', website: initial?.website ?? '',
@@ -59,6 +62,7 @@ export default function CompanyForm({ initial, prefillName, onSaved, onCancel }:
         address_line1: f.address_line1, address_line2: f.address_line2, city: f.city,
         state: f.state, country: f.country || undefined, postal_code: f.postal_code,
       }
+      if (reg?.can_choose && region !== null) body.region = region
       if (allowReason) body.allow_duplicate_reason = allowReason
       return (editing ? api.patch(`/accounts/${initial!.id}`, body) : api.post('/accounts', body)).then(r => r.data)
     },
@@ -80,6 +84,15 @@ export default function CompanyForm({ initial, prefillName, onSaved, onCancel }:
         <TextInput label="Industry" placeholder="e.g. BFSI, Healthcare, IT" value={f.industry} onChange={set('industry')} />
         <TextInput label="Website" placeholder="www.company.com" inputMode="url" autoCapitalize="none" hint="Optional — we'll check that it's live."
           value={f.website} onChange={set('website')} onBlur={blur('website')} error={errs.website} showError={touched.website} status={web.status} valid={web.status?.kind === 'ok'} />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+        {reg?.can_choose
+          ? <SelectInput label="Region" value={shownRegion} onChange={(e: any) => setRegion(e.target.value)}>
+              <option value="">Not assigned (visible to all regions)</option>
+              {(reg.regions ?? []).map((r: string) => <option key={r} value={r}>{r}</option>)}
+            </SelectInput>
+          : <TextInput label="Region" value={shownRegion || 'Not set on your profile'} readOnly hint="Companies are created in your own region." onChange={() => {}} />}
       </div>
 
       <FormSection>Address</FormSection>
